@@ -1,0 +1,15 @@
+[package]
+name = "testkit-core"
+description = "Core utilities for the Soroban Testkit testing framework"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+soroban-sdk = { workspace = true }
+soroban-env-host = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

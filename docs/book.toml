@@ -1,0 +1,12 @@
+[book]
+title = "Soroban Testkit"
+description = "Testing and debugging toolkit for Soroban smart contracts"
+authors = ["Stellar Crucible"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/stellar-crucible/soroban-testkit"
+edit-url-template = "https://github.com/stellar-crucible/soroban-testkit/edit/main/docs/{path}"

@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/testkit-core",
+    "crates/testkit-assert",
+    "crates/testkit-fixtures",
+    "crates/testkit-generators",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/stellar-crucible/soroban-testkit"
+rust-version = "1.81"
+
+[workspace.dependencies]
+soroban-sdk = "22"
+soroban-env-host = "22"
+proptest = "1"
+arbitrary = "1"

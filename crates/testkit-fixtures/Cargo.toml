@@ -1,0 +1,15 @@
+[package]
+name = "testkit-fixtures"
+description = "Reusable test fixture and setup framework for Soroban contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+soroban-sdk = { workspace = true }
+testkit-core = { path = "../testkit-core" }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

@@ -1,0 +1,46 @@
+use soroban_sdk::{Env, Vec as SorobanVec, Val};
+
+pub struct EventMatcher<'a> {
+    env: &'a Env,
+    contract_id: Option<soroban_sdk::BytesN<32>>,
+    topic_filter: Option<String>,
+}
+
+impl<'a> EventMatcher<'a> {
+    pub fn new(env: &'a Env) -> Self {
+        Self {
+            env,
+            contract_id: None,
+            topic_filter: None,
+        }
+    }
+
+    pub fn from_contract(mut self, contract_id: &soroban_sdk::BytesN<32>) -> Self {
+        self.contract_id = Some(contract_id.clone());
+        self
+    }
+
+    pub fn with_topic(mut self, topic: impl Into<String>) -> Self {
+        self.topic_filter = Some(topic.into());
+        self
+    }
+
+    pub fn assert_emitted(&self) {
+        let events = self.env.events().all();
+        assert!(
+            !events.is_empty(),
+            "Expected at least one event to be emitted"
+        );
+    }
+
+    pub fn assert_count(&self, expected: usize) {
+        let events = self.env.events().all();
+        assert_eq!(
+            events.len() as usize,
+            expected,
+            "Expected {} events, found {}",
+            expected,
+            events.len()
+        );
+    }
+}
