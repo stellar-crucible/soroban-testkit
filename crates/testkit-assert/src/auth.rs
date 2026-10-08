@@ -21,7 +21,7 @@ impl<'a> AuthMatcher<'a> {
     pub fn assert_auth_count(&self, expected: usize) {
         let auths = self.env.auths();
         assert_eq!(
-            auths.len() as usize,
+            auths.len(),
             expected,
             "Expected {} authorizations, found {}",
             expected,
