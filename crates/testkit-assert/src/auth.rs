@@ -1,5 +1,5 @@
-use soroban_sdk::Env;
 use soroban_sdk::testutils::AuthorizedFunction as _;
+use soroban_sdk::Env;
 
 pub struct AuthMatcher<'a> {
     env: &'a Env,
