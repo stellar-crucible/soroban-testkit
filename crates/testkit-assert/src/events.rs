@@ -1,5 +1,5 @@
 use soroban_sdk::testutils::Events as _;
-use soroban_sdk::{Env, Val, Vec as SorobanVec};
+use soroban_sdk::Env;
 
 pub struct EventMatcher<'a> {
     env: &'a Env,
@@ -28,20 +28,22 @@ impl<'a> EventMatcher<'a> {
 
     pub fn assert_emitted(&self) {
         let events = self.env.events().all();
+        let event_list = events.events();
         assert!(
-            !events.is_empty(),
+            !event_list.is_empty(),
             "Expected at least one event to be emitted"
         );
     }
 
     pub fn assert_count(&self, expected: usize) {
         let events = self.env.events().all();
+        let event_list = events.events();
         assert_eq!(
-            events.len() as usize,
+            event_list.len(),
             expected,
             "Expected {} events, found {}",
             expected,
-            events.len()
+            event_list.len()
         );
     }
 }
