@@ -1,8 +1,14 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::Env;
 
 pub struct TestContextBuilder {
     num_users: usize,
     mock_auths: bool,
+}
+
+impl Default for TestContextBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestContextBuilder {
@@ -26,7 +32,6 @@ impl TestContextBuilder {
     pub fn build(self) -> super::TestContext {
         let mut ctx = super::TestContext::new();
         if !self.mock_auths {
-            // Re-create env without mock_all_auths
             ctx.env = Env::default();
         }
         for _ in 0..self.num_users {

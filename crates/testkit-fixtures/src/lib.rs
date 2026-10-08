@@ -1,12 +1,18 @@
 pub mod builder;
 
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, BytesN, Env};
+use soroban_sdk::{Address, Env};
 
 pub struct TestContext {
     pub env: Env,
     pub admin: Address,
     pub users: Vec<Address>,
+}
+
+impl Default for TestContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestContext {
