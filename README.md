@@ -4,7 +4,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.81%2B-orange.svg)](https://www.rust-lang.org)
-[![Soroban SDK](https://img.shields.io/badge/soroban--sdk-22-purple.svg)](https://docs.rs/soroban-sdk)
+[![Soroban SDK](https://img.shields.io/badge/soroban--sdk-28-purple.svg)](https://docs.rs/soroban-sdk)
 
 ## Why Testkit?
 
@@ -89,11 +89,11 @@ use testkit_core::budget::BudgetSnapshot;
 #[test]
 fn test_budget_within_limits() {
     let env = Env::default();
-    let before = BudgetSnapshot::capture(&env.budget());
+    let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
 
     // ... invoke contract function
 
-    let after = BudgetSnapshot::capture(&env.budget());
+    let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
     let diff = before.diff(&after);
 
     assert!(diff.cpu_insns < 1_000_000, "Function exceeded CPU budget");

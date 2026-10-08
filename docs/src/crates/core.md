@@ -9,9 +9,9 @@ Capture and compare CPU/memory consumption between operations:
 ```rust
 use testkit_core::budget::BudgetSnapshot;
 
-let before = BudgetSnapshot::capture(&env.budget());
+let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
 // ... invoke contract
-let after = BudgetSnapshot::capture(&env.budget());
+let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
 let diff = before.diff(&after);
 
 println!("CPU instructions: {}", diff.cpu_insns);

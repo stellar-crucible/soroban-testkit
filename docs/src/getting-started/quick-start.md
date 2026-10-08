@@ -29,7 +29,7 @@ fn test_token_transfer() {
     let client = MyContractClient::new(&ctx.env, &contract_id);
 
     // 3. Capture budget before invocation
-    let before = BudgetSnapshot::capture(&ctx.env.budget());
+    let before = BudgetSnapshot::capture(&ctx.env.cost_estimate().budget());
 
     // 4. Invoke the function under test
     client.transfer(sender, receiver, &1000);
@@ -41,7 +41,7 @@ fn test_token_transfer() {
         .assert_emitted();
 
     // 6. Check resource consumption
-    let after = BudgetSnapshot::capture(&ctx.env.budget());
+    let after = BudgetSnapshot::capture(&ctx.env.cost_estimate().budget());
     let diff = before.diff(&after);
     assert!(diff.cpu_insns < 500_000);
 }
