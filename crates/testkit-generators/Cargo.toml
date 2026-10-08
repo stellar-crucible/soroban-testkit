@@ -16,6 +16,3 @@ arbitrary = { workspace = true, optional = true }
 default = ["proptest"]
 proptest = ["dep:proptest"]
 arbitrary = ["dep:arbitrary"]
-
-[dev-dependencies]
-soroban-sdk = { workspace = true, features = ["testutils"] }

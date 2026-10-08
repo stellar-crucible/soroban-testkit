@@ -15,7 +15,7 @@ repository = "https://github.com/stellar-crucible/soroban-testkit"
 rust-version = "1.91"
 
 [workspace.dependencies]
-soroban-sdk = "28"
+soroban-sdk = { version = "28", features = ["testutils"] }
 soroban-env-host = "28"
 proptest = "1"
 arbitrary = "1"
