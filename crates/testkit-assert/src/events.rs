@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Vec as SorobanVec, Val};
+use soroban_sdk::{Env, Val, Vec as SorobanVec};
 
 pub struct EventMatcher<'a> {
     env: &'a Env,
