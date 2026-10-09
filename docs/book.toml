@@ -10,3 +10,5 @@ default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/stellar-crucible/soroban-testkit"
 edit-url-template = "https://github.com/stellar-crucible/soroban-testkit/edit/main/docs/{path}"
+additional-css = ["theme/custom.css"]
+no-section-label = true

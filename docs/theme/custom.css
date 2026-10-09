@@ -1,0 +1,881 @@
+/* ============================================================================
+   Soroban Testkit — custom mdBook theme
+   Layer 1: design tokens         Layer 4: content components
+   Layer 2: theme palettes        Layer 5: utilities used from Markdown
+   Layer 3: chrome (sidebar, bar)
+   Paths in book.toml: additional-css = ["theme/custom.css"]
+   ========================================================================== */
+
+/* ----------------------------------------------------------------------------
+   1. Design tokens
+   -------------------------------------------------------------------------- */
+:root {
+    /* Layout */
+    --content-max-width: 1080px;
+    --page-padding: 24px;
+    --menu-bar-height: 56px;
+    --sidebar-target-width: 320px;
+    --code-font-size: 0.86em;
+
+    /* Type */
+    --tk-font-sans: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont,
+        "Helvetica Neue", Arial, sans-serif;
+    --tk-font-display: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont,
+        sans-serif;
+    --tk-font-mono: "JetBrains Mono", var(--mono-font);
+
+    /* Brand */
+    --tk-brand: #3b6ef6;
+    --tk-brand-deep: #16225c;
+    --tk-accent: #17e0a6;
+    --tk-accent-dim: #0f9c76;
+    --tk-warn: #e8a33d;
+
+    /* Shape */
+    --tk-radius-sm: 6px;
+    --tk-radius: 12px;
+    --tk-radius-lg: 18px;
+    --tk-border-width: 1px;
+    --tk-shadow-sm: 0 1px 2px rgba(12, 18, 40, 0.08);
+    --tk-shadow: 0 6px 20px rgba(12, 18, 40, 0.12);
+    --tk-gap: 16px;
+
+    /* Neutral surfaces (theme blocks below refine per palette) */
+    --tk-surface: #ffffff;
+    --tk-surface-alt: #f5f7fd;
+    --tk-surface-border: #e2e6f3;
+    --tk-muted: #5b6583;
+
+    /* Chrome: the sidebar keeps one dark identity across every palette */
+    --sidebar-bg: #0d1428;
+    --sidebar-fg: #b9c4e0;
+    --sidebar-non-existant: #55618a;
+    --sidebar-active: var(--tk-accent);
+    --sidebar-spacer: #1d2749;
+    --sidebar-header-border-color: #24304f;
+    --icons: #8592b6;
+    --icons-hover: #ffffff;
+    --scrollbar: #34406a;
+    --searchbar-bg: #16203c;
+    --searchbar-border-color: #2a3760;
+    --searchbar-fg: #e6ebfa;
+    --searchbar-shadow-color: rgba(0, 0, 0, 0.35);
+    --searchresults-header-fg: #8592b6;
+    --searchresults-border-color: #2a3760;
+    --searchresults-li-bg: #16203c;
+    --search-mark-bg: var(--tk-accent);
+    --overlay-bg: rgba(6, 10, 24, 0.55);
+}
+
+/* ----------------------------------------------------------------------------
+   2. Theme palettes — content surface only, chrome stays branded
+   -------------------------------------------------------------------------- */
+.light,
+html:not(.js) {
+    --bg: #fdfdfe;
+    --fg: #1b2340;
+    --links: var(--tk-brand);
+    --inline-code-color: #b4345f;
+    --quote-bg: #f3f6fd;
+    --quote-border: var(--tk-brand);
+    --table-border-color: #e2e6f3;
+    --table-header-bg: #eef2fb;
+    --table-alternate-bg: #f7f9fd;
+    --theme-popup-bg: #ffffff;
+    --theme-popup-border: #dfe4f2;
+    --theme-hover: #f1f5fd;
+    --copy-button-filter: invert(60%) sepia(12%) saturate(500%)
+        hue-rotate(180deg);
+    --color-scheme: light;
+    --tk-surface: #ffffff;
+    --tk-surface-alt: #f5f7fd;
+    --tk-surface-border: #e2e6f3;
+    --tk-muted: #5b6583;
+    --tk-code-bg: #f7f8fc;
+}
+
+.coal,
+.navy,
+.ayu {
+    --bg: #111a30;
+    --fg: #dde4f5;
+    --links: #86a9ff;
+    --inline-code-color: #7fe9c8;
+    --quote-bg: #182543;
+    --quote-border: var(--tk-brand);
+    --table-border-color: #26325a;
+    --table-header-bg: #1a2545;
+    --table-alternate-bg: #16203b;
+    --theme-popup-bg: #16203b;
+    --theme-popup-border: #2a3760;
+    --theme-hover: #1f2c52;
+    --color-scheme: dark;
+    --tk-surface: #17223e;
+    --tk-surface-alt: #1d2a4d;
+    --tk-surface-border: #2a3760;
+    --tk-muted: #93a0c4;
+    --tk-code-bg: #0f1830;
+}
+
+.coal,
+.navy,
+.ayu {
+    --tk-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --tk-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* ----------------------------------------------------------------------------
+   3. Base typography
+   -------------------------------------------------------------------------- */
+html {
+    font-family: var(--tk-font-sans);
+    -webkit-font-smoothing: antialiased;
+}
+
+.content {
+    line-height: 1.75;
+    letter-spacing: 0.005em;
+}
+
+.content main {
+    padding-top: 8px;
+}
+
+.content h1 {
+    font-family: var(--tk-font-display);
+    font-size: 2.1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.6em;
+    padding-bottom: 0.35em;
+    border-bottom: var(--tk-border-width) solid var(--tk-surface-border);
+}
+
+.content h2 {
+    font-size: 1.45rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin-top: 2.4em;
+}
+
+.content h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-top: 2em;
+}
+
+.content h2,
+.content h3 {
+    scroll-margin-top: calc(var(--menu-bar-height) + 12px);
+}
+
+.content h2::before,
+.content h3::before {
+    content: "";
+    display: block;
+    width: 34px;
+    height: 3px;
+    border-radius: 3px;
+    margin-bottom: 0.45em;
+    background: linear-gradient(90deg, var(--tk-brand), var(--tk-accent));
+}
+
+.content p,
+.content li {
+    color: var(--fg);
+}
+
+.content strong {
+    font-weight: 650;
+}
+
+/* Sidebar chapter labels read as section eyebrows */
+.chapter li.part-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sidebar-non-existant);
+    margin-top: 1.6em;
+}
+
+/* ----------------------------------------------------------------------------
+   4. Chrome: menu bar, sidebar, page furniture
+   -------------------------------------------------------------------------- */
+#mdbook-menu-bar,
+.menu-bar {
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: var(--tk-border-width) solid var(--tk-surface-border);
+    box-shadow: none;
+}
+
+.menu-title,
+#mdbook-menu-bar .icon-button {
+    color: var(--fg);
+}
+
+.sidebar .sidebar-scrollbox {
+    padding: 14px 16px 40px;
+}
+
+.sidebar .chapter {
+    padding: 0 4px;
+}
+
+.sidebar .chapter li {
+    margin: 1px 0;
+}
+
+/* mdBook 0.5 nests each entry as li > span.chapter-link-wrapper > a */
+.sidebar .chapter .chapter-link-wrapper > a {
+    display: block;
+    padding: 7px 12px;
+    border-radius: var(--tk-radius-sm);
+    color: var(--sidebar-fg);
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: background-color 140ms ease, color 140ms ease;
+}
+
+.sidebar .chapter .chapter-link-wrapper > a:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+    text-decoration: none;
+}
+
+.sidebar .chapter .chapter-link-wrapper > a.active {
+    background: linear-gradient(
+        90deg,
+        rgba(59, 110, 246, 0.28),
+        rgba(23, 224, 166, 0.12)
+    );
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: inset 2px 0 0 var(--tk-accent);
+}
+
+/* top-level chapters carry a touch more weight than sub-sections */
+.sidebar .chapter > li > .chapter-link-wrapper > a {
+    font-weight: 600;
+    color: #dfe6fa;
+}
+
+/* the "on this page" tree under the active chapter */
+.sidebar .on-this-page {
+    margin: 2px 0 6px 10px;
+    padding-left: 10px;
+    border-left: 1px solid #2a3760;
+}
+
+.sidebar .on-this-page .chapter-link-wrapper > a {
+    font-size: 0.82rem;
+    padding: 4px 10px;
+    color: var(--sidebar-non-existant);
+}
+
+.sidebar .on-this-page .chapter-link-wrapper > a:hover,
+.sidebar .on-this-page .chapter-link-wrapper > a.active {
+    color: #ffffff;
+}
+
+.sidebar .header-item {
+    list-style: none;
+}
+
+/* Prev / next page cards */
+.nav-chapters {
+    background: var(--tk-surface);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border-radius: var(--tk-radius);
+    box-shadow: var(--tk-shadow-sm);
+    min-height: 96px;
+    max-width: 46%;
+    padding: 0 22px;
+    transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.nav-chapters:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--tk-shadow);
+    background: var(--tk-surface);
+}
+
+.nav-links {
+    font-size: 1.02rem;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.sidebar-resize-indicator,
+.sidebar-resize-handle {
+    background: transparent;
+}
+
+/* ----------------------------------------------------------------------------
+   5. Code blocks
+   -------------------------------------------------------------------------- */
+.content pre {
+    background: var(--tk-code-bg);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border-left: 3px solid var(--tk-brand);
+    border-radius: var(--tk-radius);
+    padding: 16px 18px;
+    box-shadow: var(--tk-shadow-sm);
+    overflow-x: auto;
+}
+
+.content pre code {
+    font-family: var(--tk-font-mono);
+    line-height: 1.65;
+}
+
+:not(pre) > code,
+.hljs {
+    font-family: var(--tk-font-mono);
+}
+
+:not(pre) > code {
+    background: var(--tk-surface-alt);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border-radius: var(--tk-radius-sm);
+    padding: 0.12em 0.42em;
+}
+
+/* keep highlighted tokens readable against our surfaces */
+.hljs-string,
+.hljs-attr {
+    color: var(--tk-accent-dim);
+}
+
+/* ----------------------------------------------------------------------------
+   6. Tables, callouts, blockquotes
+   -------------------------------------------------------------------------- */
+.table-wrapper {
+    border-radius: var(--tk-radius);
+    box-shadow: var(--tk-shadow-sm);
+    margin: 1.6em 0;
+}
+
+table {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.94em;
+    width: 100%;
+}
+
+table thead th {
+    background: var(--tk-brand-deep);
+    color: #eaf0ff;
+    font-family: var(--tk-font-sans);
+    font-size: 0.82em;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 12px 16px;
+    border: none;
+}
+
+table thead th:first-child {
+    border-top-left-radius: var(--tk-radius);
+}
+
+table thead th:last-child {
+    border-top-right-radius: var(--tk-radius);
+}
+
+table tbody td {
+    padding: 11px 16px;
+    border-bottom: var(--tk-border-width) solid var(--table-border-color);
+}
+
+blockquote {
+    background: var(--quote-bg);
+    border-left: 4px solid var(--quote-border);
+    border-radius: 0 var(--tk-radius) var(--tk-radius) 0;
+    margin: 1.6em 0;
+    padding: 14px 20px;
+}
+
+/* ----------------------------------------------------------------------------
+   7. Components used from Markdown (raw HTML blocks)
+   -------------------------------------------------------------------------- */
+.tk-hero {
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(
+            120% 160% at 12% 0%,
+            rgba(59, 110, 246, 0.85) 0%,
+            rgba(22, 34, 92, 0.95) 45%,
+            rgba(9, 14, 38, 1) 100%
+        ),
+        var(--tk-brand-deep);
+    border-radius: var(--tk-radius-lg);
+    color: #eef3ff;
+    padding: 40px 36px 34px;
+    margin: 6px 0 30px;
+    box-shadow: var(--tk-shadow);
+}
+
+.tk-hero::after {
+    content: "";
+    position: absolute;
+    right: -60px;
+    top: -70px;
+    width: 260px;
+    height: 260px;
+    border-radius: 50%;
+    background: radial-gradient(
+        circle,
+        rgba(23, 224, 166, 0.32),
+        rgba(23, 224, 166, 0)
+    );
+    pointer-events: none;
+}
+
+.tk-hero__eyebrow {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--tk-accent);
+    margin: 0 0 10px;
+}
+
+.tk-hero a {
+    color: var(--tk-accent);
+    text-decoration: none;
+}
+
+.tk-hero a:hover {
+    text-decoration: underline;
+}
+
+.tk-hero .tk-hero__title {
+    font-family: var(--tk-font-display);
+    font-size: 2.35rem;
+    font-weight: 750;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+    margin: 0 0 12px;
+    border: none;
+    padding: 0;
+    color: #ffffff;
+}
+
+.tk-hero__lede {
+    max-width: 62ch;
+    font-size: 1.03rem;
+    line-height: 1.7;
+    color: #c6d3f2;
+    margin: 0 0 22px;
+}
+
+.tk-hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.tk-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: transform 120ms ease, box-shadow 120ms ease,
+        background-color 120ms ease;
+}
+
+.tk-btn:hover {
+    transform: translateY(-1px);
+    text-decoration: none;
+}
+
+.tk-btn--primary {
+    background: var(--tk-accent);
+    color: #062033;
+    box-shadow: 0 4px 14px rgba(23, 224, 166, 0.3);
+}
+
+.tk-btn--ghost {
+    background: rgba(255, 255, 255, 0.1);
+    color: #eef3ff;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+}
+
+/* Badge strip ------------------------------------------------------------- */
+.tk-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 18px 0 0;
+}
+
+.tk-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--tk-surface-alt);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    color: var(--tk-muted);
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+}
+
+.tk-badge--brand {
+    background: rgba(59, 110, 246, 0.12);
+    border-color: rgba(59, 110, 246, 0.34);
+    color: var(--links);
+}
+
+.tk-badge--accent {
+    background: rgba(23, 224, 166, 0.14);
+    border-color: rgba(15, 156, 118, 0.4);
+    color: var(--tk-accent-dim);
+}
+
+/* Chips that sit on the dark hero read as glass, not paper */
+.tk-hero .tk-badge {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.22);
+    color: #dbe6ff;
+}
+
+.tk-hero .tk-badge--brand {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+
+.tk-hero .tk-badge--accent {
+    background: rgba(23, 224, 166, 0.2);
+    border-color: rgba(23, 224, 166, 0.45);
+    color: #9df3d8;
+}
+
+/* Card grids -------------------------------------------------------------- */
+.tk-grid {
+    display: grid;
+    gap: var(--tk-gap);
+    margin: 1.4em 0 2em;
+}
+
+.tk-grid--2 {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.tk-grid--4 {
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.tk-grid--3 {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.tk-card {
+    background: var(--tk-surface);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border-radius: var(--tk-radius);
+    box-shadow: var(--tk-shadow-sm);
+    padding: 20px 20px 18px;
+    transition: transform 140ms ease, box-shadow 140ms ease,
+        border-color 140ms ease;
+}
+
+.tk-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--tk-shadow);
+    border-color: rgba(59, 110, 246, 0.4);
+}
+
+.tk-card__kicker {
+    display: inline-block;
+    font-family: var(--tk-font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--links);
+    margin: 0 0 6px;
+}
+
+.tk-card h3,
+.tk-card__title {
+    font-size: 1.03rem;
+    font-weight: 650;
+    margin: 0 0 8px;
+    padding: 0;
+    border: none;
+    color: var(--fg);
+}
+
+.tk-card h3::before,
+.tk-card__title::before {
+    content: none;
+}
+
+.tk-card p,
+.tk-card__body {
+    font-size: 0.9rem;
+    line-height: 1.65;
+    color: var(--tk-muted);
+    margin: 0;
+}
+
+.tk-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 14px;
+}
+
+.tk-card--accent {
+    border-left: 3px solid var(--tk-accent);
+}
+
+/* Problem / solution rows ------------------------------------------------- */
+.tk-problems {
+    display: grid;
+    gap: 10px;
+    margin: 1.2em 0 1.8em;
+}
+
+.tk-problem {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    background: var(--tk-surface-alt);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border-radius: var(--tk-radius-sm);
+    padding: 14px 18px;
+}
+
+.tk-problem__label {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--tk-warn);
+}
+
+.tk-problem__body {
+    font-size: 0.94rem;
+    color: var(--fg);
+}
+
+.tk-problem__fix {
+    font-size: 0.9rem;
+    color: var(--tk-muted);
+}
+
+.tk-problem__fix b {
+    color: var(--tk-accent-dim);
+}
+
+/* Numbered steps ---------------------------------------------------------- */
+.tk-steps {
+    list-style: none;
+    counter-reset: tk-step;
+    margin: 1.4em 0 2em;
+    padding: 0;
+}
+
+.tk-steps > li {
+    counter-increment: tk-step;
+    position: relative;
+    margin: 0 0 18px;
+    padding: 4px 0 0 54px;
+    min-height: 34px;
+}
+
+.tk-steps > li::before {
+    content: counter(tk-step);
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--tk-brand-deep);
+    color: #ffffff;
+    font-family: var(--tk-font-mono);
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.tk-steps > li::after {
+    content: "";
+    position: absolute;
+    left: 16px;
+    top: 40px;
+    bottom: -18px;
+    width: 2px;
+    background: var(--tk-surface-border);
+}
+
+.tk-steps > li:last-child::after {
+    content: none;
+}
+
+.tk-steps h4 {
+    font-size: 0.98rem;
+    font-weight: 650;
+    margin: 4px 0 6px;
+}
+
+/* Callouts ---------------------------------------------------------------- */
+.tk-callout {
+    display: block;
+    border-radius: var(--tk-radius);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border-left: 4px solid var(--tk-brand);
+    background: var(--tk-surface-alt);
+    padding: 14px 18px;
+    margin: 1.5em 0;
+    font-size: 0.93rem;
+}
+
+.tk-callout__title {
+    display: block;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--tk-brand);
+    margin-bottom: 4px;
+}
+
+.tk-callout p:last-child {
+    margin-bottom: 0;
+}
+
+.tk-callout--tip {
+    border-left-color: var(--tk-accent);
+}
+
+.tk-callout--tip .tk-callout__title {
+    color: var(--tk-accent-dim);
+}
+
+.tk-callout--warn {
+    border-left-color: var(--tk-warn);
+}
+
+.tk-callout--warn .tk-callout__title {
+    color: var(--tk-warn);
+}
+
+/* Spec table (crate pages) ------------------------------------------------ */
+.tk-spec {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+    margin: 1.2em 0 1.8em;
+}
+
+.tk-spec__item {
+    background: var(--tk-surface);
+    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border-radius: var(--tk-radius-sm);
+    padding: 12px 14px;
+}
+
+.tk-spec__key {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--tk-muted);
+}
+
+.tk-spec__value {
+    font-family: var(--tk-font-mono);
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+/* Small helpers ----------------------------------------------------------- */
+.tk-muted {
+    color: var(--tk-muted);
+}
+
+.tk-eyebrow {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--tk-brand);
+}
+
+.tk-divider {
+    border: none;
+    border-top: var(--tk-border-width) solid var(--tk-surface-border);
+    margin: 2.2em 0;
+}
+
+.tk-cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    background: linear-gradient(
+        100deg,
+        rgba(59, 110, 246, 0.14),
+        rgba(23, 224, 166, 0.12)
+    );
+    border: var(--tk-border-width) solid rgba(59, 110, 246, 0.3);
+    border-radius: var(--tk-radius);
+    padding: 20px 24px;
+    margin: 2em 0 1em;
+}
+
+.tk-cta p {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--fg);
+}
+
+/* ----------------------------------------------------------------------------
+   8. Responsive + print
+   -------------------------------------------------------------------------- */
+@media (max-width: 711px) {
+    :root {
+        --page-padding: 14px;
+    }
+
+    .tk-hero {
+        padding: 26px 20px 24px;
+        border-radius: var(--tk-radius);
+    }
+
+    .tk-hero__title {
+        font-size: 1.75rem;
+    }
+
+    .tk-grid--2,
+    .tk-grid--3,
+    .tk-grid--4 {
+        grid-template-columns: 1fr;
+    }
+
+    .content h1 {
+        font-size: 1.7rem;
+    }
+}
+
+@media print {
+    .tk-hero,
+    .tk-card {
+        box-shadow: none;
+    }
+}
