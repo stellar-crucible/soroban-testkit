@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-09
+
+The first tag whose full CI pipeline — including the supply-chain gate — is green.
+
+### Added
+- `docs/src/guides/counter-example.md`: a worked walkthrough of `examples/counter`, covering registration, event assertions under the SDK v28 latest-invocation scope, budget bounds, and proving authorisation with `without_mock_auths()`
+- `Cargo.lock` is now committed and CI runs clippy and tests with `--locked`, so `cargo deny` audits the same dependency graph we build against
+
+### Fixed
+- `deny.toml`: dropped the `workspace-skip` key that cargo-deny 0.20 rejects, removed advisory ignores for crates we do not depend on, and stated an explicit version on the internal `testkit-core` path dependencies so they are no longer wildcard requirements
+
 ## [0.1.0] - 2026-10-09
 
 First release, published for the Stellar Wave funding program.
@@ -26,4 +37,5 @@ First release, published for the Stellar Wave funding program.
 - Crate manifest metadata: keywords, categories and documentation URLs
 - Drips Wave complexity labels (trivial/medium/high) and labelled issues
 
+[0.1.1]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.1.0

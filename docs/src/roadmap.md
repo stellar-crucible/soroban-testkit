@@ -3,7 +3,7 @@
 Where Soroban Testkit is going, and which parts are open for contributors. Anything listed here is a proposal until an issue exists for it — the tracker is the source of truth.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Current</span><span class="tk-spec__value">v0.1.0</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Current</span><span class="tk-spec__value">v0.1.1</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Cadence</span><span class="tk-spec__value">Monthly Wave cycle</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Tracking</span><span class="tk-spec__value">GitHub Issues</span></div>
 </div>
@@ -47,14 +47,21 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 
 | Area | Work | Complexity |
 |------|------|------------|
-| Assertions | `assert_event_emitted!` macro with topic and data matching | `complexity:high` |
-| Assertions | Negative assertions (`assert_not_emitted`) | `complexity:trivial` |
-| Assertions | Matchers that aggregate events across several invocations | `complexity:medium` |
-| Fixtures | Ledger time helpers on `TestContext` | `complexity:trivial` |
-| Fixtures | Context reset between sub-tests | `complexity:trivial` |
-| Generators | `Address` strategies and XDR-compatible values | `complexity:medium` / `high` |
-| Core | Storage snapshot and diff utilities | `complexity:high` |
-| Tooling | Budget baseline tracking across PRs in CI | `complexity:medium` |
+| Assertions | `assert_event_emitted!` macro with topic and data matching ([#1](https://github.com/stellar-crucible/soroban-testkit/issues/1)) | `complexity:high` |
+| Assertions | `assert_auth_matches!` macro ([#2](https://github.com/stellar-crucible/soroban-testkit/issues/2)) | `complexity:medium` |
+| Assertions | Negative assertions (`assert_not_emitted`) ([#11](https://github.com/stellar-crucible/soroban-testkit/issues/11)) | `complexity:trivial` |
+| Assertions | Data predicates on emitted events ([#18](https://github.com/stellar-crucible/soroban-testkit/issues/18)) | `complexity:medium` |
+| Assertions | Matchers that aggregate events across several invocations ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19)) | `complexity:medium` |
+| Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
+| Fixtures | Ledger time helpers on `TestContext` ([#12](https://github.com/stellar-crucible/soroban-testkit/issues/12)) | `complexity:trivial` |
+| Fixtures | Context reset between sub-tests ([#17](https://github.com/stellar-crucible/soroban-testkit/issues/17)) | `complexity:trivial` |
+| Core | Budget regression detection ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3)) | `complexity:high` |
+| Core | Error code decoder behind `DecodedError` ([#5](https://github.com/stellar-crucible/soroban-testkit/issues/5)) | `complexity:medium` |
+| Core | Storage snapshot and diff utilities ([#4](https://github.com/stellar-crucible/soroban-testkit/issues/4)) | `complexity:high` |
+| Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
+| Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
+| Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
+| Tooling | Budget baseline tracking across PRs in CI ([#14](https://github.com/stellar-crucible/soroban-testkit/issues/14)) | `complexity:medium` |
 
 ## Later
 
