@@ -1,8 +1,8 @@
 extern crate std;
 
-use soroban_sdk::{Address, Env};
+use soroban_sdk::Address;
 use soroban_testkit_assert::events::EventMatcher;
-use soroban_testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget::{BudgetBaseline, BudgetMetric, BudgetSnapshot};
 use soroban_testkit_fixtures::builder::TestContextBuilder;
 use soroban_testkit_fixtures::TestContext;
 
@@ -107,7 +107,7 @@ fn events_can_be_filtered_to_the_contract_that_emitted_them() {
 }
 
 #[test]
-fn increment_consumes_a_predictable_amount_of_cpu() {
+fn increment_stays_inside_its_cpu_ceiling() {
     let ctx = context(1);
     let (_id, client) = client_for(&ctx);
     let caller = ctx.users[0].clone();
@@ -115,20 +115,65 @@ fn increment_consumes_a_predictable_amount_of_cpu() {
     // Warm up the cost estimator so a budget snapshot is available.
     client.get();
 
-    let env: &Env = &ctx.env;
+    soroban_testkit_core::budget_guard!(
+        &ctx.env,
+        "increment",
+        { cpu_max: 20_000_000, mem_max: 20_000_000 },
+        || client.increment(&caller, &1)
+    );
+}
+
+#[test]
+#[should_panic(expected = "BUDGET kind=ceiling case=increment metric=cpu_insns")]
+fn a_call_past_its_ceiling_fails_the_test_with_a_parseable_line() {
+    let ctx = context(1);
+    let (_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+    client.get();
+
+    soroban_testkit_core::budget_guard!(&ctx.env, "increment", { cpu_max: 1 }, || {
+        client.increment(&caller, &1)
+    });
+}
+
+#[test]
+fn a_recorded_baseline_accepts_the_same_cost_and_flags_a_cheaper_one() {
+    let ctx = context(1);
+    let (_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+    client.get();
+
+    let env = ctx.env.clone();
     let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
     client.increment(&caller, &1);
-    let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
+    let measured = before.diff(&BudgetSnapshot::capture(&env.cost_estimate().budget()));
 
-    let cost = before.diff(&after);
+    let mut baseline = BudgetBaseline::new();
+    baseline.record("increment", measured);
+
+    // The same call measured the same way stays inside its own tolerance.
+    baseline
+        .guard("increment")
+        .tolerance_percent(25)
+        .run(&ctx.env, || {
+            client.increment(&caller, &1);
+        });
+
+    // A baseline recorded from a build that was half as expensive is a regression.
+    let halved = BudgetSnapshot {
+        cpu_insns: measured.cpu_insns / 2,
+        mem_bytes: measured.mem_bytes / 2,
+    };
+    let violations = baseline
+        .guard("increment")
+        .baseline(Some(halved))
+        .tolerance_percent(10)
+        .violations(&measured);
     assert!(
-        cost.cpu_insns > 0,
-        "a contract call must consume CPU instructions"
-    );
-    assert!(
-        cost.cpu_insns < 20_000_000,
-        "counter increment regressed to {} CPU instructions",
-        cost.cpu_insns
+        violations
+            .iter()
+            .any(|violation| violation.metric == BudgetMetric::Cpu),
+        "a call costing twice its baseline must be reported as growth"
     );
 }
 

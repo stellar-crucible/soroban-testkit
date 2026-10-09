@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `soroban-testkit-core`: `BudgetGuard` bounds one named call with an absolute CPU and memory ceiling and a growth allowance measured against a recorded cost, and `run()` captures the delta around the invocation itself ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3))
+- `soroban-testkit-core`: `budget_guard!` for the single call site, and `BudgetBaseline` — recorded costs as a JSON file, `{ "version": 1, "cases": { "increment": { "cpu_insns": 1873412, "mem_bytes": 216480 } } }`, loaded and saved by path so CI can commit the numbers next to the suite
+- A guard reports **every** limit one cost breaks, ceilings before growth, each as one `key=value` line (`BUDGET kind=growth case=transfer metric=cpu_insns actual=1500000 limit=1100000 baseline=1000000 tolerance_percent=10`) so a CI step can grep or trend them without parsing a panic backtrace
+- 22 more tests, including four that drive the macro and the guard through a registered contract, and three in `examples/counter` that measure one real increment twice and accept it against a baseline it recorded itself
 - `soroban-testkit-fixtures`: `TestContext::reset` swaps in a fresh env — ledger, events, authorizations and contract storage all cleared — while carrying the admin and every user across, so a multi-phase test stops rebuilding its fixture to get a clean chain ([#17](https://github.com/stellar-crucible/soroban-testkit/issues/17))
 - `soroban-testkit-fixtures`: `TestContext::reset_full` for the phase that wants new identities as well as a new chain
 - 9 more tests, including one proving a carried address still authorizes a contract call in the new env, one proving a contract registered before the reset holds nothing after it, and one pinning the SDK address-counter behaviour `reset_full` works around
@@ -15,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 11 more tests, including two that read the moved ledger back through a registered contract to prove the change reaches the host rather than a cached field
 
 ### Changed
+- `soroban-testkit-core` now depends on `serde` and `serde_json`, which is what the baseline file is. Both were already resolved in `Cargo.lock` through `soroban-ledger-snapshot`, so no new crate enters the graph.
 - `TestContext` gained a public `mock_auths` field, because an `Env` cannot report whether it mocks authorizations and `reset` has to reproduce the policy rather than invent one. The struct now has four fields, so a `TestContext { env, admin, users }` literal no longer compiles — `new`, `with_env` and `TestContextBuilder` are the ways in. A context wrapped around a hand-built unmocked env should set `ctx.mock_auths = false`.
 - The two ledger helpers each move one axis. `advance_time` leaves the sequence where it was and `advance_ledger` leaves the clock where it was, so a test that only wants entries to expire does not silently move time as well. Both saturate at `u64::MAX` and `u32::MAX` instead of wrapping.
 

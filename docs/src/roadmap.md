@@ -72,6 +72,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>reset()</code> swaps in a fresh env — ledger, events, auths and storage gone — and carries every address across, so a two-phase test keeps its actors instead of rebuilding its fixture — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/17">#17</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-core</span>
+    <h3 class="tk-card__title">Budget regression detection</h3>
+    <p class="tk-card__body"><code>BudgetGuard</code> and <code>budget_guard!</code> hold a call to a CPU and memory ceiling plus a growth allowance against a recorded cost, and <code>BudgetBaseline</code> keeps those costs in a committed JSON file — every breach printed as one parseable line — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/3">#3</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
     <h3 class="tk-card__title">On crates.io</h3>
     <p class="tk-card__body">The workspace publishes as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, so a consumer adds a version requirement instead of a Git pin.</p>
@@ -87,11 +92,10 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 | Assertions | Data predicates on emitted events ([#18](https://github.com/stellar-crucible/soroban-testkit/issues/18)) | `complexity:medium` |
 | Assertions | Matchers that aggregate events across several invocations ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
-| Core | Budget regression detection ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3)) | `complexity:high` |
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
 | Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
-| Tooling | Budget baseline tracking across PRs in CI ([#14](https://github.com/stellar-crucible/soroban-testkit/issues/14)) | `complexity:medium` |
+| Tooling | Baseline files diffed between PRs in CI ([#14](https://github.com/stellar-crucible/soroban-testkit/issues/14)) | `complexity:medium` |
 
 ## Later
 

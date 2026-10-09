@@ -20,6 +20,8 @@ soroban-sdk = { version = "28", features = ["testutils"] }
 soroban-env-host = { version = "28", features = ["testutils"] }
 proptest = "1"
 arbitrary = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [profile.release]
 opt-level = "z"
