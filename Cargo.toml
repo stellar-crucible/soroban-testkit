@@ -5,6 +5,7 @@ members = [
     "crates/testkit-assert",
     "crates/testkit-fixtures",
     "crates/testkit-generators",
+    "examples/counter",
 ]
 
 [workspace.package]
