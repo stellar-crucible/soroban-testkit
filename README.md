@@ -2,7 +2,7 @@
 
 A comprehensive testing and debugging toolkit for [Soroban](https://developers.stellar.org/docs/smart-contracts) smart contracts on the Stellar network.
 
-**📖 Documentation: [stellar-crucible.github.io/soroban-testkit](https://stellar-crucible.github.io/soroban-testkit/)**
+**📖 Documentation: [stellar-crucible.github.io/soroban-testkit](https://stellar-crucible.github.io/soroban-testkit/)** · **Telegram: [t.me/+_tukd5_0gtM1MzA0](https://t.me/+_tukd5_0gtM1MzA0)**
 
 [![Docs](https://img.shields.io/badge/docs-mdBook-1a2f6b.svg)](https://stellar-crucible.github.io/soroban-testkit/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -201,6 +201,10 @@ memory ceilings, and a `#[should_panic]` case that shows an unmocked
 what `get` and `increment` cost, and the `Budget baseline` workflow re-measures
 them on every pull request so a storage read nobody intended cannot slip in as a
 free change.
+
+## Community
+
+Release notices and discussion happen in the [Telegram channel](https://t.me/+_tukd5_0gtM1MzA0). Bug reports and feature requests go to [GitHub issues](https://github.com/stellar-crucible/soroban-testkit/issues), which is also where the funded tasks live.
 
 ## Contributing
 
