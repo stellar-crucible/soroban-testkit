@@ -14,6 +14,15 @@ let ctx = TestContextBuilder::new()
 let (env, admin, users) = (&ctx.env, &ctx.admin, &ctx.users);
 ```
 
+Move the ledger for time-dependent contracts:
+
+```rust
+let mut ctx = TestContext::new();
+ctx.set_timestamp(1_700_000_000);
+ctx.advance_time(86_400 * 30); // 30 days later, sequence untouched
+ctx.advance_ledger(10);        // 10 closes later, clock untouched
+```
+
 - Documentation: <https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html>
 - Source: [crates/soroban-testkit-fixtures](https://github.com/stellar-crucible/soroban-testkit/tree/main/crates/soroban-testkit-fixtures)
 - Licence: Apache-2.0

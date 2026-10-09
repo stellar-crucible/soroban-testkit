@@ -62,6 +62,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>DecodedError::from_error</code> names the host category and meaning behind a packed error code, and <code>ErrorRegistry</code> adds words for your own <code>#[contracterror]</code> codes — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/5">#5</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-fixtures</span>
+    <h3 class="tk-card__title">Ledger time helpers</h3>
+    <p class="tk-card__body"><code>advance_time()</code>, <code>set_timestamp()</code> and <code>advance_ledger()</code> move the clock or the height on their own, so a vesting or TTL test reads as a span instead of as a hand-built <code>LedgerInfo</code> — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/12">#12</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
     <h3 class="tk-card__title">On crates.io</h3>
     <p class="tk-card__body">The workspace publishes as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, so a consumer adds a version requirement instead of a Git pin.</p>
@@ -77,7 +82,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 | Assertions | Data predicates on emitted events ([#18](https://github.com/stellar-crucible/soroban-testkit/issues/18)) | `complexity:medium` |
 | Assertions | Matchers that aggregate events across several invocations ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
-| Fixtures | Ledger time helpers on `TestContext` ([#12](https://github.com/stellar-crucible/soroban-testkit/issues/12)) | `complexity:trivial` |
 | Fixtures | Context reset between sub-tests ([#17](https://github.com/stellar-crucible/soroban-testkit/issues/17)) | `complexity:trivial` |
 | Core | Budget regression detection ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3)) | `complexity:high` |
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
