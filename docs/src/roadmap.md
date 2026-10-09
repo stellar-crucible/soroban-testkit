@@ -3,7 +3,7 @@
 Where Soroban Testkit is going, and which parts are open for contributors. Anything listed here is a proposal until an issue exists for it — the tracker is the source of truth.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Current</span><span class="tk-spec__value">v0.2.0</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Current</span><span class="tk-spec__value">v0.3.0</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Cadence</span><span class="tk-spec__value">Monthly Wave cycle</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Tracking</span><span class="tk-spec__value">GitHub Issues</span></div>
 </div>
@@ -93,8 +93,8 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
   </div>
   <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
-    <h3 class="tk-card__title">Packaged for the registry</h3>
-    <p class="tk-card__body">The workspace is packaged and named for a crates.io release — <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, each with its own README and metadata — so a consumer will add a version requirement instead of a Git pin. Until those packages appear on the registry, install from the <code>v0.2.0</code> tag.</p>
+    <h3 class="tk-card__title">Published on crates.io</h3>
+    <p class="tk-card__body">All four crates are live on the registry as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, with <code>0.3.0</code> as the current stable release, so a consumer adds a version requirement instead of a Git pin. The release tag stays available for anyone who wants to pin the source commit its CI went green on.</p>
   </div>
 </div>
 
