@@ -110,6 +110,35 @@ fn events_can_be_filtered_to_the_contract_that_emitted_them() {
 }
 
 #[test]
+fn the_increment_event_carries_the_caller_and_the_new_count() {
+    let ctx = context(1);
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    client.increment(&caller, &12);
+
+    // A struct published with `contractevent` arrives as a map keyed by field
+    // name, so a predicate names the field it cares about instead of the whole
+    // payload, and only the fields the test is actually about.
+    EventMatcher::new(&ctx.env)
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_data_matches(|data| {
+            data.field("new_count")
+                .and_then(|value| value.deserialize::<u32>())
+                == Some(12)
+        });
+    EventMatcher::new(&ctx.env)
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_data_matches(|data| {
+            data.field("caller")
+                .and_then(|value| value.deserialize::<Address>())
+                == Some(caller.clone())
+        });
+}
+
+#[test]
 fn increment_stays_inside_its_cpu_ceiling() {
     let ctx = context(1);
     let (_id, client) = client_for(&ctx);

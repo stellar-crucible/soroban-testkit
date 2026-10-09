@@ -59,11 +59,14 @@ fn test_token_transfer() {
     // 4. Read the metering that invocation left behind
     let cost = BudgetSnapshot::last_invocation(&ctx.env);
 
-    // 5. Assert events were emitted
+    // 5. Assert events were emitted, and what they carried
     EventMatcher::new(&ctx.env)
         .from_contract(&contract_id)
         .with_topic("Transfer")
         .assert_emitted();
+    EventMatcher::new(&ctx.env)
+        .with_topic("Transfer")
+        .assert_data_matches(|data| data.deserialize::<i128>() == Some(1_000));
 
     // 6. Check resource consumption
     assert!(cost.cpu_insns < 500_000);
