@@ -28,7 +28,20 @@ EventMatcher::new(&env)
     });
 ```
 
-Matchers read the most recent contract invocation, which is what Soroban SDK v28 exposes through `env.events().all()`.
+A matcher reads the invocation that just ran — what Soroban SDK v28 exposes through `env.events().all()`. Gather several calls to assert over them as one set:
+
+```rust
+use soroban_testkit_assert::events::EventLog;
+
+let mut log = EventLog::new(&env);
+client.transfer(&from, &to, &100);
+log.collect();
+client.close_offer(&from);
+log.collect();
+
+log.matcher().with_topic("Transfer").assert_count(1);
+log.matcher().with_topic("Refund").assert_not_emitted();
+```
 
 - Documentation: <https://stellar-crucible.github.io/soroban-testkit/crates/assert.html>
 - Source: [crates/soroban-testkit-assert](https://github.com/stellar-crucible/soroban-testkit/tree/main/crates/soroban-testkit-assert)

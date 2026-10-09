@@ -62,6 +62,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>assert_data_matches()</code> reads what an event carried — a typed <code>deserialize</code>, one <code>field</code> of the map a <code>#[contractevent]</code> struct publishes, or the raw <code>ScVal</code> — and a failure prints every payload it rejected — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/18">#18</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-assert</span>
+    <h3 class="tk-card__title">Events aggregated across calls</h3>
+    <p class="tk-card__body"><code>EventLog</code> gathers each invocation's events as a test runs, and <code>matcher()</code> hands the sequence to the same filters and assertions — so <code>assert_count</code>, <code>with_topic</code> and <code>assert_not_emitted</code> speak about several calls at once, and <code>topics()</code> reads the order back — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/19">#19</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-core</span>
     <h3 class="tk-card__title">Error code decoder</h3>
     <p class="tk-card__body"><code>DecodedError::from_error</code> names the host category and meaning behind a packed error code, and <code>ErrorRegistry</code> adds words for your own <code>#[contracterror]</code> codes — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/5">#5</a>, closed.</p>
@@ -99,7 +104,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 |------|------|------------|
 | Assertions | `assert_event_emitted!` macro with topic and data matching ([#1](https://github.com/stellar-crucible/soroban-testkit/issues/1)) | `complexity:high` |
 | Assertions | `assert_auth_matches!` macro ([#2](https://github.com/stellar-crucible/soroban-testkit/issues/2)) | `complexity:medium` |
-| Assertions | Matchers that aggregate events across several invocations ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |

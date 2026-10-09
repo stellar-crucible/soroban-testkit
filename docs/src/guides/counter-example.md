@@ -90,7 +90,7 @@ fn increment_accumulates_and_returns_the_new_value() {
 
 ## Step 3 — assert on events
 
-`EventMatcher` reads the events of the **most recent invocation**, which is what `env.events().all()` exposes in SDK v28. Assert between calls, not after the whole test.
+`EventMatcher` reads the events of the **most recent invocation**, which is what `env.events().all()` exposes in SDK v28 — so a per-call assertion goes right after that call. Judging several calls together is `EventLog`'s job, shown at the end of this step.
 
 ```rust
 use soroban_testkit_assert::events::EventMatcher;
@@ -133,7 +133,7 @@ EventMatcher::new(&ctx.env)
     .assert_not_emitted();
 ```
 
-It asserts against the latest invocation only — the same v28 scope as every other matcher here.
+It reads the latest invocation, so the topic is proven absent from the call under test; `EventLog` below widens that to a whole sequence of calls.
 
 The counter publishes its event with `#[contractevent]`, so the payload arrives as a map keyed by field name and `assert_data_matches` reads the field the test is about:
 
@@ -166,6 +166,44 @@ Expected an event whose data matches, checked 1 event(s) with data [{"caller": C
 The account key is abbreviated here; a real message prints the whole strkey, because a hash of the public key is not what a test author compares against.
 
 See [soroban-testkit-assert](../crates/assert.html) for `deserialize`, `field` and `raw`.
+
+### Several calls as one set
+
+Counting the events of a whole run is the one thing a single-call matcher cannot say: "these increments emitted two events, and the first carried 5". `EventLog` collects after each call the test means to judge, and its matcher takes the same filters and assertions:
+
+```rust
+use soroban_testkit_assert::events::EventLog;
+
+#[test]
+fn a_sequence_of_calls_can_be_asserted_over_as_one_set() {
+    let ctx = context(1);
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    let mut log = EventLog::new(&ctx.env);
+    client.increment(&caller, &5);
+    log.collect();
+    client.get();
+    log.collect();
+    client.increment(&caller, &7);
+    log.collect();
+
+    log.matcher()
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_count(2);
+
+    log.matcher()
+        .with_topic("incremented")
+        .assert_data_matches(|data| {
+            data.field("new_count")
+                .and_then(|value| value.deserialize::<u32>())
+                == Some(5)
+        });
+}
+```
+
+`client.get()` publishes nothing, so it adds nothing to the log — that is what makes a log-wide `assert_not_emitted()` mean "never in these calls". Collection stays explicit because SDK v28 gives a test no per-invocation hook to drain: a call nobody collected from is simply not in scope. Events keep their call order, and `log.topics()` reads that order back.
 
 ## Step 4 — bound the cost
 

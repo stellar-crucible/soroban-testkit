@@ -110,6 +110,21 @@ fn test_emits_transfer_event() {
 }
 ```
 
+Each matcher reads the call that just ran. `EventLog` gathers several calls so one assertion speaks about the sequence:
+
+```rust
+use soroban_testkit_assert::events::EventLog;
+
+let mut log = EventLog::new(&env);
+client.transfer(&sender, &receiver, &100);
+log.collect();
+client.close_offer(&sender);
+log.collect();
+
+log.matcher().with_topic("Transfer").assert_count(1);
+log.matcher().with_topic("Refund").assert_not_emitted();
+```
+
 ### Budget Tracking
 
 Catch resource issues before deployment:
@@ -169,7 +184,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 142 tests: all four crates + examples/counter
+cargo test --workspace --locked      # 153 tests: all four crates + examples/counter
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check

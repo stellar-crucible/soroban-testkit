@@ -13,7 +13,7 @@ Contributions of every size are welcome. The repository guide — [CONTRIBUTING.
 <ol class="tk-steps">
   <li>
     <h4>Fork and clone</h4>
-    <p>Create your fork of <code>stellar-crucible/soroban-testkit</code>, then <code>cargo test --workspace --locked</code> to confirm a green baseline (142 tests run locally; two more are <code>#[ignore]</code>d and belong to CI).</p>
+    <p>Create your fork of <code>stellar-crucible/soroban-testkit</code>, then <code>cargo test --workspace --locked</code> to confirm a green baseline (153 tests run locally; two more are <code>#[ignore]</code>d and belong to CI).</p>
   </li>
   <li>
     <h4>Claim an issue</h4>

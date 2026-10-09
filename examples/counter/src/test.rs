@@ -4,7 +4,7 @@ extern crate std;
 use std::{println, string::ToString, vec::Vec};
 
 use soroban_sdk::Address;
-use soroban_testkit_assert::events::EventMatcher;
+use soroban_testkit_assert::events::{EventLog, EventMatcher};
 use soroban_testkit_core::budget::{BudgetBaseline, BudgetMetric, BudgetSnapshot};
 use soroban_testkit_fixtures::builder::TestContextBuilder;
 use soroban_testkit_fixtures::TestContext;
@@ -136,6 +136,43 @@ fn the_increment_event_carries_the_caller_and_the_new_count() {
                 .and_then(|value| value.deserialize::<Address>())
                 == Some(caller.clone())
         });
+}
+
+#[test]
+fn a_sequence_of_calls_can_be_asserted_over_as_one_set() {
+    let ctx = context(1);
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    let mut log = EventLog::new(&ctx.env);
+    client.increment(&caller, &5);
+    log.collect();
+    // A read that publishes nothing contributes nothing, which is what lets an
+    // assertion over the log mean "not in any of these calls".
+    client.get();
+    log.collect();
+    client.increment(&caller, &7);
+    log.collect();
+
+    log.matcher()
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_count(2);
+    assert_eq!(log.len(), 2);
+
+    // The first call's payload stays in scope after a later call overwrote it.
+    log.matcher()
+        .with_topic("incremented")
+        .assert_data_matches(|data| {
+            data.field("new_count")
+                .and_then(|value| value.deserialize::<u32>())
+                == Some(5)
+        });
+
+    // The same env answers for one call without the log.
+    EventMatcher::new(&ctx.env)
+        .with_topic("incremented")
+        .assert_count(1);
 }
 
 #[test]
