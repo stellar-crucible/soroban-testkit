@@ -96,7 +96,7 @@ soroban-testkit/                    Cargo workspace, resolver 2
 </div>
 
 ```rust
-use soroban_testkit_assert::EventMatcher;
+use soroban_testkit_assert::events::EventMatcher;
 use soroban_testkit_fixtures::TestContext;
 
 #[test]

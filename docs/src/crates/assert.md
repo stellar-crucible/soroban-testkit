@@ -16,6 +16,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventMatcher::assert_not_emitted()` | No matching event exists |
 | `EventMatcher::assert_none_match(pred)` | No matching event satisfies a predicate |
 | `EventMatcher::assert_count(n)` | Exactly `n` events were emitted |
+| `EventMatcher::assert_data_matches(pred)` | One event's payload satisfies a predicate |
 | `EventMatcher::from_contract(addr)` | Restricts matches to one contract address |
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
@@ -85,6 +86,61 @@ panicked at 'Expected no events to be emitted, found 1 — unexpected event: top
   <span class="tk-callout__title">"Not emitted" means "not in this invocation"</span>
   <p>The same v28 scope applies to the negative assertions: <code>assert_not_emitted()</code> proves the <strong>most recent invocation</strong> published nothing matching, not that no earlier call did. Run the assertion immediately after the call under test. Aggregating across a whole test is <a href="https://github.com/stellar-crucible/soroban-testkit/issues/19">issue #19</a>.</p>
 </div>
+
+## Asserting on payload data
+
+Topics say which event fired; the data says what happened. `assert_data_matches` hands the predicate one `EventData` per event in scope, after the contract and topic filters:
+
+```rust
+use soroban_testkit_assert::events::EventMatcher;
+
+// A single-value payload, read as the type it is
+EventMatcher::new(&env)
+    .with_topic("transfer")
+    .assert_data_matches(|data| data.deserialize::<i128>() == Some(1_000));
+
+// A struct published with `contractevent` arrives as a map keyed by field name
+EventMatcher::new(&env)
+    .from_contract(&contract_id)
+    .with_topic("incremented")
+    .assert_data_matches(|data| {
+        data.field("new_count")
+            .and_then(|value| value.deserialize::<u32>())
+            == Some(12)
+    });
+
+// A `contracttype` struct deserializes whole, when a test wants all of it
+EventMatcher::new(&env)
+    .with_topic("moved")
+    .assert_data_matches(|data| data.deserialize::<Moved>() == Some(expected));
+
+// Anything the typed views cannot express: the payload as the ledger stored it
+EventMatcher::new(&env)
+    .with_topic("flag")
+    .assert_data_matches(|data| matches!(data.raw(), soroban_sdk::xdr::ScVal::Bool(true)));
+```
+
+| View | Returns | Use it when |
+|------|---------|-------------|
+| `deserialize::<T>()` | `Option<T>` | the payload is one value of a known type — a number, `Address`, `Vec`/`Map`, or a `contracttype` struct |
+| `field("name")` | `Option<EventData>` | the payload is a map, which is what a `contractevent` struct becomes, and one field is the point |
+| `raw()` | `&ScVal` | neither fits, or the test is about the shape itself |
+
+`deserialize` yields `None` rather than panicking, so one predicate can probe a payload without assuming it. `field` composes with it: `data.field("amount").and_then(|value| value.deserialize::<i128>())`.
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">A <code>contractevent</code> struct is not a <code>contracttype</code> struct</span>
+  <p>The struct declared with <code>contractevent</code> gets an <code>Event</code> implementation, not ledger conversions, so <code>deserialize::&lt;Incremented&gt;()</code> will not compile against it. Read its fields with <code>field</code>. Note too that the SDK publishes event maps <strong>sparse</strong> by default: a field whose value is <code>None</code> is absent from the map rather than stored as void, so <code>field</code> returning <code>None</code> covers both "no such field" and "field left empty".</p>
+</div>
+
+A failed data assertion prints the payloads it was handed, which is the difference between a message you can read and a re-run:
+
+```text
+panicked at 'Expected an event whose data matches, checked 4 event(s) with data [7, 9000, true, "widget"]'
+panicked at 'Expected an event whose data matches, checked 1 event(s) with data [{"amount": 500, "to": Contract(CAAAAAA...FCT4)}]'
+```
+
+Scalars print their values, maps and vectors print their entries, an address prints as its strkey (abbreviated above, printed whole in a real message), and a shape too rare to spell out falls back to its XDR debug form, so the message never hides the value it rejected. When no event is in scope the message says so instead of claiming the data was wrong.
 
 ## Authorization matching
 

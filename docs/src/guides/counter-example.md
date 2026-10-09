@@ -135,6 +135,38 @@ EventMatcher::new(&ctx.env)
 
 It asserts against the latest invocation only — the same v28 scope as every other matcher here.
 
+The counter publishes its event with `#[contractevent]`, so the payload arrives as a map keyed by field name and `assert_data_matches` reads the field the test is about:
+
+```rust
+#[test]
+fn the_increment_event_carries_the_caller_and_the_new_count() {
+    let ctx = context(1);
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    client.increment(&caller, &12);
+
+    EventMatcher::new(&ctx.env)
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_data_matches(|data| {
+            data.field("new_count")
+                .and_then(|value| value.deserialize::<u32>())
+                == Some(12)
+        });
+}
+```
+
+A failed assertion reports the payload it was handed instead of only saying the predicate was wrong — this is the counter's event after an `increment` the predicate did not expect:
+
+```text
+Expected an event whose data matches, checked 1 event(s) with data [{"caller": Contract(CAAAAAA...FCT4), "new_count": 7}]
+```
+
+The account key is abbreviated here; a real message prints the whole strkey, because a hash of the public key is not what a test author compares against.
+
+See [soroban-testkit-assert](../crates/assert.html) for `deserialize`, `field` and `raw`.
+
 ## Step 4 — bound the cost
 
 Wrap the call in a guard instead of reading the meter by hand. The guard runs the closure and judges the metering that call left behind, so there is no warm-up call and no delta to compute.
