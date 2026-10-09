@@ -16,11 +16,14 @@ The Soroban runtime enforces resource budgets per transaction. The SDK's test en
   <div class="tk-problem">
     <span class="tk-problem__label">Symptom</span>
     <span class="tk-problem__body">Green test suite, HOST_VALUE_SIZE / budget exhausted error on-chain.</span>
-    <span class="tk-problem__fix">Fix: assert on the <b>CPU and memory delta</b> of each call, not just its result.</span>
+    <span class="tk-problem__fix">Fix: assert on the <b>CPU and memory cost</b> of each call, not just its result.</span>
   </div>
 </div>
 
 ## Basic budget tracking
+
+The SDK meters one call at a time, and the metering of the call that just
+finished is what a test should read:
 
 ```rust
 use soroban_testkit_core::budget::BudgetSnapshot;
@@ -30,12 +33,10 @@ fn test_budget_regression() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
     // ... invoke function
-    let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
-    let cost = before.diff(&after);
+    client.increment(&caller, &1);
 
-    // Set thresholds based on your contract's SLA
+    let cost = BudgetSnapshot::last_invocation(&env);
     assert!(cost.cpu_insns < 1_000_000, "CPU: {}", cost.cpu_insns);
     assert!(cost.mem_bytes < 100_000, "Memory: {}", cost.mem_bytes);
 }
@@ -43,21 +44,22 @@ fn test_budget_regression() {
 
 <div class="tk-callout">
   <span class="tk-callout__title">Where the numbers come from</span>
-  <p>SDK v28 exposes costs through <code>env.cost_estimate().budget()</code>. The older <code>env.budget()</code> accessor is deprecated and should not appear in new tests.</p>
+  <p>SDK v28 meters each top-level invocation separately: <code>env.cost_estimate().resources()</code> returns what the call that just ran consumed, and <code>env.cost_estimate().budget()</code> returns the same metering as a running total for that call. The older <code>env.budget()</code> accessor is deprecated and should not appear in new tests.</p>
 </div>
 
-<div class="tk-callout">
-  <span class="tk-callout__title">Warm the estimator first</span>
-  <p>An environment that has never run a contract call reports nothing to estimate, so <code>capture()</code> on it reads zero. Make one call — a read is enough — before the first snapshot.</p>
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">What a native test contract hides</span>
+  <p>A contract registered with <code>env.register(...)</code> runs as host code, so VM instantiation, wasm execution and rent reads are never metered — the reading is the storage and host-work half of the real cost, not all of it. Treat these numbers as a comparison between builds of the same contract rather than as a fee quote, and use a deployed wasm contract when you need the full figure.</p>
 </div>
 
 ## Reading a snapshot
 
 | Field | Meaning | Suggested use |
 |-------|---------|---------------|
-| `cpu_insns` | Instructions consumed between captures | Regression guard in CI |
-| `mem_bytes` | Memory footprint between captures | Keeps entries under ledger limits |
-| `diff()` | Signed delta of two snapshots | Compare before / after one call |
+| `cpu_insns` | Instructions metered for one invocation | Regression guard in CI |
+| `mem_bytes` | Memory metered for one invocation | Keeps entries under ledger limits |
+| `last_invocation()` | Snapshot of the call that just ran | The reading a test asserts on |
+| `diff()` | Saturating delta of two snapshots | Comparing two readings of one running budget |
 
 ## Asserting a limit instead of a number
 
@@ -80,7 +82,7 @@ time the case was measured.
   </li>
   <li>
     <h4>Measure the call</h4>
-    <p><code>.run(&amp;env, || client.transfer(&amp;from, &amp;to, &amp;1000))</code> captures before and after itself and asserts the delta, returning the invocation's value.</p>
+    <p><code>.run(&amp;env, || client.transfer(&amp;from, &amp;to, &amp;1000))</code> makes the call, reads the metering that call left behind, asserts against it, and returns the invocation's value.</p>
   </li>
 </ol>
 
@@ -92,8 +94,6 @@ fn increment_stays_inside_its_budget() {
     let ctx = TestContextBuilder::new().with_users(1).build();
     let (id, client) = register(&ctx);
     let caller = ctx.users[0].clone();
-
-    client.get(); // warm the cost estimator
 
     BudgetGuard::new("increment")
         .cpu_ceiling(20_000_000)
@@ -130,8 +130,8 @@ diff.
 {
   "version": 1,
   "cases": {
-    "increment": { "cpu_insns": 1873412, "mem_bytes": 216480 },
-    "get": { "cpu_insns": 244160, "mem_bytes": 30720 }
+    "increment": { "cpu_insns": 32669, "mem_bytes": 5252 },
+    "get": { "cpu_insns": 6123, "mem_bytes": 1089 }
   }
 }
 ```
@@ -193,7 +193,7 @@ Track budget trends across commits to catch regressions early:
   </li>
   <li>
     <h4>Fail on drift</h4>
-    <p>Assert the delta stays inside an agreed tolerance, so an accidental extra storage read breaks the build instead of the network.</p>
+    <p>Assert the measured cost stays inside an agreed tolerance, so an accidental extra storage read breaks the build instead of the network.</p>
   </li>
   <li>
     <h4>Publish the numbers</h4>
@@ -202,8 +202,8 @@ Track budget trends across commits to catch regressions early:
 </ol>
 
 <div class="tk-callout">
-  <span class="tk-callout__title">Estimator overhead</span>
-  <p><code>run()</code> measures around <code>cost_estimate()</code>, so its own work lands in the delta. It is small, fixed, and present in the baseline too — the two readings cancel, which is why a recorded cost is a better limit than a hand-written guess.</p>
+  <span class="tk-callout__title">One guard, one call</span>
+  <p>The metering the SDK reports belongs to the top-level invocation that has just finished, so a closure that makes two calls is judged on the second one. Give each call its own guard, and name the case after the call you care about.</p>
 </div>
 
 <hr class="tk-divider" />

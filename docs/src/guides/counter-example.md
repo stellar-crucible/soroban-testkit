@@ -137,7 +137,7 @@ It asserts against the latest invocation only — the same v28 scope as every ot
 
 ## Step 4 — bound the cost
 
-Wrap the call in a guard rather than comparing two readings by hand. The first `get()` warms the cost estimator so the reading is not zero.
+Wrap the call in a guard instead of reading the meter by hand. The guard runs the closure and judges the metering that call left behind, so there is no warm-up call and no delta to compute.
 
 ```rust
 use soroban_testkit_core::budget_guard;
@@ -148,13 +148,13 @@ fn increment_stays_inside_its_cpu_ceiling() {
     let (_id, client) = client_for(&ctx);
     let caller = ctx.users[0].clone();
 
-    client.get(); // warm up the estimator
-
     budget_guard!(&ctx.env, "increment", { cpu_max: 20_000_000, mem_max: 20_000_000 }, || {
         client.increment(&caller, &1)
     });
 }
 ```
+
+A ceiling is transaction headroom, not the measured cost. A contract registered with `register()` runs as native host code, so the VM's own instantiation and execution costs never appear in the reading — the call above meters at tens of thousands of instructions here while a network would bill more.
 
 The macro expands to the builder, so a test that loops over several calls can hold its own guard:
 
@@ -164,16 +164,13 @@ use soroban_testkit_core::budget::BudgetGuard;
 BudgetGuard::new("increment").cpu_ceiling(20_000_000).run(&ctx.env, || client.increment(&caller, &1));
 ```
 
-The other half is a baseline. Record a cost once, and the next run is judged
-against the build that produced it:
+The other half is a baseline. Record the cost of a call once, and the next run of the same call is judged against the build that produced it:
 
 ```rust
 use soroban_testkit_core::budget::{BudgetBaseline, BudgetSnapshot};
 
-let env = ctx.env.clone();
-let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
 client.increment(&caller, &1);
-let measured = before.diff(&BudgetSnapshot::capture(&env.cost_estimate().budget()));
+let measured = BudgetSnapshot::last_invocation(&ctx.env);
 
 let mut baseline = BudgetBaseline::new();
 baseline.record("increment", measured);

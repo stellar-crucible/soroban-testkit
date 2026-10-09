@@ -12,8 +12,8 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 
 | Type | Purpose |
 |------|---------|
-| `BudgetSnapshot` | Capture CPU instructions and memory bytes at a point in time |
-| `BudgetRead` | Trait implemented by any budget `capture()` can read — host `Budget` and the SDK budget |
+| `BudgetSnapshot` | CPU instructions and memory bytes — `last_invocation()` for the call that just ran |
+| `BudgetRead` | Trait implemented by any source `capture()` can read: invocation resources, the SDK budget, the host `Budget` |
 | `BudgetGuard` | Ceilings and a baseline tolerance for one named operation |
 | `BudgetViolation`, `ViolationKind` | The limit a cost broke, rendered as one parseable line |
 | `BudgetBaseline` | Recorded costs per case, loaded from and saved to a JSON file |
@@ -27,27 +27,27 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 
 ## Budget snapshots
 
-Capture and compare CPU and memory consumption around a single operation.
-`capture()` takes anything implementing `BudgetRead`, so the same snapshot works
-with `env.cost_estimate().budget()` in tests and with a
-`soroban_env_host::budget::Budget` you charge by hand. `diff()` saturates at
-zero, so a later snapshot that reads smaller never underflows an assertion.
+The SDK meters one top-level invocation at a time, and the reading a test wants
+is usually the call that just finished:
 
 ```rust
 use soroban_testkit_core::budget::BudgetSnapshot;
 
-let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
-// ... invoke contract
-let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
-let diff = before.diff(&after);
+client.increment(&caller, &1);
+let cost = BudgetSnapshot::last_invocation(&env);
 
-println!("CPU instructions: {}", diff.cpu_insns);
-println!("Memory bytes: {}", diff.mem_bytes);
+println!("CPU instructions: {}", cost.cpu_insns);
+println!("Memory bytes: {}", cost.mem_bytes);
 ```
+
+`capture()` takes anything implementing `BudgetRead` — those invocation
+resources, the cumulative `env.cost_estimate().budget()`, and a
+`soroban_env_host::budget::Budget` you charge by hand. `diff()` saturates at
+zero, so a later snapshot that reads smaller never underflows an assertion.
 
 <div class="tk-callout">
   <span class="tk-callout__title">SDK v28 note</span>
-  <p><code>env.budget()</code> is deprecated. Always go through <code>env.cost_estimate().budget()</code> so the snapshot reflects the current cost model.</p>
+  <p><code>env.budget()</code> is deprecated; go through <code>env.cost_estimate()</code>. And read the numbers as a comparison between builds rather than as a fee quote: a contract registered as a native test contract is never metered through the VM, so wasm instantiation, execution and rent reads are absent from the reading.</p>
 </div>
 
 ## Guards: turning a measurement into a limit
@@ -69,8 +69,8 @@ BudgetGuard::new("transfer")          // the name every failure line carries
     .assert_within(&cost);
 ```
 
-`run()` does the capture around the call for you, and returns whatever the
-invocation returned:
+`run()` makes the call, reads the metering that call left behind, and returns
+whatever the invocation returned:
 
 ```rust
 let total = BudgetGuard::new("increment")
@@ -120,7 +120,7 @@ The file format is one version field and one map of costs:
 {
   "version": 1,
   "cases": {
-    "increment": { "cpu_insns": 1873412, "mem_bytes": 216480 }
+    "increment": { "cpu_insns": 32669, "mem_bytes": 5252 }
   }
 }
 ```

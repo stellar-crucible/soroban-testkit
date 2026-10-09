@@ -112,9 +112,9 @@ fn increment_stays_inside_its_cpu_ceiling() {
     let (_id, client) = client_for(&ctx);
     let caller = ctx.users[0].clone();
 
-    // Warm up the cost estimator so a budget snapshot is available.
-    client.get();
-
+    // A ceiling is transaction headroom, not the measured cost: a native test
+    // contract is metered without the VM's own costs, so the call reads tens of
+    // thousands of instructions here and a network would bill more.
     soroban_testkit_core::budget_guard!(
         &ctx.env,
         "increment",
@@ -129,7 +129,6 @@ fn a_call_past_its_ceiling_fails_the_test_with_a_parseable_line() {
     let ctx = context(1);
     let (_id, client) = client_for(&ctx);
     let caller = ctx.users[0].clone();
-    client.get();
 
     soroban_testkit_core::budget_guard!(&ctx.env, "increment", { cpu_max: 1 }, || {
         client.increment(&caller, &1)
@@ -141,17 +140,15 @@ fn a_recorded_baseline_accepts_the_same_cost_and_flags_a_cheaper_one() {
     let ctx = context(1);
     let (_id, client) = client_for(&ctx);
     let caller = ctx.users[0].clone();
-    client.get();
 
-    let env = ctx.env.clone();
-    let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
     client.increment(&caller, &1);
-    let measured = before.diff(&BudgetSnapshot::capture(&env.cost_estimate().budget()));
+    let measured = BudgetSnapshot::last_invocation(&ctx.env);
 
     let mut baseline = BudgetBaseline::new();
     baseline.record("increment", measured);
 
-    // The same call measured the same way stays inside its own tolerance.
+    // The guard judges the invocation it wrapped, so the same call again is
+    // inside its own recorded cost.
     baseline
         .guard("increment")
         .tolerance_percent(25)

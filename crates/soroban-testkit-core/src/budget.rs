@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
-use soroban_env_host::budget::Budget;
+use soroban_env_host::{budget::Budget, InvocationResources};
 use std::collections::BTreeMap;
 
 /// Anything Testkit can read consumed CPU and memory from.
 ///
-/// Implemented for the host [`Budget`] and for the SDK budget returned by
-/// `env.cost_estimate().budget()`, so a snapshot can be captured from either.
+/// Implemented for the host [`Budget`], for the SDK budget returned by
+/// `env.cost_estimate().budget()`, and for the [`InvocationResources`] a call
+/// leaves behind, so a snapshot can be captured from cumulative metering or
+/// from one invocation.
 pub trait BudgetRead {
     fn cpu_insns(&self) -> u64;
     fn mem_bytes(&self) -> u64;
@@ -31,6 +33,18 @@ impl BudgetRead for soroban_sdk::testutils::budget::Budget {
     }
 }
 
+// The metering is signed in the host and unsigned here; a negative reading is
+// not something the runtime produces, so it reads as nothing consumed.
+impl BudgetRead for InvocationResources {
+    fn cpu_insns(&self) -> u64 {
+        self.instructions.max(0) as u64
+    }
+
+    fn mem_bytes(&self) -> u64 {
+        self.mem_bytes.max(0) as u64
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetSnapshot {
     pub cpu_insns: u64,
@@ -43,6 +57,20 @@ impl BudgetSnapshot {
             cpu_insns: budget.cpu_insns(),
             mem_bytes: budget.mem_bytes(),
         }
+    }
+
+    /// What the most recent top-level contract invocation metered.
+    ///
+    /// This is the cost of one call, not a running total, so it is the reading a
+    /// test should assert on. The SDK reports it for the invocation that has
+    /// already happened, so call this after the call you mean to measure; before
+    /// any invocation it panics with the SDK's own message.
+    ///
+    /// A contract registered as a native test contract is metered without the
+    /// VM's own costs — instantiation, execution and wasm reads are absent — so
+    /// these numbers are lower than the same call would bill on a network.
+    pub fn last_invocation(env: &soroban_sdk::Env) -> Self {
+        Self::capture(&env.cost_estimate().resources())
     }
 
     pub fn diff(&self, other: &BudgetSnapshot) -> BudgetSnapshot {
@@ -230,15 +258,14 @@ impl BudgetGuard {
 
     /// Run an invocation, measure what it cost, and assert the measurement.
     ///
-    /// Reads the budget through `env.cost_estimate()`, so the measurement
-    /// includes the estimator's own work — a small, fixed overhead that a
-    /// baseline absorbs because it was measured the same way.
+    /// The measurement is [`BudgetSnapshot::last_invocation`], so it belongs to
+    /// the call the closure made. A closure that makes several calls is judged
+    /// on the last one — measure a sequence by wrapping each call in its own
+    /// guard.
     pub fn run<T>(&self, env: &soroban_sdk::Env, invocation: impl FnOnce() -> T) -> T {
-        let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
         let value = invocation();
-        let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
 
-        self.assert_within(&before.diff(&after));
+        self.assert_within(&BudgetSnapshot::last_invocation(env));
         value
     }
 }
@@ -713,11 +740,76 @@ mod tests {
     }
 
     #[test]
+    fn the_last_invocation_reports_what_the_call_cost() {
+        let env = Env::default();
+        let id = env.register(Meter, ());
+        let client = MeterClient::new(&env, &id);
+
+        client.bump();
+        let write = BudgetSnapshot::last_invocation(&env);
+
+        assert!(
+            write.cpu_insns > 0 && write.mem_bytes > 0,
+            "a contract call that writes must meter both resources"
+        );
+    }
+
+    #[test]
+    fn a_write_meters_more_than_a_read_of_the_same_entry() {
+        let env = Env::default();
+        let id = env.register(Meter, ());
+        let client = MeterClient::new(&env, &id);
+
+        client.bump();
+        let write = BudgetSnapshot::last_invocation(&env);
+        client.peek();
+        let read = BudgetSnapshot::last_invocation(&env);
+
+        assert!(
+            write.cpu_insns > read.cpu_insns,
+            "a write ({}) and a read ({}) cannot cost the same",
+            write.cpu_insns,
+            read.cpu_insns
+        );
+    }
+
+    #[test]
+    fn two_identical_reads_measure_the_same() {
+        let env = Env::default();
+        let id = env.register(Meter, ());
+        let client = MeterClient::new(&env, &id);
+        client.bump();
+
+        client.peek();
+        let first = BudgetSnapshot::last_invocation(&env);
+        client.peek();
+        let second = BudgetSnapshot::last_invocation(&env);
+
+        assert_eq!(
+            first, second,
+            "a call that changes nothing has a cost that is a property of the call"
+        );
+    }
+
+    #[test]
+    fn capture_reads_invocation_resources_like_any_other_source() {
+        let env = Env::default();
+        let id = env.register(Meter, ());
+        let client = MeterClient::new(&env, &id);
+
+        client.peek();
+
+        assert_eq!(
+            BudgetSnapshot::capture(&env.cost_estimate().resources()),
+            BudgetSnapshot::last_invocation(&env)
+        );
+    }
+
+    #[test]
     fn run_measures_a_real_invocation_and_lets_it_pass() {
         let env = soroban_sdk::Env::default();
         let id = env.register(Meter, ());
         let client = MeterClient::new(&env, &id);
-        client.peek();
 
         BudgetGuard::new("bump")
             .cpu_ceiling(50_000_000)
@@ -726,12 +818,25 @@ mod tests {
     }
 
     #[test]
+    fn run_hands_back_the_value_of_the_invocation_it_measured() {
+        let env = Env::default();
+        let id = env.register(Meter, ());
+        let client = MeterClient::new(&env, &id);
+        client.bump();
+
+        let seen = BudgetGuard::new("peek")
+            .cpu_ceiling(1_000_000)
+            .run(&env, || client.peek());
+
+        assert_eq!(seen, 1);
+    }
+
+    #[test]
     #[should_panic(expected = "BUDGET kind=ceiling case=bump metric=cpu_insns")]
     fn run_fails_the_test_when_the_invocation_breaches_its_ceiling() {
         let env = soroban_sdk::Env::default();
         let id = env.register(Meter, ());
         let client = MeterClient::new(&env, &id);
-        client.peek();
 
         BudgetGuard::new("bump").cpu_ceiling(1).run(&env, || {
             client.bump();
@@ -743,7 +848,6 @@ mod tests {
         let env = Env::default();
         let id = env.register(Meter, ());
         let client = MeterClient::new(&env, &id);
-        client.peek();
 
         budget_guard!(&env, "bump", { cpu_max: 50_000_000, mem_max: 50_000_000 }, || {
             client.bump();
@@ -756,7 +860,6 @@ mod tests {
         let env = Env::default();
         let id = env.register(Meter, ());
         let client = MeterClient::new(&env, &id);
-        client.peek();
 
         budget_guard!(&env, "bump", { cpu_max: 1 }, || { client.bump(); });
     }
@@ -766,7 +869,7 @@ mod tests {
         let env = Env::default();
         let id = env.register(Meter, ());
         let client = MeterClient::new(&env, &id);
-        client.peek();
+        client.bump();
 
         budget_guard!(
             &env,
@@ -782,7 +885,6 @@ mod tests {
         let env = Env::default();
         let id = env.register(Meter, ());
         let client = MeterClient::new(&env, &id);
-        client.peek();
 
         budget_guard!(
             &env,

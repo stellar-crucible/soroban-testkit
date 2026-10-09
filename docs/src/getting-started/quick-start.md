@@ -29,12 +29,12 @@ use soroban_testkit_core::budget::BudgetSnapshot;
     <p>Bind your contract to the context environment and create its client.</p>
   </li>
   <li>
-    <h4>Snapshot the budget</h4>
-    <p>Capture CPU and memory before the call so you can diff it afterwards.</p>
+    <h4>Invoke the contract</h4>
+    <p>Call the function under test, then read the metering that call left behind.</p>
   </li>
   <li>
-    <h4>Invoke and assert</h4>
-    <p>Call the function under test, then match events and check the resource delta.</p>
+    <h4>Assert on events and cost</h4>
+    <p>Match the events the call emitted and check its instruction count against a ceiling.</p>
   </li>
 </ol>
 
@@ -53,11 +53,11 @@ fn test_token_transfer() {
     let contract_id = ctx.env.register(MyContract, ());
     let client = MyContractClient::new(&ctx.env, &contract_id);
 
-    // 3. Capture budget before invocation
-    let before = BudgetSnapshot::capture(&ctx.env.cost_estimate().budget());
-
-    // 4. Invoke the function under test
+    // 3. Invoke the function under test
     client.transfer(sender, receiver, &1000);
+
+    // 4. Read the metering that invocation left behind
+    let cost = BudgetSnapshot::last_invocation(&ctx.env);
 
     // 5. Assert events were emitted
     EventMatcher::new(&ctx.env)
@@ -66,9 +66,7 @@ fn test_token_transfer() {
         .assert_emitted();
 
     // 6. Check resource consumption
-    let after = BudgetSnapshot::capture(&ctx.env.cost_estimate().budget());
-    let diff = before.diff(&after);
-    assert!(diff.cpu_insns < 500_000);
+    assert!(cost.cpu_insns < 500_000);
 }
 ```
 
@@ -93,7 +91,7 @@ fn test_token_transfer() {
   <div class="tk-card">
     <span class="tk-card__kicker">BudgetSnapshot</span>
     <h3 class="tk-card__title">Costs made visible</h3>
-    <p class="tk-card__body">Surfaces CPU-instruction and memory deltas that standard Soroban tests never show — the ones that fail on-chain.</p>
+    <p class="tk-card__body">Surfaces the per-call CPU-instruction and memory costs that standard Soroban tests never show.</p>
   </div>
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">Composable</span>
