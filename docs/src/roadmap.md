@@ -83,7 +83,7 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
   </div>
   <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
-    <h3 class="tk-card__title">On crates.io</h3>
+    <h3 class="tk-card__title">Packaged for the registry</h3>
     <p class="tk-card__body">The workspace is packaged and named for a crates.io release — <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, each with its own README and metadata — so a consumer will add a version requirement instead of a Git pin. Until those packages appear on the registry, install from the <code>v0.2.0</code> tag.</p>
   </div>
 </div>
@@ -100,7 +100,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
 | Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
-| Tooling | Baseline files diffed between PRs in CI ([#14](https://github.com/stellar-crucible/soroban-testkit/issues/14)) | `complexity:medium` |
 
 ## Later
 

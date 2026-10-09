@@ -11,7 +11,6 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 [![CI](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml)
 [![Budget baseline](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml)
 [![Release](https://img.shields.io/github/v/release/stellar-crucible/soroban-testkit?label=release&color=brightgreen)](https://github.com/stellar-crucible/soroban-testkit/releases/latest)
-[![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=f79071)](https://crates.io/crates/soroban-testkit-core)
 [![Open tasks](https://img.shields.io/github/issues/stellar-crucible/soroban-testkit/Stellar%20Wave?label=Stellar%20Wave%20tasks&color=5319E7)](https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aopen+is%3Aissue+label%3A%22Stellar+Wave%22)
 
 ## Documentation
@@ -48,20 +47,20 @@ Testkit fills these gaps with domain-specific tooling that complements (not repl
 
 ## Quick Start
 
-Add to your contract's `Cargo.toml`:
-
-```toml
-[dev-dependencies]
-soroban-testkit-fixtures = "0.2.0"
-soroban-testkit-assert = "0.2.0"
-```
-
-Prefer pinning the source? Use the release tag, which always points at a commit whose CI is green:
+Add to your contract's `Cargo.toml`, pinned to the release tag — a tag always points at a commit whose CI is green:
 
 ```toml
 [dev-dependencies]
 soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
 soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
+```
+
+The four crates are named and packaged for [crates.io](https://crates.io) under `soroban-testkit-*`; once the registry lists them, the same dependencies read:
+
+```toml
+[dev-dependencies]
+soroban-testkit-fixtures = "0.2.0"
+soroban-testkit-assert = "0.2.0"
 ```
 
 ### Test Fixtures
