@@ -13,6 +13,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | Method | Asserts |
 |--------|---------|
 | `EventMatcher::assert_emitted()` | At least one matching event exists |
+| `EventMatcher::assert_not_emitted()` | No matching event exists |
+| `EventMatcher::assert_none_match(pred)` | No matching event satisfies a predicate |
 | `EventMatcher::assert_count(n)` | Exactly `n` events were emitted |
 | `EventMatcher::from_contract(addr)` | Restricts matches to one contract address |
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
@@ -47,6 +49,41 @@ EventMatcher::new(&env)
 <div class="tk-callout">
   <span class="tk-callout__title">Reading events in v28</span>
   <p><code>env.events().all()</code> now returns <code>ContractEvents</code>. Call <code>.events()</code> on it to get the slice, and import <code>soroban_sdk::testutils::Events as _</code> — the method is feature-gated behind <code>testutils</code>. Testkit applies the contract and topic filters for you.</p>
+</div>
+
+## Negative assertions
+
+Proving something did *not* happen is the other half of event testing — a rejected transfer should emit no `Transfer` event, a closed offer should publish nothing at all:
+
+```rust
+use testkit_assert::events::EventMatcher;
+
+// Nothing in scope was published
+EventMatcher::new(&env).assert_not_emitted();
+
+// A specific topic stayed silent
+EventMatcher::new(&env)
+    .from_contract(&contract_id)
+    .with_topic("Transfer")
+    .assert_not_emitted();
+
+// Anything the topic filter cannot express
+EventMatcher::new(&env).assert_none_match(|event| {
+    matches!(event.type_, soroban_sdk::xdr::ContractEventType::Diagnostic)
+});
+```
+
+`assert_none_match` hands you the raw `ContractEvent`, so a predicate can inspect the event type or the data payload rather than only the topics.
+
+Both failures quote the event they were not supposed to find:
+
+```text
+panicked at 'Expected no events to be emitted, found 1 — unexpected event: topics [Transfer], type Contract'
+```
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">"Not emitted" means "not in this invocation"</span>
+  <p>The same v28 scope applies to the negative assertions: <code>assert_not_emitted()</code> proves the <strong>most recent invocation</strong> published nothing matching, not that no earlier call did. Run the assertion immediately after the call under test. Aggregating across a whole test is <a href="https://github.com/stellar-crucible/soroban-testkit/issues/19">issue #19</a>.</p>
 </div>
 
 ## Authorization matching

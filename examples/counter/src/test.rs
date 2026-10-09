@@ -58,7 +58,25 @@ fn read_only_calls_emit_nothing() {
 
     client.get();
 
-    EventMatcher::new(&ctx.env).assert_count(0);
+    EventMatcher::new(&ctx.env).assert_not_emitted();
+}
+
+#[test]
+fn a_topic_the_contract_never_publishes_stays_silent() {
+    let ctx = context(1);
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    client.increment(&caller, &1);
+
+    EventMatcher::new(&ctx.env)
+        .from_contract(&contract_id)
+        .with_topic("decremented")
+        .assert_not_emitted();
+    EventMatcher::new(&ctx.env)
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_emitted();
 }
 
 #[test]
