@@ -13,15 +13,7 @@ all-features = true
 yanked = "deny"
 unmaintained = "workspace"
 git-fetch-with-cli = true
-ignore = [
-    # rustls <= 0.21 vulnerability only applies to the client side, which this
-    # workspace never uses; the SDK dependency tree has not upgraded yet.
-    "RUSTSEC-2024-0336",
-    # time < 0.3.35 unpadded year formats; pulled in transitively by proptest.
-    "RUSTSEC-2021-0127",
-    # instant is unmaintained, used by soroban dependencies upstream.
-    "RUSTSEC-2024-0388",
-]
+ignore = []
 
 [licenses]
 version = 2
@@ -53,7 +45,10 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
 multiple-versions = "warn"
+# Path dependencies within the workspace carry no version requirement, which
+# cargo-deny counts as a wildcard; real wildcard requirements stay denied.
 wildcards = "deny"
+allow-wildcard-paths = true
 highlight = "all"
 
 [sources]
