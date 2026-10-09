@@ -137,33 +137,55 @@ It asserts against the latest invocation only — the same v28 scope as every ot
 
 ## Step 4 — bound the cost
 
-Take a snapshot before and after the call, then assert the delta is non-zero and under a ceiling. The first `get()` warms the cost estimator so the reading is not zero.
+Wrap the call in a guard rather than comparing two readings by hand. The first `get()` warms the cost estimator so the reading is not zero.
 
 ```rust
-use soroban_testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget_guard;
 
 #[test]
-fn increment_consumes_a_predictable_amount_of_cpu() {
+fn increment_stays_inside_its_cpu_ceiling() {
     let ctx = context(1);
     let (_id, client) = client_for(&ctx);
     let caller = ctx.users[0].clone();
 
     client.get(); // warm up the estimator
 
-    let env = &ctx.env;
-    let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
-    client.increment(&caller, &1);
-    let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
-
-    let cost = before.diff(&after);
-    assert!(cost.cpu_insns > 0);
-    assert!(cost.cpu_insns < 20_000_000, "regressed to {} insns", cost.cpu_insns);
+    budget_guard!(&ctx.env, "increment", { cpu_max: 20_000_000, mem_max: 20_000_000 }, || {
+        client.increment(&caller, &1)
+    });
 }
 ```
 
+The macro expands to the builder, so a test that loops over several calls can hold its own guard:
+
+```rust
+use soroban_testkit_core::budget::BudgetGuard;
+
+BudgetGuard::new("increment").cpu_ceiling(20_000_000).run(&ctx.env, || client.increment(&caller, &1));
+```
+
+The other half is a baseline. Record a cost once, and the next run is judged
+against the build that produced it:
+
+```rust
+use soroban_testkit_core::budget::{BudgetBaseline, BudgetSnapshot};
+
+let env = ctx.env.clone();
+let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
+client.increment(&caller, &1);
+let measured = before.diff(&BudgetSnapshot::capture(&env.cost_estimate().budget()));
+
+let mut baseline = BudgetBaseline::new();
+baseline.record("increment", measured);
+
+baseline.guard("increment").tolerance_percent(25).run(&ctx.env, || {
+    client.increment(&caller, &1);
+});
+```
+
 <div class="tk-callout tk-callout--tip">
-  <span class="tk-callout__title">Why a ceiling and a floor</span>
-  <p><code>cpu_insns &gt; 0</code> catches a call that silently did nothing; the ceiling catches a change that made the call expensive. Together they are a regression test, and they fail with the number that broke the bound.</p>
+  <span class="tk-callout__title">Why a ceiling and a baseline</span>
+  <p>A ceiling says the call is still affordable; a baseline says it is still the call you measured. The first catches a rewrite that got loose, the second catches a drift no reviewer noticed. One guard checks both, prints every breach as a <code>key=value</code> line, and leaves the numbers in the pull request diff instead of in a deploy log.</p>
 </div>
 
 ## Step 5 — prove the authorisation is real
@@ -245,6 +267,6 @@ test test::increment_requires_authorization_when_auths_are_not_mocked - should p
   <div class="tk-card">
     <span class="tk-card__kicker">Crate</span>
     <h3 class="tk-card__title">soroban-testkit-core</h3>
-    <p class="tk-card__body"><a href="../crates/core.html">BudgetSnapshot</a> and the <code>BudgetRead</code> trait.</p>
+    <p class="tk-card__body"><a href="../crates/core.html">BudgetGuard and BudgetBaseline</a>, plus the <code>BudgetRead</code> trait.</p>
   </div>
 </div>

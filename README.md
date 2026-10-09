@@ -110,21 +110,22 @@ fn test_emits_transfer_event() {
 Catch resource issues before deployment:
 
 ```rust
-use soroban_testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget::BudgetGuard;
 
 #[test]
 fn test_budget_within_limits() {
-    let env = Env::default();
-    let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
-
-    // ... invoke contract function
-
-    let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
-    let diff = before.diff(&after);
-
-    assert!(diff.cpu_insns < 1_000_000, "Function exceeded CPU budget");
+    BudgetGuard::new("transfer")
+        .cpu_ceiling(1_000_000)
+        .mem_ceiling(100_000)
+        .baseline(recorded_cost)      // from a committed JSON file
+        .tolerance_percent(10)
+        .run(&env, || client.transfer(&sender, &receiver, &1000));
 }
 ```
+
+A call that crosses a ceiling or grows past its recorded cost fails the test with
+one parseable line per breach, so a budget regression shows up in CI as a diff
+rather than as a surprise on mainnet.
 
 ### Property Testing
 
@@ -162,7 +163,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 101 tests: all four crates + examples/counter
+cargo test --workspace --locked      # 125 tests: all four crates + examples/counter
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 mdbook build docs                    # documentation site
@@ -171,8 +172,9 @@ cargo deny check all                 # advisories, licenses, duplicate versions,
 
 [`examples/counter`](examples/counter) is a real contract with a test suite that
 uses every crate in the workspace: fixtures for the environment and users,
-`EventMatcher` for contract events, `BudgetSnapshot` for CPU consumption, and a
-`#[should_panic]` case that shows an unmocked `require_auth` failing.
+`EventMatcher` for contract events, `BudgetGuard` and `budget_guard!` for CPU and
+memory ceilings, and a `#[should_panic]` case that shows an unmocked
+`require_auth` failing.
 
 ## Contributing
 
