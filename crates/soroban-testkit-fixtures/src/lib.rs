@@ -1,12 +1,19 @@
 pub mod builder;
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
-use soroban_sdk::{Address, Env};
+use soroban_sdk::xdr::ScAddress;
+use soroban_sdk::{Address, Env, TryFromVal as _};
 
 pub struct TestContext {
     pub env: Env,
     pub admin: Address,
     pub users: Vec<Address>,
+    /// The auth policy [`TestContext::reset`] re-applies to the fresh env.
+    ///
+    /// The SDK cannot read an env's auth mode back, so a context wraps an
+    /// assumed policy: `new` and the builder record what they actually did,
+    /// and `with_env` defaults to mocked.
+    pub mock_auths: bool,
 }
 
 impl Default for TestContext {
@@ -24,12 +31,18 @@ impl TestContext {
 
     /// Builds a context around an environment the caller already configured,
     /// so every address in the context belongs to that environment.
+    ///
+    /// An `Env` does not report whether it mocks authorizations, so this
+    /// assumes it does — the same assumption [`TestContext::new`] makes. Set
+    /// [`TestContext::mock_auths`] to `false` afterwards if it does not, so
+    /// [`TestContext::reset`] reproduces your policy rather than adding one.
     pub fn with_env(env: Env) -> Self {
         let admin = Address::generate(&env);
         Self {
             env,
             admin,
             users: Vec::new(),
+            mock_auths: true,
         }
     }
 
@@ -80,13 +93,83 @@ impl TestContext {
         self.env.ledger().set_sequence_number(next);
         next
     }
+
+    /// Swap in a fresh environment and keep every address this context holds.
+    ///
+    /// The new env starts at ledger 0 with no events, no recorded
+    /// authorizations and no contract storage, so a multi-phase test can run
+    /// phase two with the same actors on a clean chain instead of tearing the
+    /// whole fixture down. Contracts registered on the previous env do *not*
+    /// come along — registration belongs to the env that created it, so
+    /// re-register after resetting.
+    ///
+    /// Reach for a second `TestContext` rather than `reset` when the two
+    /// phases want different fixtures, different user counts or a different
+    /// auth policy; `reset` is for the case where only the chain is supposed
+    /// to change.
+    pub fn reset(&mut self) {
+        let carried: Vec<ScAddress> = std::iter::once(&self.admin)
+            .chain(self.users.iter())
+            .map(ScAddress::from)
+            .collect();
+
+        let env = Env::default();
+        if self.mock_auths {
+            env.mock_all_auths();
+        }
+        self.env = env;
+
+        self.admin = migrated_to(&self.env, &carried[0]);
+        self.users = carried[1..]
+            .iter()
+            .map(|carried| migrated_to(&self.env, carried))
+            .collect();
+    }
+
+    /// Swap in a fresh environment *and* fresh identities: a new admin and a
+    /// new `users` list of the same length, none of them an address this
+    /// context held before.
+    ///
+    /// SDK v28 mints test addresses from a counter that restarts at 1 in every
+    /// `Env`, so regenerating straight away hands back the addresses you just
+    /// replaced. This walks the new env's counter past the range the old
+    /// identities occupied, which is the only thing that makes the new ones
+    /// new.
+    pub fn reset_full(&mut self) {
+        let user_count = self.users.len();
+        let env = Env::default();
+        if self.mock_auths {
+            env.mock_all_auths();
+        }
+
+        for _ in 0..=user_count {
+            let _ = Address::generate(&env);
+        }
+        self.env = env;
+
+        self.admin = Address::generate(&self.env);
+        self.users = (0..user_count)
+            .map(|_| Address::generate(&self.env))
+            .collect();
+    }
+}
+
+/// Rebuild an address as an object of `env`.
+///
+/// An `Address` is a handle into the env that created it, so carrying an
+/// identity across an env boundary goes through its `ScAddress` form and back.
+fn migrated_to(env: &Env, address: &ScAddress) -> Address {
+    Address::try_from_val(env, address).unwrap()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::TestContext;
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{contract, contractimpl, Address, Env};
+    use super::{migrated_to, TestContext};
+    use crate::builder::TestContextBuilder;
+    use soroban_sdk::testutils::{Address as _, Events as _};
+    use soroban_sdk::xdr::ScAddress;
+    use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
+    use soroban_testkit_core::storage::StorageSnapshot;
 
     #[test]
     fn new_context_starts_without_users() {
@@ -275,5 +358,160 @@ mod tests {
 
         assert_eq!(near_top, u32::MAX);
         assert_eq!(ctx.advance_ledger(10), u32::MAX);
+    }
+
+    #[contract]
+    pub struct Trace;
+
+    #[contractimpl]
+    impl Trace {
+        #[allow(deprecated)]
+        pub fn record(env: Env, caller: Address) {
+            caller.require_auth();
+            env.storage()
+                .persistent()
+                .set(&symbol_short!("seen"), &1u32);
+            env.events().publish((symbol_short!("recorded"),), 1u32);
+        }
+    }
+
+    fn trace(env: &Env) -> (Address, TraceClient<'_>) {
+        let id = env.register(Trace, ());
+        (id.clone(), TraceClient::new(env, &id))
+    }
+
+    #[test]
+    fn reset_keeps_every_identity_the_context_was_built_with() {
+        let mut ctx = TestContextBuilder::new().with_users(3).build();
+        let before = identity(&ctx);
+
+        ctx.reset();
+
+        assert_eq!(identity(&ctx), before);
+        assert_eq!(ctx.users.len(), 3);
+    }
+
+    #[test]
+    fn reset_returns_the_ledger_to_where_a_fresh_env_starts() {
+        let mut ctx = TestContext::new();
+        ctx.set_timestamp(1_700_000_000);
+        ctx.advance_ledger(120);
+
+        ctx.reset();
+
+        assert_eq!(ctx.timestamp(), 0);
+        assert_eq!(ctx.sequence(), 0);
+    }
+
+    #[test]
+    fn reset_clears_events_the_previous_env_recorded() {
+        let mut ctx = TestContextBuilder::new().with_users(1).build();
+        let env = ctx.env.clone();
+        let (_id, client) = trace(&env);
+        client.record(&ctx.admin);
+        assert!(!env.events().all().events().is_empty());
+
+        ctx.reset();
+
+        assert!(ctx.env.events().all().events().is_empty());
+    }
+
+    #[test]
+    fn reset_leaves_no_trace_of_a_contract_registered_before_it() {
+        let mut ctx = TestContextBuilder::new().build();
+        let env = ctx.env.clone();
+        let (id, client) = trace(&env);
+        client.record(&ctx.admin);
+        assert!(!StorageSnapshot::capture(&env, &id).is_empty());
+
+        ctx.reset();
+
+        let carried = migrated_to(&ctx.env, &ScAddress::from(&id));
+        let after = StorageSnapshot::capture(&ctx.env, &carried);
+        assert!(
+            after.is_empty(),
+            "the reset env still holds {} entries from before it",
+            after.len()
+        );
+    }
+
+    #[test]
+    fn reset_reuses_the_mocking_the_context_was_built_with() {
+        let mut ctx = TestContextBuilder::new().with_users(1).build();
+        ctx.reset();
+        let env = ctx.env.clone();
+        let (_id, client) = trace(&env);
+
+        client.record(&ctx.users[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Auth, InvalidAction)")]
+    fn an_unmocked_context_stays_unmocked_through_reset() {
+        let mut ctx = TestContextBuilder::new()
+            .with_users(1)
+            .without_mock_auths()
+            .build();
+
+        ctx.reset();
+
+        let env = ctx.env.clone();
+        let (_id, client) = trace(&env);
+        client.record(&ctx.users[0]);
+    }
+
+    #[test]
+    fn the_carried_addresses_still_authorize_calls_in_the_new_env() {
+        let mut ctx = TestContextBuilder::new().with_users(1).build();
+        ctx.reset();
+        let env = ctx.env.clone();
+        let (_id, client) = trace(&env);
+
+        client.record(&ctx.users[0]);
+
+        assert_eq!(ctx.env.events().all().events().len(), 1);
+    }
+
+    #[test]
+    fn reset_full_replaces_every_identity() {
+        let mut ctx = TestContextBuilder::new().with_users(3).build();
+        let before = identity(&ctx);
+
+        ctx.reset_full();
+
+        let after = identity(&ctx);
+        assert_eq!(after.len(), before.len());
+        for carried in &before {
+            assert!(
+                !after.contains(carried),
+                "{carried:?} survived a reset_full"
+            );
+        }
+    }
+
+    #[test]
+    fn regenerating_without_the_counter_walk_would_reuse_the_same_addresses() {
+        let ctx = TestContextBuilder::new().with_users(3).build();
+        let before = identity(&ctx);
+
+        // The reason `reset_full` burns generator slots: a fresh env mints
+        // addresses from the same counter, so a naive rebuild is not a rebuild.
+        let env = Env::default();
+        let naive = std::iter::once(Address::generate(&env))
+            .chain((0..3).map(|_| Address::generate(&env)))
+            .map(ScAddress::from)
+            .collect::<Vec<_>>();
+        assert_eq!(naive, before);
+
+        let mut reset = TestContextBuilder::new().with_users(3).build();
+        reset.reset_full();
+        assert_ne!(identity(&reset), before);
+    }
+
+    fn identity(ctx: &TestContext) -> Vec<ScAddress> {
+        std::iter::once(&ctx.admin)
+            .chain(ctx.users.iter())
+            .map(ScAddress::from)
+            .collect()
     }
 }

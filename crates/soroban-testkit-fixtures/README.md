@@ -23,6 +23,13 @@ ctx.advance_time(86_400 * 30); // 30 days later, sequence untouched
 ctx.advance_ledger(10);        // 10 closes later, clock untouched
 ```
 
+Clear the chain between phases without losing your actors:
+
+```rust
+ctx.reset();      // fresh env: ledger, events, auths and storage gone, same addresses
+ctx.reset_full(); // ... and brand-new addresses too
+```
+
 - Documentation: <https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html>
 - Source: [crates/soroban-testkit-fixtures](https://github.com/stellar-crucible/soroban-testkit/tree/main/crates/soroban-testkit-fixtures)
 - Licence: Apache-2.0
