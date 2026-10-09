@@ -14,8 +14,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 |--------|---------|
 | `EventMatcher::assert_emitted()` | At least one matching event exists |
 | `EventMatcher::assert_count(n)` | Exactly `n` events were emitted |
-| `EventMatcher::from_contract(id)` | Restricts matches to one contract |
-| `EventMatcher::with_topic(t)` | Restricts matches to one topic |
+| `EventMatcher::from_contract(addr)` | Restricts matches to one contract address |
+| `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 
@@ -39,9 +39,14 @@ EventMatcher::new(&env)
     .assert_emitted();
 ```
 
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">Scope: the latest invocation</span>
+  <p><code>EventMatcher</code> reads <code>env.events().all()</code>, and in SDK v28 that returns only the events published by the <strong>most recent contract invocation</strong>. Assert right after each call instead of accumulating counts over a test; a matcher created after a second call sees the second call alone.</p>
+</div>
+
 <div class="tk-callout">
   <span class="tk-callout__title">Reading events in v28</span>
-  <p><code>env.events().all()</code> now returns <code>ContractEvents</code>. Call <code>.events()</code> on it to get the slice, and import <code>soroban_sdk::testutils::Events as _</code> — the method is feature-gated behind <code>testutils</code>.</p>
+  <p><code>env.events().all()</code> now returns <code>ContractEvents</code>. Call <code>.events()</code> on it to get the slice, and import <code>soroban_sdk::testutils::Events as _</code> — the method is feature-gated behind <code>testutils</code>. Testkit applies the contract and topic filters for you.</p>
 </div>
 
 ## Authorization matching

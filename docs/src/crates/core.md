@@ -13,13 +13,17 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | Type | Purpose |
 |------|---------|
 | `BudgetSnapshot` | Capture CPU instructions and memory bytes at a point in time |
-| `SnapshotDiff` | The delta between two snapshots, produced by `diff()` |
+| `BudgetRead` | Trait implemented by any budget `capture()` can read — host `Budget` and the SDK budget |
 | `DecodedError` | A Soroban error code rendered with message and context |
 | `StorageEntry`, `StorageTier` | A storage key plus its instance / persistent / temporary tier |
 
 ## Budget snapshots
 
-Capture and compare CPU and memory consumption around a single operation:
+Capture and compare CPU and memory consumption around a single operation.
+`capture()` takes anything implementing `BudgetRead`, so the same snapshot works
+with `env.cost_estimate().budget()` in tests and with a
+`soroban_env_host::budget::Budget` you charge by hand. `diff()` saturates at
+zero, so a later snapshot that reads smaller never underflows an assertion.
 
 ```rust
 use testkit_core::budget::BudgetSnapshot;
