@@ -1,6 +1,6 @@
 # Installation
 
-Add only the crates your test suite needs. They are published to [crates.io](https://crates.io) under the `soroban-testkit-*` names, or consumed straight from Git — pin a release tag rather than the default branch, so a Git build stays on a commit whose CI (tests, clippy and the `cargo deny` supply-chain gate) is green.
+Add only the crates your test suite needs. Today they come from Git — pin a release tag rather than the default branch, so a build stays on a commit whose CI (tests, clippy and the `cargo deny` supply-chain gate) is green. The four crates are named and packaged for [crates.io](https://crates.io) under the `soroban-testkit-*` names; once the registry lists `v0.2.0`, the same block reads as a plain version requirement.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Rust</span><span class="tk-spec__value">1.91 or newer</span></div>
@@ -13,20 +13,20 @@ Add only the crates your test suite needs. They are published to [crates.io](htt
 
 ```toml
 [dev-dependencies]
-soroban-testkit-core = "0.2.0"
-soroban-testkit-assert = "0.2.0"
-soroban-testkit-fixtures = "0.2.0"
-soroban-testkit-generators = { version = "0.2.0", features = ["proptest"] }
-```
-
-The same four crates pinned to a Git tag, if you would rather build from source:
-
-```toml
-[dev-dependencies]
 soroban-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
 soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
 soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
 soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0", features = ["proptest"] }
+```
+
+The registry form, once `soroban-testkit-*` `v0.2.0` is published:
+
+```toml
+[dev-dependencies]
+soroban-testkit-core = "0.2.0"
+soroban-testkit-assert = "0.2.0"
+soroban-testkit-fixtures = "0.2.0"
+soroban-testkit-generators = { version = "0.2.0", features = ["proptest"] }
 ```
 
 ## Install steps

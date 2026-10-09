@@ -26,10 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `soroban-testkit-core` now depends on `serde` and `serde_json`, which is what the baseline file is. Both were already resolved in `Cargo.lock` through `soroban-ledger-snapshot`, so no new crate enters the graph.
 - `TestContext` gained a public `mock_auths` field, because an `Env` cannot report whether it mocks authorizations and `reset` has to reproduce the policy rather than invent one. The struct now has four fields, so a `TestContext { env, admin, users }` literal no longer compiles — `new`, `with_env` and `TestContextBuilder` are the ways in. A context wrapped around a hand-built unmocked env should set `ctx.mock_auths = false`.
 - The two ledger helpers each move one axis. `advance_time` leaves the sequence where it was and `advance_ledger` leaves the clock where it was, so a test that only wants entries to expire does not silently move time as well. Both saturate at `u64::MAX` and `u32::MAX` instead of wrapping.
+- **Installation says what resolves today.** The four crates are named, described and versioned for a crates.io release, and the registry does not list them yet — so the README and the installation page now lead with the `v0.2.0` Git pin and present the version requirement as the form to switch to, and the version badge is gone until there is a version to badge. A reader who copy-pasted `soroban-testkit-core = "0.2.0"` got a resolution error, which is a worse first impression than an honest sentence.
 
 ## [0.2.0] - 2026-10-09
 
-The first release on crates.io.
+The release that made the crates publishable: final names, per-crate metadata, and the storage, error and assertion work below. Consume it from the `v0.2.0` tag until the registry carries these names.
 
 ### Added
 - `soroban-testkit-core`: `StorageSnapshot::capture` enumerates a contract's live instance, persistent and temporary storage entries from the ledger snapshot, replacing the `inspect_storage` stub ([#4](https://github.com/stellar-crucible/soroban-testkit/issues/4))
@@ -46,7 +47,7 @@ The first release on crates.io.
 - **Package names.** The crates publish as `soroban-testkit-core`, `soroban-testkit-assert`, `soroban-testkit-fixtures` and `soroban-testkit-generators`. `testkit-core` was already taken on crates.io by an unrelated crate published in March 2025, and a half-renamed family would be worse to consume than a consistent one. Rust paths follow (`soroban_testkit_core::storage`), as do the workspace directories.
 - `DecodedError` gained a `category` field, so constructing one by hand now names the category. `from_error`, `from_error_with` and `from_contract_code` are the paths that do not need it.
 - Host errors render with their category (`Soroban Error [storage/3]: …`); contract errors keep the bare code (`Soroban Error [12]: …`).
-- Installation moved from a Git tag to a crates.io version requirement, with the tagged Git pin kept as the build-from-source option.
+- Installation documented in both forms: the crates.io version requirement these package names will use, and the tagged Git pin that resolves today.
 - Workspace directories renamed to match the package names, so a path reference in an issue or a doc reads correctly.
 
 ## [0.1.1] - 2026-10-09
