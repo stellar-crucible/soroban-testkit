@@ -55,7 +55,6 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
-workspace-skip = false
 
 [sources]
 unknown-registry = "deny"
