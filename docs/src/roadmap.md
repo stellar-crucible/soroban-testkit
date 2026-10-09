@@ -24,7 +24,7 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
   <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-core</span>
     <h3 class="tk-card__title">Budget snapshots</h3>
-    <p class="tk-card__body">Capture and diff CPU and memory consumption around a call.</p>
+    <p class="tk-card__body">Read the CPU and memory one call metered, and diff two readings of a running budget.</p>
   </div>
   <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-generators</span>
