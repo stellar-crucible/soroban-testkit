@@ -6,20 +6,17 @@ Thank you for your interest in contributing! This project participates in the [S
 
 1. Fork and clone the repository
 2. Install Rust 1.91+ via [rustup](https://rustup.rs/)
-3. Run `cargo test` to verify everything works
-4. Pick an issue labeled with a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`)
+3. Run `cargo test --workspace --locked` to verify everything works — 46 tests should pass
+4. Pick an issue labeled `Stellar Wave` plus a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`); comment on it before starting so two people don't collide
 
 ## Development
 
 ```bash
-# Run all tests
-cargo test --workspace
-
-# Run clippy
-cargo clippy --workspace -- -D warnings
-
-# Format code
-cargo fmt --all
+cargo test --workspace --locked          # all crates + examples/counter
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo fmt --all --check                  # CI runs the check, not the write
+mdbook build docs                        # documentation site must build clean
+cargo deny check all                     # supply-chain gate over the committed Cargo.lock
 ```
 
 ## Issue Labels
@@ -29,16 +26,18 @@ cargo fmt --all
 | `complexity:trivial` | Small, well-scoped task | 100 |
 | `complexity:medium` | Moderate feature or improvement | 150 |
 | `complexity:high` | Significant feature or complex task | 200 |
+| `Stellar Wave` | Funded through the Drips Stellar Wave program | — |
 
 Additional labels: `good first issue`, `bug`, `enhancement`, `documentation`, `help wanted`.
 
 ## Pull Request Process
 
 1. Create a branch from `main` with a descriptive name
-2. Implement your changes with tests
-3. Ensure `cargo test`, `cargo clippy`, and `cargo fmt` all pass
-4. Submit a PR with a clear description of what changed and why
-5. A maintainer will review and merge
+2. Implement your changes with tests — every new API needs a test that fails without it
+3. Ensure `cargo test`, `cargo clippy` and `cargo fmt --check` all pass locally with `RUSTFLAGS="-D warnings"`
+4. If you changed behaviour users can see, update the matching page under `docs/src/` in the same PR
+5. Submit a PR using the template; `main` is protected, so the `check`, `Docs build` and `Supply chain audit` jobs must be green before it can merge
+6. A maintainer will review and merge
 
 ## Code Style
 

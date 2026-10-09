@@ -4,7 +4,7 @@ Contributions of every size are welcome. The repository guide — [CONTRIBUTING.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Toolchain</span><span class="tk-spec__value">Rust 1.91+ (stable)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Checks</span><span class="tk-spec__value">fmt · clippy · test</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Checks</span><span class="tk-spec__value">fmt · clippy · test · docs · cargo deny</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Review</span><span class="tk-spec__value">two-way, within 14 days</span></div>
 </div>
 
@@ -13,15 +13,15 @@ Contributions of every size are welcome. The repository guide — [CONTRIBUTING.
 <ol class="tk-steps">
   <li>
     <h4>Fork and clone</h4>
-    <p>Create your fork of <code>stellar-crucible/soroban-testkit</code>, then <code>cargo test --workspace</code> to confirm a green baseline.</p>
+    <p>Create your fork of <code>stellar-crucible/soroban-testkit</code>, then <code>cargo test --workspace --locked</code> to confirm a green baseline (46 tests).</p>
   </li>
   <li>
     <h4>Claim an issue</h4>
-    <p>Comment on the issue before starting so two contributors do not collide — Wave issues are first-come, first-served.</p>
+    <p>Every funded task carries both <code>Stellar Wave</code> and a <code>complexity:*</code> label. Comment on the issue before starting so two contributors do not collide — Wave issues are first-come, first-served.</p>
   </li>
   <li>
     <h4>Branch, commit, check</h4>
-    <p>Run <code>cargo fmt --all --check</code> and <code>cargo clippy --workspace --all-targets</code> locally. CI treats warnings as errors.</p>
+    <p>Run <code>cargo fmt --all --check</code> and <code>cargo clippy --workspace --all-targets --locked -- -D warnings</code> locally. <code>main</code> is protected: <code>check</code>, <code>Docs build</code> and <code>Supply chain audit</code> must all be green before a pull request can merge.</p>
   </li>
   <li>
     <h4>Open a pull request</h4>

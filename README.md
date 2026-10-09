@@ -9,6 +9,8 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
 [![Soroban SDK](https://img.shields.io/badge/soroban--sdk-28-purple.svg)](https://docs.rs/soroban-sdk)
 [![CI](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/stellar-crucible/soroban-testkit?label=release&color=brightgreen)](https://github.com/stellar-crucible/soroban-testkit/releases/latest)
+[![Open tasks](https://img.shields.io/github/issues/stellar-crucible/soroban-testkit/Stellar%20Wave?label=Stellar%20Wave%20tasks&color=5319E7)](https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aopen+is%3Aissue+label%3A%22Stellar+Wave%22)
 
 ## Documentation
 
@@ -151,11 +153,11 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace      # unit tests for all four crates + examples/counter
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked      # 46 tests: all four crates + examples/counter
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
-mdbook build docs           # documentation site
-cargo deny check all        # advisories, licenses, duplicate versions, sources
+mdbook build docs                    # documentation site
+cargo deny check all                 # advisories, licenses, duplicate versions, sources
 ```
 
 [`examples/counter`](examples/counter) is a real contract with a test suite that
