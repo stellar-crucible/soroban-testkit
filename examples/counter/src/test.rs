@@ -190,10 +190,13 @@ fn increment_requires_authorization_when_auths_are_not_mocked() {
     client.increment(&caller, &1);
 }
 
-// The two tests below are `#[ignore]`d on purpose. A budget number belongs to
-// the platform that measured it, so an ordinary `cargo test` run must not fail
-// for someone on a different machine. The `Budget baseline` workflow runs the
-// check on one pinned runner and compares it against the committed file.
+// The two tests below are `#[ignore]`d on purpose. Soroban metering is
+// reproducible — this baseline, recorded on Windows, measured identical on the
+// `ubuntu-latest` runner — but the numbers still move with the SDK and env-host
+// versions, so a local run against a different lockfile would fail for a change
+// that cost nothing. One test writes into the repository as well. The
+// `Budget baseline` workflow runs both where `Cargo.lock` and the runner are
+// pinned, and compares against the committed file.
 
 fn baseline_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("budget.json")

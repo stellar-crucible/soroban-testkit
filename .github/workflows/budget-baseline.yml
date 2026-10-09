@@ -44,8 +44,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # A cost belongs to the machine that measured it, so the file the check
-      # enforces is recorded here, on the same runner, and picked up by hand.
+      # The metering is reproducible across machines, so the file the check
+      # enforces could be recorded anywhere — but it is rewritten here, where
+      # Cargo.lock and the runner are pinned, and picked up by hand.
       - name: Record the baseline on this runner
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.record == 'true'
         run: |
@@ -113,10 +114,11 @@ jobs:
           $numbers
           \`\`\`
 
-          Measured on \`ubuntu-latest\` against \`examples/counter/budget.json\` with a
-          tolerance of \`${{ github.event.inputs.tolerance || '10' }}\`%. Numbers from another
-          runner or SDK version are not comparable — re-record the baseline from the
-          workflow's Record run rather than locally. See the
+          Measured on \`ubuntu-latest\` against \`examples/counter/budget.json\`, with a
+          tolerance of \`${{ github.event.inputs.tolerance || '10' }}\`%. Soroban metering is
+          deterministic, so these readings are a property of the contract and the pinned
+          SDK rather than of this machine — an SDK or env-host bump is when the baseline
+          gets re-recorded, from the workflow's Record run. See the
           [budget testing guide](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html)."
           existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
             --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -1)

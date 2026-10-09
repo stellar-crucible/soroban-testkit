@@ -198,7 +198,7 @@ TESTKIT_BUDGET_TOLERANCE=5 cargo test -p soroban-testkit-example-counter -- --ig
     budget_baseline_rejects_drifted_costs
 ```
 
-Both are ignored on purpose — a cost belongs to the platform that measured it, so an ordinary `cargo test --workspace` run stays green on any machine. The `Budget baseline` workflow runs the check on one pinned `ubuntu-latest` runner, prints the numbers in the job summary, comments them on the pull request, and fails the job when a case grows more than the tolerance: 10% by default, `tolerance` on a manual run, `fail_on_drift` off when you want the report without the verdict.
+Both are ignored on purpose. Soroban metering is deterministic, so the reading is a property of the contract and the pinned SDK rather than of the machine that ran it — the file recorded on Windows measured identical on `ubuntu-latest`, `drift=+0.00%` on every metric. What that means is that an SDK or env-host bump moves every number at once, and the recording test rewrites a file in the repository, so neither belongs in `cargo test --workspace`. The `Budget baseline` workflow runs them where `Cargo.lock` and the runner are fixed: one pinned `ubuntu-latest`, the numbers printed in the job summary, a comment on the pull request, and a failure when a case grows past the tolerance — 10% by default, `tolerance` on a manual run, `fail_on_drift` off when you want the report without the verdict.
 
 ```text
 BUDGET_SUMMARY case=get metric=cpu_insns actual=7861 baseline=7861 drift=+0.00%

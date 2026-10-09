@@ -166,7 +166,7 @@ soroban-testkit/
 
 ```bash
 cargo test --workspace --locked      # 130 tests: all four crates + examples/counter
-                                     # 2 more run only in CI — they belong to one machine's costs
+                                     # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 mdbook build docs                    # documentation site

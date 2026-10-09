@@ -21,7 +21,7 @@ cargo deny check all                     # supply-chain gate over the committed 
 
 ### Budget baselines
 
-[`examples/counter/budget.json`](examples/counter/budget.json) records what the counter's hot paths cost, and the `Budget baseline` workflow holds every pull request to it on one pinned runner. The two tests that record and check it are `#[ignore]`d, so a local `cargo test` never fails over a machine's numbers. When a change is *meant* to move a cost, run that workflow with **Record** checked and commit the file it uploads — the pull request then shows the number moving instead of a red check being retried.
+[`examples/counter/budget.json`](examples/counter/budget.json) records what the counter's hot paths cost, and the `Budget baseline` workflow holds every pull request to it on one pinned runner. The two tests that record and check it are `#[ignore]`d — an SDK bump moves every number at once, and the recording test rewrites a file, so neither belongs in a local `cargo test`. When a change is *meant* to move a cost, run that workflow with **Record** checked and commit the file it uploads; the pull request then shows the number moving instead of a red check being retried.
 
 ## Issue Labels
 
