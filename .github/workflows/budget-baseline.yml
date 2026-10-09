@@ -1,0 +1,127 @@
+name: Budget baseline
+
+on:
+  pull_request:
+    paths:
+      - "examples/counter/**"
+      - "crates/soroban-testkit-core/src/budget.rs"
+      - ".github/workflows/budget-baseline.yml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tolerance:
+        description: "Percent a measured cost may grow past the committed baseline"
+        required: false
+        default: "10"
+      fail_on_drift:
+        description: "Fail the run when a cost drifts past the tolerance"
+        type: boolean
+        required: false
+        default: true
+      record:
+        description: "Rewrite the baseline on this runner and upload it instead of checking it"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  budget:
+    name: Compare hot-path costs with the committed baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # A cost belongs to the machine that measured it, so the file the check
+      # enforces is recorded here, on the same runner, and picked up by hand.
+      - name: Record the baseline on this runner
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.record == 'true'
+        run: |
+          set -o pipefail
+          cargo test --locked -p soroban-testkit-example-counter \
+            -- --ignored --nocapture budget_baseline_records_current_costs 2>&1 | tee budget.log
+          {
+            echo '### Recorded on this runner'
+            echo ''
+            echo 'Commit the file below to make it the enforced baseline.'
+            echo ''
+            echo '```json'
+            cat examples/counter/budget.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the recorded file
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.record == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: budget-json
+          path: examples/counter/budget.json
+
+      - name: Check against the committed file
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.record != 'true'
+        env:
+          TESTKIT_BUDGET_TOLERANCE: ${{ github.event.inputs.tolerance || '10' }}
+        run: |
+          set -o pipefail
+          status=0
+          cargo test --locked -p soroban-testkit-example-counter \
+            -- --ignored --nocapture budget_baseline_rejects_drifted_costs 2>&1 | tee budget.log || status=$?
+          {
+            echo '### Budget baseline'
+            echo ''
+            echo "Tolerance: \`$TESTKIT_BUDGET_TOLERANCE\`%"
+            echo ''
+            echo '```'
+            grep -E '^(BUDGET |BUDGET_SUMMARY )' budget.log || echo 'no measurements reported'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ] && [ "${{ github.event.inputs.fail_on_drift }}" = 'false' ]; then
+            echo "::warning::costs drifted past the tolerance; this run was asked not to fail"
+            exit 0
+          fi
+          exit "$status"
+
+      # Forks cannot write pull request comments, so a missing permission is
+      # reported rather than turned into a red build on top of the drift itself.
+      - name: Report the numbers on the pull request
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          marker='<!-- soroban-testkit-budget-baseline -->'
+          numbers=$(grep -E '^(BUDGET |BUDGET_SUMMARY )' budget.log || echo 'no measurements reported')
+          status='accepted'
+          if grep -q '^BUDGET kind=' budget.log; then status='**rejected**'; fi
+          body="$marker
+          ## Budget baseline ($status)
+
+          \`\`\`
+          $numbers
+          \`\`\`
+
+          Measured on \`ubuntu-latest\` against \`examples/counter/budget.json\` with a
+          tolerance of \`${{ github.event.inputs.tolerance || '10' }}\`%. Numbers from another
+          runner or SDK version are not comparable — re-record the baseline from the
+          workflow's Record run rather than locally. See the
+          [budget testing guide](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html)."
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -f body="$body"
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body"
+          fi

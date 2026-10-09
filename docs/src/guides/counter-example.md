@@ -185,6 +185,8 @@ baseline.guard("increment").tolerance_percent(25).run(&ctx.env, || {
   <p>A ceiling says the call is still affordable; a baseline says it is still the call you measured. The first catches a rewrite that got loose, the second catches a drift no reviewer noticed. One guard checks both, prints every breach as a <code>key=value</code> line, and leaves the numbers in the pull request diff instead of in a deploy log.</p>
 </div>
 
+This crate carries its own baseline — <code>examples/counter/budget.json</code> — and two <code>#[ignore]</code>d tests that record and enforce it. They are ignored because a cost belongs to the machine that measured it; the <code>Budget baseline</code> workflow runs them on one pinned runner instead, so <code>cargo test</code> stays green on your laptop and the numbers are still judged somewhere. See <a href="./budget-testing.html">Budget-aware testing</a> for the commands and the failure output.
+
 ## Step 5 — prove the authorisation is real
 
 Everything above mocks auth. The last test turns mocking off and expects the call to panic, which is the only proof that `require_auth()` was not decorative.
