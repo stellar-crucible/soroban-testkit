@@ -153,7 +153,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 46 tests: all four crates + examples/counter
+cargo test --workspace --locked      # 60 tests: all four crates + examples/counter
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 mdbook build docs                    # documentation site

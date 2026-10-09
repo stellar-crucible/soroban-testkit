@@ -43,6 +43,16 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
   </div>
 </div>
 
+## Landed since v0.1.0
+
+<div class="tk-grid tk-grid--2">
+  <div class="tk-card">
+    <span class="tk-card__kicker">testkit-core</span>
+    <h3 class="tk-card__title">Storage snapshots and diffs</h3>
+    <p class="tk-card__body"><code>StorageSnapshot::capture</code> enumerates a contract's live instance, persistent and temporary entries from the ledger snapshot, and <code>diff()</code> reports added, removed and rewritten keys — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/4">#4</a>, closed.</p>
+  </div>
+</div>
+
 ## Next cycle
 
 | Area | Work | Complexity |
@@ -57,7 +67,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 | Fixtures | Context reset between sub-tests ([#17](https://github.com/stellar-crucible/soroban-testkit/issues/17)) | `complexity:trivial` |
 | Core | Budget regression detection ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3)) | `complexity:high` |
 | Core | Error code decoder behind `DecodedError` ([#5](https://github.com/stellar-crucible/soroban-testkit/issues/5)) | `complexity:medium` |
-| Core | Storage snapshot and diff utilities ([#4](https://github.com/stellar-crucible/soroban-testkit/issues/4)) | `complexity:high` |
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
 | Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
@@ -70,11 +79,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <span class="tk-problem__label">Mocking</span>
     <span class="tk-problem__body">Lightweight mock contract generation from trait definitions, so stubbing a dependency stops requiring a whole crate.</span>
     <span class="tk-problem__fix">Tracked as <b>issue #10</b> · <span class="tk-badge tk-badge--brand">High 200 pts</span></span>
-  </div>
-  <div class="tk-problem">
-    <span class="tk-problem__label">Storage</span>
-    <span class="tk-problem__body">Full enumeration of instance, persistent and temporary entries — today <code>inspect_storage</code> returns a best-effort view.</span>
-    <span class="tk-problem__fix">Tracked as <b>issue #4</b> · <span class="tk-badge tk-badge--brand">High 200 pts</span></span>
   </div>
   <div class="tk-problem">
     <span class="tk-problem__label">Distribution</span>
