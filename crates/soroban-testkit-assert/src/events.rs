@@ -3,13 +3,16 @@ use soroban_sdk::{Address, Env, TryFromVal};
 
 /// Ergonomic assertions over the events a contract published.
 ///
-/// The SDK exposes only the events of the most recent contract invocation
-/// through `env.events().all()`, so a matcher always reads the latest call.
-/// Assert between invocations rather than accumulating counts across a test.
+/// By default a matcher reads `env.events().all()`, which in SDK v28 reports the
+/// events of the **most recent contract invocation** only, so assert between
+/// calls. To read several calls as one set, gather them into an [`EventLog`] and
+/// take [`EventLog::matcher`] — the filters and every assertion below then apply
+/// to the whole sequence.
 pub struct EventMatcher<'a> {
     env: &'a Env,
     contract: Option<Address>,
     topic: Option<String>,
+    events: Option<&'a [soroban_sdk::xdr::ContractEvent]>,
 }
 
 impl<'a> EventMatcher<'a> {
@@ -18,6 +21,7 @@ impl<'a> EventMatcher<'a> {
             env,
             contract: None,
             topic: None,
+            events: None,
         }
     }
 
@@ -31,15 +35,24 @@ impl<'a> EventMatcher<'a> {
         self
     }
 
-    /// Applies the configured filters to the events of the latest invocation.
+    /// Applies the configured filters to the events in scope, whether that scope
+    /// is the latest invocation or an [`EventLog`].
     fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
-        let all = self.env.events().all();
-        let scoped = match &self.contract {
-            Some(contract) => all.filter_by_contract(contract),
-            None => all,
+        let mut events = match self.events {
+            Some(collected) => collected.to_vec(),
+            None => self.env.events().all().events().to_vec(),
         };
 
-        let mut events = scoped.events().to_vec();
+        if let Some(contract) = &self.contract {
+            let wanted = emitting_contract(contract);
+            events.retain(
+                |event| match (wanted.as_ref(), event.contract_id.as_ref()) {
+                    (Some(id), Some(emitter)) => id == emitter,
+                    _ => false,
+                },
+            );
+        }
+
         if let Some(topic) = &self.topic {
             let bytes = topic.as_bytes();
             events.retain(|event| {
@@ -71,16 +84,16 @@ impl<'a> EventMatcher<'a> {
         );
     }
 
-    /// Fail when the latest invocation published anything in scope.
+    /// Fail when nothing in scope was published.
     ///
     /// Honours [`Self::from_contract`] and [`Self::with_topic`], so
     /// `with_topic("Transfer").assert_not_emitted()` reads as "no Transfer event
     /// came out of that call".
     ///
-    /// Scope is the most recent contract invocation only — see the note on
-    /// [`EventMatcher`]. Proving an event never appeared across a whole test
-    /// needs aggregation, tracked as
-    /// [issue #19](https://github.com/stellar-crucible/soroban-testkit/issues/19).
+    /// Scope is the most recent contract invocation for a matcher built by
+    /// [`EventMatcher::new`], and the whole collected sequence for a matcher from
+    /// [`EventLog::matcher`] — which is how a test proves an event never appeared
+    /// at all, rather than only in the last call.
     pub fn assert_not_emitted(&self) {
         let found = self.matched();
         if let Some(first) = found.first() {
@@ -137,6 +150,110 @@ impl<'a> EventMatcher<'a> {
             seen.join(", ")
         );
     }
+}
+
+/// The events of several invocations, asserted over as one set.
+///
+/// `env.events().all()` reports only the most recent contract invocation, so a
+/// matcher built by `EventMatcher::new` can never say "these three calls emitted
+/// exactly two `Transfer` events". An `EventLog` collects after each call the
+/// test cares about, and [`Self::matcher`] hands the accumulated set to the same
+/// filters and assertions:
+///
+/// ```text
+/// let mut log = EventLog::new(&env);
+/// client.transfer(&from, &to, &100);
+/// log.collect();
+/// client.close_offer(&from);
+/// log.collect();
+///
+/// log.matcher().with_topic("transfer").assert_count(1);
+/// log.matcher().with_topic("refund").assert_not_emitted();
+/// ```
+///
+/// Collection is explicit because the SDK offers no per-invocation hook: a call
+/// nobody collected from contributes nothing to the log. Events stay in call
+/// order — one contiguous run per collected invocation, in the order the contract
+/// published them — so [`Self::topics`] reads the sequence back.
+pub struct EventLog<'a> {
+    env: &'a Env,
+    events: Vec<soroban_sdk::xdr::ContractEvent>,
+}
+
+impl<'a> EventLog<'a> {
+    pub fn new(env: &'a Env) -> Self {
+        Self {
+            env,
+            events: Vec::new(),
+        }
+    }
+
+    /// Appends the events of the invocation that has just run.
+    ///
+    /// An invocation that emitted nothing appends nothing, which is what makes an
+    /// assertion over the log mean "not in any of these calls".
+    pub fn collect(&mut self) -> &mut Self {
+        self.events
+            .extend(self.env.events().all().events().to_vec());
+        self
+    }
+
+    /// A matcher over everything collected so far.
+    ///
+    /// Borrowing the log is what makes the matcher read the sequence rather than
+    /// the last call: the filters and assertions below work unchanged over it.
+    pub fn matcher(&self) -> EventMatcher<'_> {
+        EventMatcher {
+            env: self.env,
+            contract: None,
+            topic: None,
+            events: Some(&self.events),
+        }
+    }
+
+    /// The topic symbols of each collected event, in collection order.
+    ///
+    /// This is the shape a sequence assertion reads: one entry per event, the
+    /// topics of that event as the contract published them.
+    pub fn topics(&self) -> Vec<Vec<String>> {
+        self.events.iter().map(event_topics).collect()
+    }
+
+    /// The collected events themselves, for what the filters cannot express.
+    pub fn events(&self) -> &[soroban_sdk::xdr::ContractEvent] {
+        &self.events
+    }
+
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+}
+
+/// The contract id a filter compares against.
+///
+/// Only a contract can publish an event, so the filter needs a contract id, and
+/// an account address names no emitter: it yields `None` and matches nothing.
+/// The SDK's own `ContractEvents::filter_by_contract` panics on an account
+/// address instead, and works only on the events `env.events().all()` handed it
+/// — an accumulated set needs the comparison made here.
+fn emitting_contract(address: &Address) -> Option<soroban_sdk::xdr::ContractId> {
+    let soroban_sdk::xdr::ScVal::Address(emitter) = soroban_sdk::xdr::ScVal::from(address) else {
+        unreachable!("an Address always converts to ScVal::Address");
+    };
+    match emitter {
+        soroban_sdk::xdr::ScAddress::Contract(id) => Some(id),
+        _ => None,
+    }
+}
+
+/// The topic symbols of one event, as readable text.
+fn event_topics(event: &soroban_sdk::xdr::ContractEvent) -> Vec<String> {
+    let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
+    body.topics.iter().map(topic_label).collect()
 }
 
 /// One event's data payload, in the form the ledger stored it and in the form a
@@ -290,7 +407,7 @@ fn topic_label(topic: &soroban_sdk::xdr::ScVal) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::EventMatcher;
+    use super::{EventLog, EventMatcher};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{
         contract, contractimpl, contracttype, map, symbol_short, vec, Address, Env, Symbol,
@@ -304,6 +421,15 @@ mod tests {
         #[allow(deprecated)]
         pub fn emit(env: Env, topic: Symbol) {
             env.events().publish((topic,), ());
+        }
+
+        #[allow(deprecated)]
+        pub fn emit_pair(env: Env, first: Symbol, second: Symbol) {
+            env.events().publish((first, second), ());
+        }
+
+        pub fn silent(env: Env) {
+            let _ = env;
         }
     }
 
@@ -654,5 +780,190 @@ mod tests {
         EventMatcher::new(&env)
             .with_topic("moved")
             .assert_data_matches(|_| false);
+    }
+
+    // Aggregating needs more than one call, so these tests collect after each
+    // invocation they mean to assert over and compare against the single-call
+    // scope where the difference shows.
+    #[test]
+    fn event_log_aggregates_events_across_invocations() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        client.emit(&symbol_short!("ping"));
+        log.collect();
+        client.emit(&symbol_short!("pong"));
+        log.collect();
+
+        log.matcher().assert_count(2);
+        log.matcher().with_topic("ping").assert_count(1);
+        log.matcher().with_topic("pong").assert_count(1);
+        log.matcher().assert_emitted();
+
+        // Without the log the same env still answers for one call only.
+        EventMatcher::new(&env).assert_count(1);
+        EventMatcher::new(&env).with_topic("ping").assert_count(0);
+    }
+
+    #[test]
+    fn event_log_holds_only_the_calls_a_test_collected() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        client.emit(&symbol_short!("ping"));
+        // This call runs, and nobody collects it.
+        client.emit(&symbol_short!("pong"));
+        log.collect();
+
+        log.matcher().assert_count(1);
+        log.matcher().with_topic("ping").assert_not_emitted();
+        log.matcher().with_topic("pong").assert_count(1);
+    }
+
+    #[test]
+    fn event_log_records_nothing_for_a_call_that_emitted_nothing() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        client.emit(&symbol_short!("ping"));
+        log.collect();
+        client.silent();
+        log.collect();
+
+        log.matcher().assert_count(1);
+        log.matcher().with_topic("pong").assert_not_emitted();
+    }
+
+    #[test]
+    fn event_log_starts_empty_and_exposes_what_it_collected() {
+        let env = Env::default();
+        let mut log = EventLog::new(&env);
+
+        assert!(log.is_empty());
+        assert_eq!(log.len(), 0);
+        assert!(log.topics().is_empty());
+        log.matcher().assert_not_emitted();
+
+        let client = emitter(&env);
+        client.emit(&symbol_short!("ping"));
+        log.collect();
+
+        assert_eq!(log.len(), 1);
+        assert!(!log.is_empty());
+        assert_eq!(log.events().len(), 1);
+    }
+
+    #[test]
+    fn event_log_scopes_the_contract_filter_over_the_whole_sequence() {
+        let env = Env::default();
+        let first = emitter(&env);
+        let second = emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        first.emit(&symbol_short!("ping"));
+        log.collect();
+        second.emit(&symbol_short!("ping"));
+        log.collect();
+
+        log.matcher().from_contract(&first.address).assert_count(1);
+        log.matcher().assert_count(2);
+
+        // The latest call came from `second`, so a single-scope matcher filtered
+        // to `first` sees nothing at all.
+        EventMatcher::new(&env)
+            .from_contract(&first.address)
+            .assert_count(0);
+    }
+
+    #[test]
+    fn from_contract_with_an_account_address_matches_nothing() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let account = Address::generate(&env);
+
+        client.emit(&symbol_short!("ping"));
+
+        let mut log = EventLog::new(&env);
+        log.collect();
+
+        EventMatcher::new(&env)
+            .from_contract(&account)
+            .assert_not_emitted();
+        log.matcher().from_contract(&account).assert_not_emitted();
+    }
+
+    #[test]
+    fn event_log_reads_the_topic_sequence_back_in_call_order() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        client.emit(&symbol_short!("ping"));
+        log.collect();
+        client.emit_pair(&symbol_short!("claim"), &symbol_short!("grant"));
+        log.collect();
+
+        let sequence = log
+            .topics()
+            .iter()
+            .map(|topics| topics.join("."))
+            .collect::<Vec<_>>()
+            .join("|");
+        assert_eq!(sequence, "ping|claim.grant");
+    }
+
+    #[test]
+    fn event_log_asserts_over_every_collected_payload() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        client.emit_scalars(&1i128);
+        log.collect();
+        client.emit_scalars(&2i128);
+        log.collect();
+
+        log.matcher().with_topic("amount").assert_count(2);
+        log.matcher()
+            .with_topic("amount")
+            .assert_data_matches(|data| data.deserialize::<i128>() == Some(1));
+        log.matcher()
+            .with_topic("amount")
+            .assert_data_matches(|data| data.deserialize::<i128>() == Some(2));
+    }
+
+    #[test]
+    #[should_panic(expected = "checked 2 event(s) with data [1, 2]")]
+    fn event_log_prints_the_payloads_of_every_collected_call() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        client.emit_scalars(&1i128);
+        log.collect();
+        client.emit_scalars(&2i128);
+        log.collect();
+
+        log.matcher()
+            .with_topic("amount")
+            .assert_data_matches(|_| false);
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected 3 events, found 2")]
+    fn event_log_reports_the_aggregate_when_a_count_assertion_fails() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let mut log = EventLog::new(&env);
+
+        client.emit(&symbol_short!("ping"));
+        log.collect();
+        client.emit(&symbol_short!("pong"));
+        log.collect();
+
+        log.matcher().assert_count(3);
     }
 }
