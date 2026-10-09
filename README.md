@@ -19,7 +19,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 | First test in 5 minutes | [Quick start](https://stellar-crucible.github.io/soroban-testkit/getting-started/quick-start.html) |
 | Crate references | [core](https://stellar-crucible.github.io/soroban-testkit/crates/core.html) · [assert](https://stellar-crucible.github.io/soroban-testkit/crates/assert.html) · [fixtures](https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html) · [generators](https://stellar-crucible.github.io/soroban-testkit/crates/generators.html) |
 | Recipes | [Testing patterns](https://stellar-crucible.github.io/soroban-testkit/guides/testing-patterns.html) · [Budget-aware testing](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html) · [Property testing](https://stellar-crucible.github.io/soroban-testkit/guides/property-testing.html) |
-| Contribute & earn | [Contributing guide](https://stellar-crucible.github.io/soroban-testkit/contributing.html) |
+| Contribute & earn | [Contributing guide](https://stellar-crucible.github.io/soroban-testkit/contributing.html) · [Roadmap](https://stellar-crucible.github.io/soroban-testkit/roadmap.html) |
 
 ## Why Testkit?
 
@@ -140,11 +140,28 @@ soroban-testkit/
 │   ├── testkit-assert/       # Event and auth assertion matchers
 │   ├── testkit-fixtures/     # Test context builder and fixtures
 │   └── testkit-generators/   # Property testing strategies
-├── docs/                     # mdBook documentation source
-├── examples/                 # Example contracts using testkit
+├── examples/
+│   └── counter/              # Contract + integration tests using every crate
+├── docs/                     # mdBook documentation source (theme/custom.css)
+├── .github/                  # CI, docs deploy, templates, CODEOWNERS
 ├── Cargo.toml                # Workspace root
 └── LICENSE                   # Apache-2.0
 ```
+
+## Development
+
+```bash
+cargo test --workspace      # unit tests for all four crates + examples/counter
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+mdbook build docs           # documentation site
+cargo deny check all        # advisories, licenses, duplicate versions, sources
+```
+
+[`examples/counter`](examples/counter) is a real contract with a test suite that
+uses every crate in the workspace: fixtures for the environment and users,
+`EventMatcher` for contract events, `BudgetSnapshot` for CPU consumption, and a
+`#[should_panic]` case that shows an unmocked `require_auth` failing.
 
 ## Contributing
 
