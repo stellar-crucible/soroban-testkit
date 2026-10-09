@@ -130,8 +130,8 @@ diff.
 {
   "version": 1,
   "cases": {
-    "increment": { "cpu_insns": 32669, "mem_bytes": 5252 },
-    "get": { "cpu_insns": 6123, "mem_bytes": 1089 }
+    "get": { "cpu_insns": 7861, "mem_bytes": 1510 },
+    "increment": { "cpu_insns": 32669, "mem_bytes": 5252 }
   }
 }
 ```
@@ -182,22 +182,47 @@ BUDGET kind=growth case=transfer metric=mem_bytes actual=610000 limit=550000 bas
 | `actual` / `limit` | Measured cost and the largest value still accepted |
 | `baseline` / `tolerance_percent` | Only on `growth`, so the ratio is recoverable from the line |
 
-## CI integration
+## Running the check in CI
 
-Track budget trends across commits to catch regressions early:
+The counter example ships the whole loop: `examples/counter/budget.json` records
+the cost of its two hot paths, and two `#[ignore]`d tests in
+`examples/counter/src/test.rs` drive it.
+
+```bash
+# record the costs where they will be enforced
+cargo test -p soroban-testkit-example-counter -- --ignored --nocapture \
+    budget_baseline_records_current_costs
+
+# compare a run against the committed file
+TESTKIT_BUDGET_TOLERANCE=5 cargo test -p soroban-testkit-example-counter -- --ignored --nocapture \
+    budget_baseline_rejects_drifted_costs
+```
+
+Both are ignored on purpose. Soroban metering is deterministic, so the reading is a property of the contract and the pinned SDK rather than of the machine that ran it — the file recorded on Windows measured identical on `ubuntu-latest`, `drift=+0.00%` on every metric. What that means is that an SDK or env-host bump moves every number at once, and the recording test rewrites a file in the repository, so neither belongs in `cargo test --workspace`. The `Budget baseline` workflow runs them where `Cargo.lock` and the runner are fixed: one pinned `ubuntu-latest`, the numbers printed in the job summary, a comment on the pull request, and a failure when a case grows past the tolerance — 10% by default, `tolerance` on a manual run, `fail_on_drift` off when you want the report without the verdict.
+
+```text
+BUDGET_SUMMARY case=get metric=cpu_insns actual=7861 baseline=7861 drift=+0.00%
+BUDGET_SUMMARY case=increment metric=cpu_insns actual=32669 baseline=32669 drift=+0.00%
+```
+
+| Field | Meaning |
+|-------|---------|
+| `case` | The key in the committed `budget.json` |
+| `actual` | What the call cost on this runner |
+| `baseline` | What the committed file says it cost |
+| `drift` | `actual` against `baseline`, signed percent |
+
+A breach then follows as the usual `BUDGET kind=growth …` line, so the same grep
+covers both the check and an in-test guard.
 
 <ol class="tk-steps">
   <li>
-    <h4>Store a baseline</h4>
-    <p>Commit one `budget.json` per suite, one case per hot-path function, and let <code>guard(case)</code> read it back.</p>
+    <h4>An unintended rise</h4>
+    <p>The job fails and the comment says which case, which metric and by how much. Nothing to record — the code is what has to change.</p>
   </li>
   <li>
-    <h4>Fail on drift</h4>
-    <p>Assert the measured cost stays inside an agreed tolerance, so an accidental extra storage read breaks the build instead of the network.</p>
-  </li>
-  <li>
-    <h4>Publish the numbers</h4>
-    <p>The failure lines are already parseable — print them in the job summary and CI logs become a cost history you can diff between releases.</p>
+    <h4>An intended rise</h4>
+    <p>Run the workflow with <b>Record</b> checked: it rewrites <code>budget.json</code> on the same runner that enforces it and uploads the file as an artifact. Commit that file on the branch, and the pull request diff reads as a reviewable statement — <code>increment: 32669 → 41000</code> — rather than a red check someone retried.</p>
   </li>
 </ol>
 

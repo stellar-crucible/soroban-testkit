@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This project participates in the [S
 
 1. Fork and clone the repository
 2. Install Rust 1.91+ via [rustup](https://rustup.rs/)
-3. Run `cargo test --workspace --locked` to verify everything works — 130 tests should pass
+3. Run `cargo test --workspace --locked` to verify everything works — 130 tests should pass, plus 2 ignored baseline jobs that only CI enforces
 4. Pick an issue labeled `Stellar Wave` plus a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`); comment on it before starting so two people don't collide
 
 ## Development
@@ -18,6 +18,10 @@ cargo fmt --all --check                  # CI runs the check, not the write
 mdbook build docs                        # documentation site must build clean
 cargo deny check all                     # supply-chain gate over the committed Cargo.lock
 ```
+
+### Budget baselines
+
+[`examples/counter/budget.json`](examples/counter/budget.json) records what the counter's hot paths cost, and the `Budget baseline` workflow holds every pull request to it on one pinned runner. The two tests that record and check it are `#[ignore]`d — an SDK bump moves every number at once, and the recording test rewrites a file, so neither belongs in a local `cargo test`. When a change is *meant* to move a cost, run that workflow with **Record** checked and commit the file it uploads; the pull request then shows the number moving instead of a red check being retried.
 
 ## Issue Labels
 
@@ -36,7 +40,7 @@ Additional labels: `good first issue`, `bug`, `enhancement`, `documentation`, `h
 2. Implement your changes with tests — every new API needs a test that fails without it
 3. Ensure `cargo test`, `cargo clippy` and `cargo fmt --check` all pass locally with `RUSTFLAGS="-D warnings"`
 4. If you changed behaviour users can see, update the matching page under `docs/src/` in the same PR
-5. Submit a PR using the template; `main` is protected, so the `check`, `Docs build` and `Supply chain audit` jobs must be green before it can merge
+5. Submit a PR using the template; `main` is protected, so the `check`, `Docs build` and `Supply chain audit` jobs must be green before it can merge. A PR that touches the example contract or the budget code also runs `Budget baseline`, which posts the measured costs as a comment.
 6. A maintainer will review and merge
 
 ## Releasing

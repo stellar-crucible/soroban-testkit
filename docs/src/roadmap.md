@@ -77,9 +77,14 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>BudgetGuard</code> and <code>budget_guard!</code> hold a call to a CPU and memory ceiling plus a growth allowance against a recorded cost, and <code>BudgetBaseline</code> keeps those costs in a committed JSON file — every breach printed as one parseable line — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/3">#3</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">Tooling</span>
+    <h3 class="tk-card__title">Budgets diffed in CI</h3>
+    <p class="tk-card__body"><code>examples/counter/budget.json</code> commits the counter's hot-path costs, one ignored test records them and another enforces them, and the <code>Budget baseline</code> workflow runs the check on a pinned runner and reports every case on the pull request — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/14">#14</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
     <h3 class="tk-card__title">On crates.io</h3>
-    <p class="tk-card__body">The workspace publishes as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, so a consumer adds a version requirement instead of a Git pin.</p>
+    <p class="tk-card__body">The workspace is packaged and named for a crates.io release — <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, each with its own README and metadata — so a consumer will add a version requirement instead of a Git pin. Until those packages appear on the registry, install from the <code>v0.2.0</code> tag.</p>
   </div>
 </div>
 

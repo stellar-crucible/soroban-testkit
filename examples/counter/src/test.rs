@@ -1,5 +1,8 @@
 extern crate std;
 
+// The crate is `no_std`, so the baseline helpers name the std items they use.
+use std::{println, string::ToString, vec::Vec};
+
 use soroban_sdk::Address;
 use soroban_testkit_assert::events::EventMatcher;
 use soroban_testkit_core::budget::{BudgetBaseline, BudgetMetric, BudgetSnapshot};
@@ -185,4 +188,119 @@ fn increment_requires_authorization_when_auths_are_not_mocked() {
     let caller = ctx.users[0].clone();
 
     client.increment(&caller, &1);
+}
+
+// The two tests below are `#[ignore]`d on purpose. Soroban metering is
+// reproducible — this baseline, recorded on Windows, measured identical on the
+// `ubuntu-latest` runner — but the numbers still move with the SDK and env-host
+// versions, so a local run against a different lockfile would fail for a change
+// that cost nothing. One test writes into the repository as well. The
+// `Budget baseline` workflow runs both where `Cargo.lock` and the runner are
+// pinned, and compares against the committed file.
+
+fn baseline_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("budget.json")
+}
+
+/// Run one call against a contract that already holds its entry, and return the
+/// metering that call left behind. The prime makes both cases steady-state — a
+/// read of a live counter, a rewrite of one — so recording and checking measure
+/// the same shape of call.
+fn measure(invocation: impl Fn(&CounterContractClient<'_>, &Address)) -> BudgetSnapshot {
+    let ctx = context(1);
+    let (_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    client.increment(&caller, &1);
+    invocation(&client, &caller);
+
+    BudgetSnapshot::last_invocation(&ctx.env)
+}
+
+fn hot_paths() -> [(&'static str, BudgetSnapshot); 2] {
+    [
+        (
+            "get",
+            measure(|client, _| {
+                client.get();
+            }),
+        ),
+        (
+            "increment",
+            measure(|client, caller| {
+                client.increment(caller, &1);
+            }),
+        ),
+    ]
+}
+
+/// One parseable line per metric, so the job summary is a cost table rather
+/// than a paragraph.
+fn report(case: &str, cost: &BudgetSnapshot, recorded: &BudgetSnapshot) {
+    let metrics = [
+        (BudgetMetric::Cpu, cost.cpu_insns, recorded.cpu_insns),
+        (BudgetMetric::Memory, cost.mem_bytes, recorded.mem_bytes),
+    ];
+    for (metric, actual, start) in metrics {
+        let drift = if start == 0 {
+            0.0
+        } else {
+            (actual as f64 - start as f64) * 100.0 / start as f64
+        };
+        println!(
+            "BUDGET_SUMMARY case={case} metric={} actual={actual} baseline={start} drift={drift:+.2}%",
+            metric.as_str()
+        );
+    }
+}
+
+#[test]
+#[ignore = "rewrites examples/counter/budget.json — run it deliberately, then commit the file"]
+fn budget_baseline_records_current_costs() {
+    let mut baseline = BudgetBaseline::new();
+    for (case, cost) in hot_paths() {
+        baseline.record(case, cost);
+    }
+
+    baseline.save(&baseline_path()).unwrap();
+    // Printed so a recording run in CI shows the file it just wrote.
+    println!("{}", baseline.to_json_string());
+}
+
+#[test]
+#[ignore = "enforced by the Budget baseline workflow on a pinned runner"]
+fn budget_baseline_rejects_drifted_costs() {
+    let recorded = BudgetBaseline::load(&baseline_path()).expect(
+        "examples/counter/budget.json is missing; run budget_baseline_records_current_costs",
+    );
+
+    let tolerance = std::env::var("TESTKIT_BUDGET_TOLERANCE")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10);
+
+    let mut breaches = Vec::new();
+    for (case, cost) in hot_paths() {
+        match recorded.get(case) {
+            Some(start) => {
+                report(case, &cost, &start);
+                breaches.extend(
+                    recorded
+                        .guard(case)
+                        .tolerance_percent(tolerance)
+                        .violations(&cost),
+                );
+            }
+            None => println!("BUDGET_SUMMARY case={case} status=unrecorded"),
+        }
+    }
+
+    if !breaches.is_empty() {
+        let lines = breaches
+            .iter()
+            .map(|breach| breach.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!("budget drifted past {tolerance}%:\n{lines}");
+    }
 }

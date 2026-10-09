@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "cases": {
+    "get": {
+      "cpu_insns": 7861,
+      "mem_bytes": 1510
+    },
+    "increment": {
+      "cpu_insns": 32669,
+      "mem_bytes": 5252
+    }
+  }
+}

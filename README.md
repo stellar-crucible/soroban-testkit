@@ -9,6 +9,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
 [![Soroban SDK](https://img.shields.io/badge/soroban--sdk-28-purple.svg)](https://docs.rs/soroban-sdk)
 [![CI](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml)
+[![Budget baseline](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml)
 [![Release](https://img.shields.io/github/v/release/stellar-crucible/soroban-testkit?label=release&color=brightgreen)](https://github.com/stellar-crucible/soroban-testkit/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=f79071)](https://crates.io/crates/soroban-testkit-core)
 [![Open tasks](https://img.shields.io/github/issues/stellar-crucible/soroban-testkit/Stellar%20Wave?label=Stellar%20Wave%20tasks&color=5319E7)](https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aopen+is%3Aissue+label%3A%22Stellar+Wave%22)
@@ -154,8 +155,9 @@ soroban-testkit/
 │   └── soroban-testkit-generators/   # Property testing strategies
 ├── examples/
 │   └── counter/              # Contract + integration tests using every crate
+│                             # + budget.json: the costs CI holds them to
 ├── docs/                     # mdBook documentation source (theme/custom.css)
-├── .github/                  # CI, docs deploy, templates, CODEOWNERS
+├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
 ├── Cargo.toml                # Workspace root
 └── LICENSE                   # Apache-2.0
 ```
@@ -164,6 +166,7 @@ soroban-testkit/
 
 ```bash
 cargo test --workspace --locked      # 130 tests: all four crates + examples/counter
+                                     # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 mdbook build docs                    # documentation site
@@ -174,7 +177,10 @@ cargo deny check all                 # advisories, licenses, duplicate versions,
 uses every crate in the workspace: fixtures for the environment and users,
 `EventMatcher` for contract events, `BudgetGuard` and `budget_guard!` for CPU and
 memory ceilings, and a `#[should_panic]` case that shows an unmocked
-`require_auth` failing.
+`require_auth` failing. Its [`budget.json`](examples/counter/budget.json) records
+what `get` and `increment` cost, and the `Budget baseline` workflow re-measures
+them on every pull request so a storage read nobody intended cannot slip in as a
+free change.
 
 ## Contributing
 
