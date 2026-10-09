@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `testkit-assert`: `EventMatcher::assert_not_emitted` proves the latest invocation published nothing in scope, honouring the contract and topic filters ([#11](https://github.com/stellar-crucible/soroban-testkit/issues/11))
 - `testkit-assert`: `EventMatcher::assert_none_match` takes a predicate over the raw `ContractEvent` for what the topic filter cannot express
 - 8 more tests: `#[should_panic]` cases pin the failure messages, and `examples/counter` now proves a topic it never publishes stays silent
+- `testkit-core`: `DecodedError::from_error` splits a Soroban error into its category and the code's protocol meaning, covering all ten host categories and ten standard codes ([#5](https://github.com/stellar-crucible/soroban-testkit/issues/5))
+- `testkit-core`: `ErrorRegistry` names a contract's own `#[contracterror]` codes, and `unwrap_decoded` / `unwrap_decoded_with` unwrap a v28 `try_*` client call while panicking with the decoded sentence
+- 13 more tests, including a real contract call decoded through the generated client and `#[should_panic]` cases for the fallback wording
 
 ## [0.1.1] - 2026-10-09
 

@@ -14,7 +14,9 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 |------|---------|
 | `BudgetSnapshot` | Capture CPU instructions and memory bytes at a point in time |
 | `BudgetRead` | Trait implemented by any budget `capture()` can read — host `Budget` and the SDK budget |
-| `DecodedError` | A Soroban error code rendered with message and context |
+| `DecodedError` | A Soroban error code split into category, meaning and context |
+| `ErrorRegistry` | Your `#[contracterror]` codes mapped to the words they mean |
+| `ClientOutcome`, `unwrap_decoded` | Unwrap a v28 `try_*` client call, panicking with the decoded error |
 | `StorageEntry`, `StorageTier` | A live storage key, its rendered value, tier and expiry ledger |
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
@@ -46,20 +48,63 @@ println!("Memory bytes: {}", diff.mem_bytes);
 
 ## Error decoding
 
-Translate opaque Soroban error codes into human-readable messages:
+Soroban reports failures as a packed integer. `DecodedError::from_error` splits it into the category the host raised it in and the code's known meaning:
+
+```rust
+use testkit_core::error::DecodedError;
+
+// A v28 client's `try_*` method reports the contract's own error as `Err(Ok(error))`.
+let error = client.try_withdraw(&amount).unwrap_err().unwrap();
+
+println!("{}", DecodedError::from_error(&error));
+// Soroban Error [storage/3]: MissingValue — a required value was not provided (errors accessing host storage)
+```
+
+The ten categories the protocol defines (`contract`, `wasm_vm`, `context`, `storage`, `object`, `crypto`, `events`, `budget`, `value`, `auth`) and the ten standard codes (`ArithDomain`, `IndexBounds`, `InvalidInput`, `MissingValue`, `ExistingValue`, `ExceededLimit`, `InvalidAction`, `InternalError`, `UnexpectedType`, `UnexpectedSize`) are all described. An unrecognised number falls back to a sentence naming it rather than a panic.
+
+### Your own error codes
+
+A `#[contracterror]` enum hands the host an integer with no words attached, so the vocabulary is yours to supply. `ErrorRegistry` is that mapping:
+
+```rust
+use testkit_core::error::{ErrorRegistry, DecodedError};
+
+let registry = ErrorRegistry::new()
+    .register(101, "Insufficient balance")
+    .register(102, "Contract is paused");
+
+let decoded = DecodedError::from_error_with(&error, &registry);
+assert_eq!(decoded.to_string(), "Soroban Error [101]: Insufficient balance");
+```
+
+Without a registry a contract code still decodes — it just says the code is unregistered, which beats reading `Error(3)` and going hunting.
+
+### In test output
+
+`unwrap_decoded` unwraps a v28 `try_*` client call and panics with the decoded sentence, so a failing call reads as a diagnosis in the test log rather than as nested `Result` debug output:
+
+```rust
+use testkit_core::error::unwrap_decoded;
+
+let total: u32 = unwrap_decoded(client.try_withdraw(&amount));
+// panicked at 'Soroban Error [budget/5]: ExceededLimit — a gas or size limit was hit (errors relating to budget limits)'
+```
+
+The nesting you see at that call site — `Err(Ok(error))` — is the SDK's own shape for a client method whose contract function returns `Result`; `ClientOutcome<T>` is the alias Testkit names it with. `unwrap_decoded_with` is the same call against an `ErrorRegistry`, so your own codes come out as words.
+
+`DecodedError` implements `Display`, so it also reads well inside `assert!` messages:
 
 ```rust
 use testkit_core::error::DecodedError;
 
 let err = DecodedError {
     code: 12,
+    category: "contract",
     message: "Insufficient balance".to_string(),
     context: Some("transfer".to_string()),
 };
-println!("{}", err); // "Soroban Error [12]: Insufficient balance (context: transfer)"
+assert!(format!("{}", err).contains("Insufficient balance"));
 ```
-
-`DecodedError` implements `Display`, so it reads well inside `assert!` messages and test output.
 
 ## Storage snapshots and diffs
 

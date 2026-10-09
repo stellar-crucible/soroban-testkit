@@ -56,6 +56,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <h3 class="tk-card__title">Negative event assertions</h3>
     <p class="tk-card__body"><code>assert_not_emitted()</code> and <code>assert_none_match()</code> prove a topic stayed silent, quoting the unexpected event when they fail — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/11">#11</a>, closed.</p>
   </div>
+  <div class="tk-card">
+    <span class="tk-card__kicker">testkit-core</span>
+    <h3 class="tk-card__title">Error code decoder</h3>
+    <p class="tk-card__body"><code>DecodedError::from_error</code> names the host category and meaning behind a packed error code, and <code>ErrorRegistry</code> adds words for your own <code>#[contracterror]</code> codes — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/5">#5</a>, closed.</p>
+  </div>
 </div>
 
 ## Next cycle
@@ -70,7 +75,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 | Fixtures | Ledger time helpers on `TestContext` ([#12](https://github.com/stellar-crucible/soroban-testkit/issues/12)) | `complexity:trivial` |
 | Fixtures | Context reset between sub-tests ([#17](https://github.com/stellar-crucible/soroban-testkit/issues/17)) | `complexity:trivial` |
 | Core | Budget regression detection ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3)) | `complexity:high` |
-| Core | Error code decoder behind `DecodedError` ([#5](https://github.com/stellar-crucible/soroban-testkit/issues/5)) | `complexity:medium` |
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
 | Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
