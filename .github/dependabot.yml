@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      soroban:
+        patterns:
+          - "soroban-*"
+          - "stellar-*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # The toolkit is built and documented against SDK v28; a major bump is a
+      # migration, not a dependency update, and needs its own PR.
+      - dependency-name: "soroban-sdk"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "soroban-env-host"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
