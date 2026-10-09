@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/stellar-crucible/soroban-testkit/security/advisories/new
+    about: Report vulnerabilities privately through GitHub security advisories, not a public issue.
+  - name: Stellar Wave / Drips funding questions
+    url: https://docs.drips.network/wave
+    about: Rewards, cycles and payout questions belong with the Drips Wave documentation or maintainers.
+  - name: Soroban SDK questions
+    url: https://developers.stellar.org/docs/smart-contracts
+    about: Upstream SDK behaviour is covered by Stellar developer docs and the soroban-sdk repository.

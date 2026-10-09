@@ -1,6 +1,9 @@
 [package]
 name = "testkit-assert"
 description = "Ergonomic assertion macros for Soroban smart contract testing"
+keywords = ["soroban", "stellar", "testing", "assertions", "smart-contracts"]
+categories = ["development-tools::testing"]
+documentation = "https://stellar-crucible.github.io/soroban-testkit/crates/assert.html"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

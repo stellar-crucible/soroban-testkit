@@ -1,6 +1,9 @@
 [package]
 name = "testkit-fixtures"
 description = "Reusable test fixture and setup framework for Soroban contracts"
+keywords = ["soroban", "stellar", "testing", "fixtures", "smart-contracts"]
+categories = ["development-tools::testing"]
+documentation = "https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
