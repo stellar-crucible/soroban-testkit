@@ -22,3 +22,31 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
+
+  docs:
+    name: Docs build
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install mdbook --version "0.5.4" --locked
+      - run: mdbook build docs --dest-dir site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdbook-preview
+          path: site
+
+  supply-chain:
+    name: Supply chain audit
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo generate-lockfile
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check all
