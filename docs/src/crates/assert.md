@@ -41,7 +41,7 @@ EventMatcher::new(&env)
 
 <div class="tk-callout tk-callout--warn">
   <span class="tk-callout__title">Scope: the latest invocation</span>
-  <p><code>EventMatcher</code> reads <code>env.events().all()</code>, and in SDK v28 that returns only the events published by the <strong>most recent contract invocation</strong>. Assert right after each call instead of accumulating counts over a test; a matcher created after a second call sees the second call alone.</p>
+  <p><code>EventMatcher</code> reads <code>env.events().all()</code>, and in SDK v28 that returns only the events published by the <strong>most recent contract invocation</strong>. Assert right after each call instead of accumulating counts over a test; a matcher created after a second call sees the second call alone. <a href="https://github.com/stellar-crucible/soroban-testkit/issues/19">Issue #19</a> tracks matchers that aggregate across invocations.</p>
 </div>
 
 <div class="tk-callout">

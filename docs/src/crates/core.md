@@ -74,7 +74,7 @@ for entry in &entries {
 
 <div class="tk-callout tk-callout--warn">
   <span class="tk-callout__title">Work in progress</span>
-  <p><code>inspect_storage</code> currently returns a best-effort view. Enumerating every live key precisely across tiers is an open <a href="https://github.com/stellar-crucible/soroban-testkit/issues">wave issue</a> — a good place to start contributing.</p>
+  <p><code>inspect_storage</code> currently returns a best-effort view. Enumerating every live key precisely across tiers is <a href="https://github.com/stellar-crucible/soroban-testkit/issues/4">issue #4</a> — a good place to start contributing.</p>
 </div>
 
 <hr class="tk-divider" />
