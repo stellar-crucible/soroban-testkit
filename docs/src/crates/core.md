@@ -15,7 +15,9 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `BudgetSnapshot` | Capture CPU instructions and memory bytes at a point in time |
 | `BudgetRead` | Trait implemented by any budget `capture()` can read — host `Budget` and the SDK budget |
 | `DecodedError` | A Soroban error code rendered with message and context |
-| `StorageEntry`, `StorageTier` | A storage key plus its instance / persistent / temporary tier |
+| `StorageEntry`, `StorageTier` | A live storage key, its rendered value, tier and expiry ledger |
+| `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
+| `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
 
 ## Budget snapshots
 
@@ -59,22 +61,39 @@ println!("{}", err); // "Soroban Error [12]: Insufficient balance (context: tran
 
 `DecodedError` implements `Display`, so it reads well inside `assert!` messages and test output.
 
-## Storage inspection
+## Storage snapshots and diffs
 
-Examine contract storage entries and the tier each one lives in:
+Capture everything a contract holds, then compare two captures around an
+operation. Keys and values are rendered to stable strings (`u32` becomes `"42"`,
+a map becomes `"{a: 1, b: 2}"`), so a diff reports what changed rather than two
+opaque blobs. Instance storage is unfolded entry by entry, and each entry
+carries the ledger sequence it expires at.
 
 ```rust
-use testkit_core::storage::{inspect_storage, StorageTier};
+use testkit_core::storage::{inspect_storage, StorageSnapshot, StorageTier};
 
-let entries = inspect_storage(&env, &contract_id);
+let entries = inspect_storage(&env, &contract);
 for entry in &entries {
-    println!("{:?} storage: {}", entry.tier, entry.key);
+    println!("{} = {} ({})", entry.qualified(), entry.value, entry.key);
 }
+
+let before = StorageSnapshot::capture(&env, &contract);
+client.bump();
+let after = StorageSnapshot::capture(&env, &contract);
+
+let diff = before.diff(&after);
+assert!(diff.added().is_empty() && diff.removed().is_empty());
+assert_eq!(diff.modified()[0].after, "43");
+
+// Or assert directly; failures list what actually happened.
+before.assert_entry_removed(&after, "pending");
+after.assert_unchanged(&StorageSnapshot::capture(&env, &contract));
+assert_eq!(after.in_tier(StorageTier::Temporary).len(), 1);
 ```
 
-<div class="tk-callout tk-callout--warn">
-  <span class="tk-callout__title">Work in progress</span>
-  <p><code>inspect_storage</code> currently returns a best-effort view. Enumerating every live key precisely across tiers is <a href="https://github.com/stellar-crucible/soroban-testkit/issues/4">issue #4</a> — a good place to start contributing.</p>
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Scope</span>
+  <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
 
 <hr class="tk-divider" />
