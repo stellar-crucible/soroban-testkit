@@ -15,6 +15,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 | `ctx.env` | A fresh `Env`, auth mocked unless you opt out |
 | `ctx.admin` | A generated `Address` to act as deployer / owner |
 | `ctx.users` | A `Vec<Address>` you extend with `add_user()` |
+| `ctx.mock_auths` | The auth policy the context was built with, re-applied by `reset()` |
 
 ## Basic usage
 
@@ -87,6 +88,50 @@ assert_eq!(unlocked_at, 1_702_592_000);
 Both helpers saturate instead of wrapping: advancing past `u64::MAX` or
 `u32::MAX` returns the maximum rather than panicking or rolling the clock back
 to a date in 1970.
+
+## Resetting the chain underneath a test
+
+Some scenarios are the same actors on a clean chain twice: a phase-one
+`initialize`, then a phase-two that must not see phase-one's storage. `reset`
+gives you that without rebuilding the fixture:
+
+| Method | Effect |
+|--------|--------|
+| `ctx.reset()` | Fresh env — ledger, events, auths and contract storage all cleared — with the same admin and users |
+| `ctx.reset_full()` | Fresh env *and* new identities: a new admin and a new `users` list of the same length |
+
+```rust
+let mut ctx = TestContextBuilder::new().with_users(2).build();
+
+let env = ctx.env.clone();
+let (vault, client) = register_vault(&env);
+client.deposit(&ctx.users[0], &1_000);
+
+ctx.reset();
+// ctx.admin and ctx.users are the same actors; the chain remembers nothing.
+// `vault` named a contract in the env that is gone, so register again:
+let env = ctx.env.clone();
+let (vault, client) = register_vault(&env);
+assert_eq!(client.balance(&vault, &ctx.users[0]), 0);
+```
+
+<div class="tk-grid tk-grid--2">
+  <div class="tk-card">
+    <span class="tk-card__kicker">Identities are carried, registrations are not</span>
+    <h3 class="tk-card__title">Re-register after resetting</h3>
+    <p class="tk-card__body">An <code>Address</code> is a handle into the env that made it, so <code>reset</code> rebuilds each one from its <code>ScAddress</code> form and the strkey survives intact. A <em>registered contract</em> cannot travel that way — its code and storage live in the old env — so the id you held before the reset points at nothing. Reach for a second <code>TestContext</code> instead whenever the two phases want different fixtures, user counts or auth policies.</p>
+  </div>
+  <div class="tk-card tk-card--accent">
+    <span class="tk-card__kicker">Authorisation policy</span>
+    <h3 class="tk-card__title">Reset keeps the policy, not by magic</h3>
+    <p class="tk-card__body"><code>TestContext</code> remembers whether it mocks authorizations, so an unmocked context stays unmocked through a reset. An <code>Env</code> does not report its own policy, which means <code>with_env</code> has to assume the mocked default — set <code>ctx.mock_auths = false</code> when it is not what you configured.</p>
+  </div>
+</div>
+
+`reset_full` exists because SDK v28 mints test addresses from a counter that
+restarts at 1 in every `Env`. Generating straight away would hand back exactly
+the addresses you replaced, so it first walks the new env's counter past the
+range the old identities occupied.
 
 ## Extending fixtures
 

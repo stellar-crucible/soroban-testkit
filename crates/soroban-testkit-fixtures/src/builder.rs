@@ -36,6 +36,7 @@ impl TestContextBuilder {
         }
 
         let mut ctx = super::TestContext::with_env(env);
+        ctx.mock_auths = self.mock_auths;
         for _ in 0..self.num_users {
             ctx.add_user();
         }

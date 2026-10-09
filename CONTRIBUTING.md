@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This project participates in the [S
 
 1. Fork and clone the repository
 2. Install Rust 1.91+ via [rustup](https://rustup.rs/)
-3. Run `cargo test --workspace --locked` to verify everything works — 92 tests should pass
+3. Run `cargo test --workspace --locked` to verify everything works — 101 tests should pass
 4. Pick an issue labeled `Stellar Wave` plus a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`); comment on it before starting so two people don't collide
 
 ## Development

@@ -67,6 +67,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>advance_time()</code>, <code>set_timestamp()</code> and <code>advance_ledger()</code> move the clock or the height on their own, so a vesting or TTL test reads as a span instead of as a hand-built <code>LedgerInfo</code> — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/12">#12</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-fixtures</span>
+    <h3 class="tk-card__title">Context reset</h3>
+    <p class="tk-card__body"><code>reset()</code> swaps in a fresh env — ledger, events, auths and storage gone — and carries every address across, so a two-phase test keeps its actors instead of rebuilding its fixture — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/17">#17</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
     <h3 class="tk-card__title">On crates.io</h3>
     <p class="tk-card__body">The workspace publishes as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, so a consumer adds a version requirement instead of a Git pin.</p>
@@ -82,7 +87,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 | Assertions | Data predicates on emitted events ([#18](https://github.com/stellar-crucible/soroban-testkit/issues/18)) | `complexity:medium` |
 | Assertions | Matchers that aggregate events across several invocations ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
-| Fixtures | Context reset between sub-tests ([#17](https://github.com/stellar-crucible/soroban-testkit/issues/17)) | `complexity:trivial` |
 | Core | Budget regression detection ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3)) | `complexity:high` |
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
