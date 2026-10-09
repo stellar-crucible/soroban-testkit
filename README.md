@@ -18,7 +18,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 | Installation | [Getting started](https://stellar-crucible.github.io/soroban-testkit/getting-started/installation.html) |
 | First test in 5 minutes | [Quick start](https://stellar-crucible.github.io/soroban-testkit/getting-started/quick-start.html) |
 | Crate references | [core](https://stellar-crucible.github.io/soroban-testkit/crates/core.html) · [assert](https://stellar-crucible.github.io/soroban-testkit/crates/assert.html) · [fixtures](https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html) · [generators](https://stellar-crucible.github.io/soroban-testkit/crates/generators.html) |
-| Recipes | [Testing patterns](https://stellar-crucible.github.io/soroban-testkit/guides/testing-patterns.html) · [Budget-aware testing](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html) · [Property testing](https://stellar-crucible.github.io/soroban-testkit/guides/property-testing.html) |
+| Recipes | [Testing patterns](https://stellar-crucible.github.io/soroban-testkit/guides/testing-patterns.html) · [Worked example: counter](https://stellar-crucible.github.io/soroban-testkit/guides/counter-example.html) · [Budget-aware testing](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html) · [Property testing](https://stellar-crucible.github.io/soroban-testkit/guides/property-testing.html) |
 | Contribute & earn | [Contributing guide](https://stellar-crucible.github.io/soroban-testkit/contributing.html) · [Roadmap](https://stellar-crucible.github.io/soroban-testkit/roadmap.html) |
 
 ## Why Testkit?
