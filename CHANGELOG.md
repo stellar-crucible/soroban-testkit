@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Installation leads with the registry.** `soroban-testkit-core`, `-assert`, `-fixtures` and `-generators` are published on [crates.io](https://crates.io) at `0.3.0`, so the README, the installation page and the property-testing guide now give a version requirement first and the tagged Git pin as the alternative for anyone who wants to pin the source commit. Checked from a clean project whose only access to the toolkit is the registry: it resolves, compiles and its tests pass ([#34](https://github.com/stellar-crucible/soroban-testkit/issues/34))
+
 ## [0.3.0] - 2026-10-09
 
-Everything that landed since `v0.2.0`, each of it through the protected-branch flow: budget regression detection with a committed baseline that CI enforces, ledger time helpers, context reset, assertions on what an event carried, and an event log that spans several invocations.
+Everything that landed since `v0.2.0`, each of it through the protected-branch flow: budget regression detection with a committed baseline that CI enforces, ledger time helpers, context reset, assertions on what an event carried, and an event log that spans several invocations. This is the version the registry carries — `soroban-testkit-core`, `soroban-testkit-assert`, `soroban-testkit-fixtures` and `soroban-testkit-generators` `0.3.0` are published on [crates.io](https://crates.io), and `v0.1.x`/`v0.2.0` were never uploaded, so a version requirement below `0.3.0` does not resolve.
 
 ### Added
 - `soroban-testkit-assert`: `EventLog` aggregates events across invocations, so one assertion can speak about a sequence of calls instead of only the last one. `collect()` after each call the test means to judge, and `matcher()` hands the gathered set to `EventMatcher` — `from_contract`, `with_topic`, `assert_emitted`, `assert_count`, `assert_not_emitted`, `assert_none_match` and `assert_data_matches` all read it ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19))
