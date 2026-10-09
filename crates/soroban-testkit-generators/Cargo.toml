@@ -1,8 +1,10 @@
 [package]
-name = "testkit-generators"
+name = "soroban-testkit-generators"
 description = "Soroban-aware property testing generators for proptest and arbitrary"
 keywords = ["soroban", "stellar", "testing", "proptest", "property-testing"]
 categories = ["development-tools::testing"]
+homepage = "https://stellar-crucible.github.io/soroban-testkit/"
+readme = "README.md"
 documentation = "https://stellar-crucible.github.io/soroban-testkit/crates/generators.html"
 version.workspace = true
 edition.workspace = true

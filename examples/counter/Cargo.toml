@@ -1,11 +1,13 @@
 [package]
-name = "testkit-example-counter"
+name = "soroban-testkit-example-counter"
 description = "Minimal Soroban counter contract used by Testkit integration tests"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+publish = false
 
 [lib]
 crate-type = ["lib"]
@@ -14,6 +16,6 @@ crate-type = ["lib"]
 soroban-sdk = { workspace = true }
 
 [dev-dependencies]
-testkit-assert = { path = "../../crates/testkit-assert" }
-testkit-core = { path = "../../crates/testkit-core" }
-testkit-fixtures = { path = "../../crates/testkit-fixtures" }
+soroban-testkit-assert = { path = "../../crates/soroban-testkit-assert" }
+soroban-testkit-core = { path = "../../crates/soroban-testkit-core" }
+soroban-testkit-fixtures = { path = "../../crates/soroban-testkit-fixtures" }

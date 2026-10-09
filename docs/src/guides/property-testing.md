@@ -3,7 +3,7 @@
 Property-based testing checks invariants across hundreds of generated inputs, catching the edge cases example-based tests miss. Testkit's generators keep those inputs inside ranges Soroban actually accepts.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Crate</span><span class="tk-spec__value">testkit-generators</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Crate</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Backend</span><span class="tk-spec__value">proptest 1.x</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Cases</span><span class="tk-spec__value">256 by default</span></div>
 </div>
@@ -14,7 +14,7 @@ Enable the `proptest` feature:
 
 ```toml
 [dev-dependencies]
-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1", features = ["proptest"] }
+soroban-testkit-generators = { version = "0.2.0", features = ["proptest"] }
 proptest = "1"
 ```
 
@@ -22,7 +22,7 @@ proptest = "1"
 
 ```rust
 use proptest::prelude::*;
-use testkit_generators::strategies;
+use soroban_testkit_generators::strategies;
 
 proptest! {
     #[test]
@@ -81,4 +81,4 @@ proptest! {
 
 <hr class="tk-divider" />
 
-<p class="tk-muted">Strategy reference: <a href="../crates/generators.html">testkit-generators</a>.</p>
+<p class="tk-muted">Strategy reference: <a href="../crates/generators.html">soroban-testkit-generators</a>.</p>

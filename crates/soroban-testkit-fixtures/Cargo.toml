@@ -1,8 +1,10 @@
 [package]
-name = "testkit-fixtures"
+name = "soroban-testkit-fixtures"
 description = "Reusable test fixture and setup framework for Soroban contracts"
 keywords = ["soroban", "stellar", "testing", "fixtures", "smart-contracts"]
 categories = ["development-tools::testing"]
+homepage = "https://stellar-crucible.github.io/soroban-testkit/"
+readme = "README.md"
 documentation = "https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html"
 version.workspace = true
 edition.workspace = true
@@ -12,4 +14,4 @@ rust-version.workspace = true
 
 [dependencies]
 soroban-sdk = { workspace = true }
-testkit-core = { path = "../testkit-core", version = "0.1.1" }
+soroban-testkit-core = { path = "../soroban-testkit-core", version = "0.2.0" }

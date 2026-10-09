@@ -23,27 +23,27 @@ The Soroban SDK ships solid primitives — `Env::default()`, `testutils`, event 
   <div class="tk-problem">
     <span class="tk-problem__label">Verbose setup</span>
     <span class="tk-problem__body">Every test manually creates an environment, registers contracts, generates addresses and seeds state.</span>
-    <span class="tk-problem__fix">Solved by <b>testkit-fixtures</b> — a Foundry-style `setUp` context builder.</span>
+    <span class="tk-problem__fix">Solved by <b>soroban-testkit-fixtures</b> — a Foundry-style `setUp` context builder.</span>
   </div>
   <div class="tk-problem">
     <span class="tk-problem__label">Raw assertions</span>
     <span class="tk-problem__body">Matching events and authorizations means destructuring tuples by hand with no domain helpers.</span>
-    <span class="tk-problem__fix">Solved by <b>testkit-assert</b> — chainable event and auth matchers.</span>
+    <span class="tk-problem__fix">Solved by <b>soroban-testkit-assert</b> — chainable event and auth matchers.</span>
   </div>
   <div class="tk-problem">
     <span class="tk-problem__label">Hidden resource costs</span>
     <span class="tk-problem__body">Tests pass locally yet fail on-chain once the CPU or memory budget is exhausted.</span>
-    <span class="tk-problem__fix">Solved by <b>testkit-core</b> — budget snapshots and diffs around any call.</span>
+    <span class="tk-problem__fix">Solved by <b>soroban-testkit-core</b> — budget snapshots and diffs around any call.</span>
   </div>
   <div class="tk-problem">
     <span class="tk-problem__label">Heavyweight mocking</span>
     <span class="tk-problem__body">Stubbing a single dependency forces you to write and register an entire mock contract.</span>
-    <span class="tk-problem__fix">Solved by <b>testkit-core</b> — error decoding and storage inspection helpers.</span>
+    <span class="tk-problem__fix">Solved by <b>soroban-testkit-core</b> — error decoding and storage inspection helpers.</span>
   </div>
   <div class="tk-problem">
     <span class="tk-problem__label">No property-testing support</span>
     <span class="tk-problem__body">Soroban-aware generators have to be rebuilt from scratch in every project.</span>
-    <span class="tk-problem__fix">Solved by <b>testkit-generators</b> — `proptest` and `arbitrary` strategies for SDK types.</span>
+    <span class="tk-problem__fix">Solved by <b>soroban-testkit-generators</b> — `proptest` and `arbitrary` strategies for SDK types.</span>
   </div>
 </div>
 
@@ -53,25 +53,25 @@ Each crate is independent — adopt one, or combine all four for a complete test
 
 <div class="tk-grid tk-grid--4">
   <div class="tk-card">
-    <span class="tk-card__kicker">testkit-core</span>
+    <span class="tk-card__kicker">soroban-testkit-core</span>
     <h3 class="tk-card__title">Inspect &amp; measure</h3>
     <p class="tk-card__body">Budget snapshots with call-level diffs, on-chain error decoding, and storage inspection across instance, persistent and temporary tiers.</p>
     <div class="tk-card__meta"><span class="tk-badge">BudgetSnapshot</span><span class="tk-badge">DecodedError</span></div>
   </div>
   <div class="tk-card">
-    <span class="tk-card__kicker">testkit-assert</span>
+    <span class="tk-card__kicker">soroban-testkit-assert</span>
     <h3 class="tk-card__title">Assert fluently</h3>
     <p class="tk-card__body">Readable matchers for contract events and authorizations, filterable by contract id and topic.</p>
     <div class="tk-card__meta"><span class="tk-badge">EventMatcher</span><span class="tk-badge">AuthMatcher</span></div>
   </div>
   <div class="tk-card">
-    <span class="tk-card__kicker">testkit-fixtures</span>
+    <span class="tk-card__kicker">soroban-testkit-fixtures</span>
     <h3 class="tk-card__title">Set up once</h3>
     <p class="tk-card__body">A reusable test context plus a builder for environments, admin accounts and generated users.</p>
     <div class="tk-card__meta"><span class="tk-badge">TestContext</span><span class="tk-badge">TestContextBuilder</span></div>
   </div>
   <div class="tk-card">
-    <span class="tk-card__kicker">testkit-generators</span>
+    <span class="tk-card__kicker">soroban-testkit-generators</span>
     <h3 class="tk-card__title">Generate wildly</h3>
     <p class="tk-card__body">Property-testing strategies for token amounts, ledger sequences and timestamps that respect Soroban limits.</p>
     <div class="tk-card__meta"><span class="tk-badge">proptest</span><span class="tk-badge">arbitrary</span></div>
@@ -82,10 +82,10 @@ Each crate is independent — adopt one, or combine all four for a complete test
 
 ```text
 soroban-testkit/                    Cargo workspace, resolver 2
-├── crates/testkit-core             budget snapshots · error decoding · storage
-├── crates/testkit-assert           event matchers · authorization matchers
-├── crates/testkit-fixtures         test context · context builder
-└── crates/testkit-generators       proptest strategies · arbitrary impls
+├── crates/soroban-testkit-core             budget snapshots · error decoding · storage
+├── crates/soroban-testkit-assert           event matchers · authorization matchers
+├── crates/soroban-testkit-fixtures         test context · context builder
+└── crates/soroban-testkit-generators       proptest strategies · arbitrary impls
 ```
 
 ## A First Look

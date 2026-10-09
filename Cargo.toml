@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/testkit-core",
-    "crates/testkit-assert",
-    "crates/testkit-fixtures",
-    "crates/testkit-generators",
+    "crates/soroban-testkit-core",
+    "crates/soroban-testkit-assert",
+    "crates/soroban-testkit-fixtures",
+    "crates/soroban-testkit-generators",
     "examples/counter",
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/stellar-crucible/soroban-testkit"

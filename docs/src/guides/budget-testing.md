@@ -3,7 +3,7 @@
 Soroban contracts execute within strict CPU and memory budgets. Tests that pass locally can fail on-chain once resource consumption exceeds the transaction limits — Testkit makes those costs visible in ordinary assertions.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Crate</span><span class="tk-spec__value">testkit-core</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Crate</span><span class="tk-spec__value">soroban-testkit-core</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">API</span><span class="tk-spec__value">BudgetSnapshot · diff()</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Runs in</span><span class="tk-spec__value">cargo test / CI</span></div>
 </div>
@@ -23,7 +23,7 @@ The Soroban runtime enforces resource budgets per transaction. The SDK's test en
 ## Basic budget tracking
 
 ```rust
-use testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget::BudgetSnapshot;
 
 #[test]
 fn test_budget_regression() {
@@ -75,4 +75,4 @@ Track budget trends across commits to catch regressions early:
 
 <hr class="tk-divider" />
 
-<p class="tk-muted">Related: <a href="./property-testing.html">Property testing</a> for inputs, <a href="../crates/core.html">testkit-core</a> for the full budget API.</p>
+<p class="tk-muted">Related: <a href="./property-testing.html">Property testing</a> for inputs, <a href="../crates/core.html">soroban-testkit-core</a> for the full budget API.</p>
