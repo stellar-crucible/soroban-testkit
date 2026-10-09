@@ -14,7 +14,7 @@ Common patterns for testing Soroban contracts with Testkit: a shared `setup()`, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use testkit_fixtures::builder::TestContextBuilder;
+    use soroban_testkit_fixtures::builder::TestContextBuilder;
 
     fn setup() -> TestContext {
         TestContextBuilder::new()
@@ -98,7 +98,7 @@ fn test_vesting_unlock() {
     <p class="tk-card__body">Replace hand-picked inputs with Soroban-aware generators.</p>
   </div>
   <div class="tk-card tk-card--accent">
-    <h3 class="tk-card__title"><a href="../crates/assert.html">testkit-assert</a></h3>
+    <h3 class="tk-card__title"><a href="../crates/assert.html">soroban-testkit-assert</a></h3>
     <p class="tk-card__body">The full matcher API for events and authorizations.</p>
   </div>
 </div>

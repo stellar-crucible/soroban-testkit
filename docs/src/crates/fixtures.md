@@ -1,9 +1,9 @@
-# testkit-fixtures
+# soroban-testkit-fixtures
 
 A reusable test context inspired by Foundry's `setUp()`: one place to build the environment, admin and user addresses every test needs.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">testkit-fixtures</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
@@ -19,7 +19,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 ## Basic usage
 
 ```rust
-use testkit_fixtures::TestContext;
+use soroban_testkit_fixtures::TestContext;
 
 let ctx = TestContext::new();
 // ctx.env — pre-configured Env with mock_all_auths
@@ -32,7 +32,7 @@ let ctx = TestContext::new();
 Describe the context you want instead of assembling it:
 
 ```rust
-use testkit_fixtures::builder::TestContextBuilder;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
 
 let ctx = TestContextBuilder::new()
     .with_users(5)            // Pre-generate 5 user addresses

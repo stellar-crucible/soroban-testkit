@@ -12,9 +12,9 @@ Write a complete Soroban test in about a minute: build a context, register the c
 
 ```rust
 use soroban_sdk::{Env, Address};
-use testkit_fixtures::builder::TestContextBuilder;
-use testkit_assert::events::EventMatcher;
-use testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+use soroban_testkit_assert::events::EventMatcher;
+use soroban_testkit_core::budget::BudgetSnapshot;
 ```
 
 ## Write a test

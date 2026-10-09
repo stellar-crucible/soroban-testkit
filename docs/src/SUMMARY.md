@@ -7,10 +7,10 @@
 - [Quick Start](./getting-started/quick-start.md)
 
 # Crates
-- [testkit-core](./crates/core.md)
-- [testkit-assert](./crates/assert.md)
-- [testkit-fixtures](./crates/fixtures.md)
-- [testkit-generators](./crates/generators.md)
+- [soroban-testkit-core](./crates/core.md)
+- [soroban-testkit-assert](./crates/assert.md)
+- [soroban-testkit-fixtures](./crates/fixtures.md)
+- [soroban-testkit-generators](./crates/generators.md)
 
 # Guides
 - [Testing Patterns](./guides/testing-patterns.md)

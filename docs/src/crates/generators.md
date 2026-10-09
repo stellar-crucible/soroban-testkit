@@ -1,9 +1,9 @@
-# testkit-generators
+# soroban-testkit-generators
 
 Soroban-aware property-testing strategies for `proptest` and `arbitrary`, so generated inputs respect the ranges real contracts accept.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">testkit-generators</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default) · arbitrary</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Module</span><span class="tk-spec__value">strategies</span></div>
 </div>
@@ -20,7 +20,7 @@ Soroban-aware property-testing strategies for `proptest` and `arbitrary`, so gen
 
 ```rust
 use proptest::prelude::*;
-use testkit_generators::strategies;
+use soroban_testkit_generators::strategies;
 
 proptest! {
     #[test]
@@ -40,7 +40,7 @@ Compose the built-ins with proptest combinators:
 
 ```rust
 use proptest::prelude::*;
-use testkit_generators::strategies;
+use soroban_testkit_generators::strategies;
 
 fn transfer_args() -> impl Strategy<Value = (i128, i128)> {
     (strategies::token_amount(), strategies::token_amount())

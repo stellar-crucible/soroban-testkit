@@ -1,9 +1,9 @@
-# testkit-core
+# soroban-testkit-core
 
 Budget tracking, error decoding and storage inspection — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">testkit-core</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk</span></div>
 </div>
@@ -30,7 +30,7 @@ with `env.cost_estimate().budget()` in tests and with a
 zero, so a later snapshot that reads smaller never underflows an assertion.
 
 ```rust
-use testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget::BudgetSnapshot;
 
 let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
 // ... invoke contract
@@ -51,7 +51,7 @@ println!("Memory bytes: {}", diff.mem_bytes);
 Soroban reports failures as a packed integer. `DecodedError::from_error` splits it into the category the host raised it in and the code's known meaning:
 
 ```rust
-use testkit_core::error::DecodedError;
+use soroban_testkit_core::error::DecodedError;
 
 // A v28 client's `try_*` method reports the contract's own error as `Err(Ok(error))`.
 let error = client.try_withdraw(&amount).unwrap_err().unwrap();
@@ -67,7 +67,7 @@ The ten categories the protocol defines (`contract`, `wasm_vm`, `context`, `stor
 A `#[contracterror]` enum hands the host an integer with no words attached, so the vocabulary is yours to supply. `ErrorRegistry` is that mapping:
 
 ```rust
-use testkit_core::error::{ErrorRegistry, DecodedError};
+use soroban_testkit_core::error::{ErrorRegistry, DecodedError};
 
 let registry = ErrorRegistry::new()
     .register(101, "Insufficient balance")
@@ -84,7 +84,7 @@ Without a registry a contract code still decodes — it just says the code is un
 `unwrap_decoded` unwraps a v28 `try_*` client call and panics with the decoded sentence, so a failing call reads as a diagnosis in the test log rather than as nested `Result` debug output:
 
 ```rust
-use testkit_core::error::unwrap_decoded;
+use soroban_testkit_core::error::unwrap_decoded;
 
 let total: u32 = unwrap_decoded(client.try_withdraw(&amount));
 // panicked at 'Soroban Error [budget/5]: ExceededLimit — a gas or size limit was hit (errors relating to budget limits)'
@@ -95,7 +95,7 @@ The nesting you see at that call site — `Err(Ok(error))` — is the SDK's own 
 `DecodedError` implements `Display`, so it also reads well inside `assert!` messages:
 
 ```rust
-use testkit_core::error::DecodedError;
+use soroban_testkit_core::error::DecodedError;
 
 let err = DecodedError {
     code: 12,
@@ -115,7 +115,7 @@ opaque blobs. Instance storage is unfolded entry by entry, and each entry
 carries the ledger sequence it expires at.
 
 ```rust
-use testkit_core::storage::{inspect_storage, StorageSnapshot, StorageTier};
+use soroban_testkit_core::storage::{inspect_storage, StorageSnapshot, StorageTier};
 
 let entries = inspect_storage(&env, &contract);
 for entry in &entries {
@@ -143,4 +143,4 @@ assert_eq!(after.in_tier(StorageTier::Temporary).len(), 1);
 
 <hr class="tk-divider" />
 
-<p class="tk-muted">Next: <a href="./assert.html">testkit-assert</a> — turn these measurements into readable assertions.</p>
+<p class="tk-muted">Next: <a href="./assert.html">soroban-testkit-assert</a> — turn these measurements into readable assertions.</p>

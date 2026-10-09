@@ -6,7 +6,7 @@ A complete contract and its test suite, line by line. Everything here is the rea
   <div class="tk-spec__item"><span class="tk-spec__key">Source</span><span class="tk-spec__value">examples/counter</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Crates</span><span class="tk-spec__value">fixtures · assert · core</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Tests</span><span class="tk-spec__value">8 passing</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Run</span><span class="tk-spec__value">cargo test -p testkit-example-counter</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Run</span><span class="tk-spec__value">cargo test -p soroban-testkit-example-counter</span></div>
 </div>
 
 ## The contract
@@ -51,8 +51,8 @@ impl CounterContract {
 `TestContextBuilder` hands back an `Env`, an admin and pre-generated user addresses. Nothing else is set up by hand in this suite.
 
 ```rust
-use testkit_fixtures::builder::TestContextBuilder;
-use testkit_fixtures::TestContext;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+use soroban_testkit_fixtures::TestContext;
 
 fn context(users: usize) -> TestContext {
     TestContextBuilder::new().with_users(users).build()
@@ -93,7 +93,7 @@ fn increment_accumulates_and_returns_the_new_value() {
 `EventMatcher` reads the events of the **most recent invocation**, which is what `env.events().all()` exposes in SDK v28. Assert between calls, not after the whole test.
 
 ```rust
-use testkit_assert::events::EventMatcher;
+use soroban_testkit_assert::events::EventMatcher;
 
 #[test]
 fn events_can_be_filtered_to_the_contract_that_emitted_them() {
@@ -140,7 +140,7 @@ It asserts against the latest invocation only — the same v28 scope as every ot
 Take a snapshot before and after the call, then assert the delta is non-zero and under a ceiling. The first `get()` warms the cost estimator so the reading is not zero.
 
 ```rust
-use testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget::BudgetSnapshot;
 
 #[test]
 fn increment_consumes_a_predictable_amount_of_cpu() {
@@ -188,7 +188,7 @@ fn increment_requires_authorization_when_auths_are_not_mocked() {
 ## Running it
 
 ```bash
-cargo test -p testkit-example-counter
+cargo test -p soroban-testkit-example-counter
 ```
 
 ```text
@@ -239,12 +239,12 @@ test test::increment_requires_authorization_when_auths_are_not_mocked - should p
   </div>
   <div class="tk-card">
     <span class="tk-card__kicker">Crate</span>
-    <h3 class="tk-card__title">testkit-assert</h3>
+    <h3 class="tk-card__title">soroban-testkit-assert</h3>
     <p class="tk-card__body"><a href="../crates/assert.html">Event and auth matchers</a> and their filter semantics.</p>
   </div>
   <div class="tk-card">
     <span class="tk-card__kicker">Crate</span>
-    <h3 class="tk-card__title">testkit-core</h3>
+    <h3 class="tk-card__title">soroban-testkit-core</h3>
     <p class="tk-card__body"><a href="../crates/core.html">BudgetSnapshot</a> and the <code>BudgetRead</code> trait.</p>
   </div>
 </div>

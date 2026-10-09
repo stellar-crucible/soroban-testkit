@@ -1,6 +1,6 @@
 # Installation
 
-Add only the crates your test suite needs. Every crate lives in this workspace and is consumed straight from Git — pin a release tag rather than the default branch, so your build stays on a commit whose CI (tests, clippy and the `cargo deny` supply-chain gate) is green. Publishing to crates.io is tracked on the [roadmap](../roadmap.md).
+Add only the crates your test suite needs. They are published to [crates.io](https://crates.io) under the `soroban-testkit-*` names, or consumed straight from Git — pin a release tag rather than the default branch, so a Git build stays on a commit whose CI (tests, clippy and the `cargo deny` supply-chain gate) is green.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Rust</span><span class="tk-spec__value">1.91 or newer</span></div>
@@ -13,10 +13,20 @@ Add only the crates your test suite needs. Every crate lives in this workspace a
 
 ```toml
 [dev-dependencies]
-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1", features = ["proptest"] }
+soroban-testkit-core = "0.2.0"
+soroban-testkit-assert = "0.2.0"
+soroban-testkit-fixtures = "0.2.0"
+soroban-testkit-generators = { version = "0.2.0", features = ["proptest"] }
+```
+
+The same four crates pinned to a Git tag, if you would rather build from source:
+
+```toml
+[dev-dependencies]
+soroban-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
+soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
+soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
+soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0", features = ["proptest"] }
 ```
 
 ## Install steps
@@ -42,7 +52,7 @@ testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testki
 
 ## Feature flags
 
-### testkit-generators
+### soroban-testkit-generators
 
 | Feature | Description |
 |---------|-------------|
@@ -51,5 +61,5 @@ testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testki
 
 <div class="tk-callout">
   <span class="tk-callout__title">Versioning</span>
-  <p>Testkit is pre-1.0. Pin a tag or revision once your suite is green — <code>cargo update</code> can otherwise pull breaking changes from <code>main</code>.</p>
+  <p>Testkit is pre-1.0. A <code>0.x</code> release may break the API, so pin an exact version or a release tag once your suite is green — <code>cargo update</code> can otherwise pull breaking changes from a newer <code>0.x</code>.</p>
 </div>

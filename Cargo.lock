@@ -1871,6 +1871,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-assert"
+version = "0.2.0"
+dependencies = [
+ "soroban-sdk",
+ "soroban-testkit-core",
+]
+
+[[package]]
+name = "soroban-testkit-core"
+version = "0.2.0"
+dependencies = [
+ "soroban-env-host",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "soroban-testkit-example-counter"
+version = "0.2.0"
+dependencies = [
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+]
+
+[[package]]
+name = "soroban-testkit-fixtures"
+version = "0.2.0"
+dependencies = [
+ "soroban-sdk",
+ "soroban-testkit-core",
+]
+
+[[package]]
+name = "soroban-testkit-generators"
+version = "0.2.0"
+dependencies = [
+ "arbitrary",
+ "proptest",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "soroban-wasmi"
 version = "0.31.1-soroban.20.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1996,49 +2039,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "testkit-assert"
-version = "0.1.1"
-dependencies = [
- "soroban-sdk",
- "testkit-core",
-]
-
-[[package]]
-name = "testkit-core"
-version = "0.1.1"
-dependencies = [
- "soroban-env-host",
- "soroban-sdk",
-]
-
-[[package]]
-name = "testkit-example-counter"
-version = "0.1.1"
-dependencies = [
- "soroban-sdk",
- "testkit-assert",
- "testkit-core",
- "testkit-fixtures",
-]
-
-[[package]]
-name = "testkit-fixtures"
-version = "0.1.1"
-dependencies = [
- "soroban-sdk",
- "testkit-core",
-]
-
-[[package]]
-name = "testkit-generators"
-version = "0.1.1"
-dependencies = [
- "arbitrary",
- "proptest",
- "soroban-sdk",
 ]
 
 [[package]]
