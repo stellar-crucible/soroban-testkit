@@ -1,6 +1,6 @@
 # Installation
 
-Add only the crates your test suite needs. Every crate lives in this workspace and is consumed straight from Git.
+Add only the crates your test suite needs. Every crate lives in this workspace and is consumed straight from Git — pin a release tag rather than the default branch, so your build stays on a commit whose CI (tests, clippy and the `cargo deny` supply-chain gate) is green. Publishing to crates.io is tracked on the [roadmap](../roadmap.md).
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Rust</span><span class="tk-spec__value">1.91 or newer</span></div>
@@ -13,10 +13,10 @@ Add only the crates your test suite needs. Every crate lives in this workspace a
 
 ```toml
 [dev-dependencies]
-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit" }
-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit" }
-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit" }
-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", features = ["proptest"] }
+testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
+testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
+testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
+testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1", features = ["proptest"] }
 ```
 
 ## Install steps

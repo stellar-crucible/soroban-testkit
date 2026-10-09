@@ -14,7 +14,7 @@ Enable the `proptest` feature:
 
 ```toml
 [dev-dependencies]
-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", features = ["proptest"] }
+testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1", features = ["proptest"] }
 proptest = "1"
 ```
 

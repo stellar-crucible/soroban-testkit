@@ -48,8 +48,8 @@ Add to your contract's `Cargo.toml`:
 
 ```toml
 [dev-dependencies]
-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit" }
-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit" }
+testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
+testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
 ```
 
 ### Test Fixtures
