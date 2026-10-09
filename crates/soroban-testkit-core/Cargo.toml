@@ -1,8 +1,10 @@
 [package]
-name = "testkit-core"
+name = "soroban-testkit-core"
 description = "Core utilities for the Soroban Testkit testing framework"
 keywords = ["soroban", "stellar", "testing", "budget", "blockchain"]
 categories = ["development-tools::testing"]
+homepage = "https://stellar-crucible.github.io/soroban-testkit/"
+readme = "README.md"
 documentation = "https://stellar-crucible.github.io/soroban-testkit/crates/core.html"
 version.workspace = true
 edition.workspace = true

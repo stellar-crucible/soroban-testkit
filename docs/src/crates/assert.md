@@ -1,9 +1,9 @@
-# testkit-assert
+# soroban-testkit-assert
 
 Fluent matchers for contract events and authorizations, so assertions read like the behaviour you expect.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">testkit-assert</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
@@ -26,7 +26,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 Replace raw tuple iteration with a fluent API:
 
 ```rust
-use testkit_assert::events::EventMatcher;
+use soroban_testkit_assert::events::EventMatcher;
 
 // Assert at least one event was emitted
 EventMatcher::new(&env).assert_emitted();
@@ -56,7 +56,7 @@ EventMatcher::new(&env)
 Proving something did *not* happen is the other half of event testing — a rejected transfer should emit no `Transfer` event, a closed offer should publish nothing at all:
 
 ```rust
-use testkit_assert::events::EventMatcher;
+use soroban_testkit_assert::events::EventMatcher;
 
 // Nothing in scope was published
 EventMatcher::new(&env).assert_not_emitted();
@@ -91,7 +91,7 @@ panicked at 'Expected no events to be emitted, found 1 — unexpected event: top
 Verify who had to sign for a call:
 
 ```rust
-use testkit_assert::auth::AuthMatcher;
+use soroban_testkit_assert::auth::AuthMatcher;
 
 // Assert no auth was required
 AuthMatcher::new(&env).assert_no_auth_required();

@@ -1,10 +1,10 @@
 extern crate std;
 
 use soroban_sdk::{Address, Env};
-use testkit_assert::events::EventMatcher;
-use testkit_core::budget::BudgetSnapshot;
-use testkit_fixtures::builder::TestContextBuilder;
-use testkit_fixtures::TestContext;
+use soroban_testkit_assert::events::EventMatcher;
+use soroban_testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+use soroban_testkit_fixtures::TestContext;
 
 use crate::{CounterContract, CounterContractClient};
 

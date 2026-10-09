@@ -1,8 +1,10 @@
 [package]
-name = "testkit-assert"
+name = "soroban-testkit-assert"
 description = "Ergonomic assertion macros for Soroban smart contract testing"
 keywords = ["soroban", "stellar", "testing", "assertions", "smart-contracts"]
 categories = ["development-tools::testing"]
+homepage = "https://stellar-crucible.github.io/soroban-testkit/"
+readme = "README.md"
 documentation = "https://stellar-crucible.github.io/soroban-testkit/crates/assert.html"
 version.workspace = true
 edition.workspace = true
@@ -12,4 +14,4 @@ rust-version.workspace = true
 
 [dependencies]
 soroban-sdk = { workspace = true }
-testkit-core = { path = "../testkit-core", version = "0.1.1" }
+soroban-testkit-core = { path = "../soroban-testkit-core", version = "0.2.0" }

@@ -39,6 +39,32 @@ Additional labels: `good first issue`, `bug`, `enhancement`, `documentation`, `h
 5. Submit a PR using the template; `main` is protected, so the `check`, `Docs build` and `Supply chain audit` jobs must be green before it can merge
 6. A maintainer will review and merge
 
+## Releasing
+
+A release is a version bump, a crates.io publish in dependency order, and a tag. Only a maintainer does it, and only from a commit whose CI is green.
+
+```bash
+# 1. Bump [workspace.package] version in Cargo.toml, and the `version = "…"`
+#    on the internal soroban-testkit-core path deps in the other manifests.
+cargo test --workspace            # refreshes Cargo.lock for the new versions
+cargo test --workspace --locked   # then prove the committed lock still builds
+mdbook build docs
+cargo deny check all
+
+# 2. Publish. `-core` first — the dependants cannot package until it is on the index.
+cargo publish -p soroban-testkit-core
+cargo publish -p soroban-testkit-assert
+cargo publish -p soroban-testkit-fixtures
+cargo publish -p soroban-testkit-generators
+
+# 3. Tag and release from the exact commit that shipped.
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+```
+
+`examples/counter` carries `publish = false` — it is a worked example, not a distribution.
+
+Move the `Unreleased` CHANGELOG entries into a `[X.Y.Z]` section with the date in the same commit as the version bump, and add the section's link reference to the tag URL. Update `Installation` and the roadmap's `Current` row to the new version, since both quote a version requirement.
+
 ## Code Style
 
 - Follow standard Rust conventions enforced by `rustfmt` and `clippy`

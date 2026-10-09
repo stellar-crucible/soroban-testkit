@@ -10,6 +10,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 [![Soroban SDK](https://img.shields.io/badge/soroban--sdk-28-purple.svg)](https://docs.rs/soroban-sdk)
 [![CI](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/stellar-crucible/soroban-testkit?label=release&color=brightgreen)](https://github.com/stellar-crucible/soroban-testkit/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=f79071)](https://crates.io/crates/soroban-testkit-core)
 [![Open tasks](https://img.shields.io/github/issues/stellar-crucible/soroban-testkit/Stellar%20Wave?label=Stellar%20Wave%20tasks&color=5319E7)](https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aopen+is%3Aissue+label%3A%22Stellar+Wave%22)
 
 ## Documentation
@@ -39,10 +40,10 @@ Testkit fills these gaps with domain-specific tooling that complements (not repl
 
 | Crate | Description |
 |-------|-------------|
-| [`testkit-core`](crates/testkit-core) | Budget snapshots, error decoding, storage inspection |
-| [`testkit-assert`](crates/testkit-assert) | Ergonomic assertion matchers for events and authorizations |
-| [`testkit-fixtures`](crates/testkit-fixtures) | Reusable test context builder and setup framework |
-| [`testkit-generators`](crates/testkit-generators) | Soroban-aware property testing strategies for proptest |
+| [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, storage inspection |
+| [`soroban-testkit-assert`](crates/soroban-testkit-assert) | Ergonomic assertion matchers for events and authorizations |
+| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder and setup framework |
+| [`soroban-testkit-generators`](crates/soroban-testkit-generators) | Soroban-aware property testing strategies for proptest |
 
 ## Quick Start
 
@@ -50,8 +51,16 @@ Add to your contract's `Cargo.toml`:
 
 ```toml
 [dev-dependencies]
-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.1.1" }
+soroban-testkit-fixtures = "0.2.0"
+soroban-testkit-assert = "0.2.0"
+```
+
+Prefer pinning the source? Use the release tag, which always points at a commit whose CI is green:
+
+```toml
+[dev-dependencies]
+soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
+soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
 ```
 
 ### Test Fixtures
@@ -59,7 +68,7 @@ testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", 
 Eliminate boilerplate with reusable test contexts:
 
 ```rust
-use testkit_fixtures::builder::TestContextBuilder;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
 
 #[test]
 fn test_transfer() {
@@ -80,7 +89,7 @@ fn test_transfer() {
 Replace raw tuple matching with expressive matchers:
 
 ```rust
-use testkit_assert::events::EventMatcher;
+use soroban_testkit_assert::events::EventMatcher;
 
 #[test]
 fn test_emits_transfer_event() {
@@ -101,7 +110,7 @@ fn test_emits_transfer_event() {
 Catch resource issues before deployment:
 
 ```rust
-use testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget::BudgetSnapshot;
 
 #[test]
 fn test_budget_within_limits() {
@@ -123,7 +132,7 @@ Generate realistic Soroban values:
 
 ```rust
 use proptest::prelude::*;
-use testkit_generators::strategies;
+use soroban_testkit_generators::strategies;
 
 proptest! {
     #[test]
@@ -138,10 +147,10 @@ proptest! {
 ```
 soroban-testkit/
 ├── crates/
-│   ├── testkit-core/         # Budget, error, storage utilities
-│   ├── testkit-assert/       # Event and auth assertion matchers
-│   ├── testkit-fixtures/     # Test context builder and fixtures
-│   └── testkit-generators/   # Property testing strategies
+│   ├── soroban-testkit-core/         # Budget, error, storage utilities
+│   ├── soroban-testkit-assert/       # Event and auth assertion matchers
+│   ├── soroban-testkit-fixtures/     # Test context builder and fixtures
+│   └── soroban-testkit-generators/   # Property testing strategies
 ├── examples/
 │   └── counter/              # Contract + integration tests using every crate
 ├── docs/                     # mdBook documentation source (theme/custom.css)
