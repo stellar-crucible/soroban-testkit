@@ -120,9 +120,20 @@ fn read_only_calls_emit_nothing() {
 
     client.get();
 
-    EventMatcher::new(&ctx.env).assert_count(0);
+    EventMatcher::new(&ctx.env).assert_not_emitted();
 }
 ```
+
+`assert_not_emitted` is the negative half of the matcher and respects the same filters, so a topic the contract never publishes is provable too:
+
+```rust
+EventMatcher::new(&ctx.env)
+    .from_contract(&contract_id)
+    .with_topic("decremented")
+    .assert_not_emitted();
+```
+
+It asserts against the latest invocation only — the same v28 scope as every other matcher here.
 
 ## Step 4 — bound the cost
 
@@ -181,14 +192,15 @@ cargo test -p testkit-example-counter
 ```
 
 ```text
-running 8 tests
+running 9 tests
 test test::counter_starts_at_zero ... ok
-test test::increment_accumulates_and_returns_the_new_value ... ok
-test test::increment_emits_exactly_one_event ... ok
-test test::read_only_calls_emit_nothing ... ok
+test test::a_topic_the_contract_never_publishes_stays_silent ... ok
 test test::each_invocation_is_asserted_on_its_own ... ok
 test test::events_can_be_filtered_to_the_contract_that_emitted_them ... ok
+test test::increment_accumulates_and_returns_the_new_value ... ok
+test test::increment_emits_exactly_one_event ... ok
 test test::increment_consumes_a_predictable_amount_of_cpu ... ok
+test test::read_only_calls_emit_nothing ... ok
 test test::increment_requires_authorization_when_auths_are_not_mocked - should panic ... ok
 ```
 

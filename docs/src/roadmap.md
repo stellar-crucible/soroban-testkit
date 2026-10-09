@@ -51,6 +51,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <h3 class="tk-card__title">Storage snapshots and diffs</h3>
     <p class="tk-card__body"><code>StorageSnapshot::capture</code> enumerates a contract's live instance, persistent and temporary entries from the ledger snapshot, and <code>diff()</code> reports added, removed and rewritten keys — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/4">#4</a>, closed.</p>
   </div>
+  <div class="tk-card">
+    <span class="tk-card__kicker">testkit-assert</span>
+    <h3 class="tk-card__title">Negative event assertions</h3>
+    <p class="tk-card__body"><code>assert_not_emitted()</code> and <code>assert_none_match()</code> prove a topic stayed silent, quoting the unexpected event when they fail — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/11">#11</a>, closed.</p>
+  </div>
 </div>
 
 ## Next cycle
@@ -59,7 +64,6 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 |------|------|------------|
 | Assertions | `assert_event_emitted!` macro with topic and data matching ([#1](https://github.com/stellar-crucible/soroban-testkit/issues/1)) | `complexity:high` |
 | Assertions | `assert_auth_matches!` macro ([#2](https://github.com/stellar-crucible/soroban-testkit/issues/2)) | `complexity:medium` |
-| Assertions | Negative assertions (`assert_not_emitted`) ([#11](https://github.com/stellar-crucible/soroban-testkit/issues/11)) | `complexity:trivial` |
 | Assertions | Data predicates on emitted events ([#18](https://github.com/stellar-crucible/soroban-testkit/issues/18)) | `complexity:medium` |
 | Assertions | Matchers that aggregate events across several invocations ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
