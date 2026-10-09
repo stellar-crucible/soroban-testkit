@@ -5,7 +5,7 @@ Thank you for your interest in contributing! This project participates in the [S
 ## Getting Started
 
 1. Fork and clone the repository
-2. Install Rust 1.81+ via [rustup](https://rustup.rs/)
+2. Install Rust 1.91+ via [rustup](https://rustup.rs/)
 3. Run `cargo test` to verify everything works
 4. Pick an issue labeled with a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`)
 

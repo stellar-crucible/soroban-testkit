@@ -3,7 +3,7 @@
 A comprehensive testing and debugging toolkit for [Soroban](https://developers.stellar.org/docs/smart-contracts) smart contracts on the Stellar network.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.81%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
 [![Soroban SDK](https://img.shields.io/badge/soroban--sdk-28-purple.svg)](https://docs.rs/soroban-sdk)
 
 ## Why Testkit?
