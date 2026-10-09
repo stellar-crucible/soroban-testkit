@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-09
+
+Everything that landed since `v0.2.0`, each of it through the protected-branch flow: budget regression detection with a committed baseline that CI enforces, ledger time helpers, context reset, assertions on what an event carried, and an event log that spans several invocations.
+
 ### Added
 - `soroban-testkit-assert`: `EventLog` aggregates events across invocations, so one assertion can speak about a sequence of calls instead of only the last one. `collect()` after each call the test means to judge, and `matcher()` hands the gathered set to `EventMatcher` — `from_contract`, `with_topic`, `assert_emitted`, `assert_count`, `assert_not_emitted`, `assert_none_match` and `assert_data_matches` all read it ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19))
 - `EventLog::topics()` reads the sequence back as one entry per collected event, so a test can assert the order calls published in; `events()`, `len()` and `is_empty()` cover what the filters cannot express. Collection stays explicit because SDK v28 gives a test no per-invocation hook — a call nobody collected from adds nothing, and a silent call adds nothing either, which is what lets `assert_not_emitted()` mean "nowhere in this test"

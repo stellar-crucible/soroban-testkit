@@ -1872,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-testkit-assert"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "soroban-sdk",
  "soroban-testkit-core",
@@ -1880,7 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-testkit-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1890,7 +1890,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-testkit-example-counter"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "soroban-sdk",
  "soroban-testkit-assert",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-testkit-fixtures"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "soroban-sdk",
  "soroban-testkit-core",
@@ -1908,7 +1908,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-testkit-generators"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arbitrary",
  "proptest",
