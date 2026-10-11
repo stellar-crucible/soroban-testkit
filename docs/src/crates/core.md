@@ -5,15 +5,19 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
 ## API at a glance
 
 | Type | Purpose |
 |------|---------|
-| `BudgetSnapshot` | Capture CPU instructions and memory bytes at a point in time |
-| `BudgetRead` | Trait implemented by any budget `capture()` can read — host `Budget` and the SDK budget |
+| `BudgetSnapshot` | CPU instructions and memory bytes — `last_invocation()` for the call that just ran |
+| `BudgetRead` | Trait implemented by any source `capture()` can read: invocation resources, the SDK budget, the host `Budget` |
+| `BudgetGuard` | Ceilings and a baseline tolerance for one named operation |
+| `BudgetViolation`, `ViolationKind` | The limit a cost broke, rendered as one parseable line |
+| `BudgetBaseline` | Recorded costs per case, loaded from and saved to a JSON file |
+| `budget_guard!` | Macro form of the guard around a single invocation |
 | `DecodedError` | A Soroban error code split into category, meaning and context |
 | `ErrorRegistry` | Your `#[contracterror]` codes mapped to the words they mean |
 | `ClientOutcome`, `unwrap_decoded` | Unwrap a v28 `try_*` client call, panicking with the decoded error |
@@ -23,27 +27,111 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 
 ## Budget snapshots
 
-Capture and compare CPU and memory consumption around a single operation.
-`capture()` takes anything implementing `BudgetRead`, so the same snapshot works
-with `env.cost_estimate().budget()` in tests and with a
-`soroban_env_host::budget::Budget` you charge by hand. `diff()` saturates at
-zero, so a later snapshot that reads smaller never underflows an assertion.
+The SDK meters one top-level invocation at a time, and the reading a test wants
+is usually the call that just finished:
 
 ```rust
 use soroban_testkit_core::budget::BudgetSnapshot;
 
-let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
-// ... invoke contract
-let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
-let diff = before.diff(&after);
+client.increment(&caller, &1);
+let cost = BudgetSnapshot::last_invocation(&env);
 
-println!("CPU instructions: {}", diff.cpu_insns);
-println!("Memory bytes: {}", diff.mem_bytes);
+println!("CPU instructions: {}", cost.cpu_insns);
+println!("Memory bytes: {}", cost.mem_bytes);
 ```
+
+`capture()` takes anything implementing `BudgetRead` — those invocation
+resources, the cumulative `env.cost_estimate().budget()`, and a
+`soroban_env_host::budget::Budget` you charge by hand. `diff()` saturates at
+zero, so a later snapshot that reads smaller never underflows an assertion.
 
 <div class="tk-callout">
   <span class="tk-callout__title">SDK v28 note</span>
-  <p><code>env.budget()</code> is deprecated. Always go through <code>env.cost_estimate().budget()</code> so the snapshot reflects the current cost model.</p>
+  <p><code>env.budget()</code> is deprecated; go through <code>env.cost_estimate()</code>. And read the numbers as a comparison between builds rather than as a fee quote: a contract registered as a native test contract is never metered through the VM, so wasm instantiation, execution and rent reads are absent from the reading.</p>
+</div>
+
+## Guards: turning a measurement into a limit
+
+A number on its own passes whatever it is. `BudgetGuard` states the two things a
+test can actually act on — an absolute ceiling, and how far the cost may have
+grown relative to the last time it was recorded.
+
+```rust
+use soroban_testkit_core::budget::{BudgetGuard, BudgetSnapshot};
+
+let cost = BudgetSnapshot { cpu_insns: 1_500_000, mem_bytes: 200_000 };
+
+BudgetGuard::new("transfer")          // the name every failure line carries
+    .cpu_ceiling(2_000_000)
+    .mem_ceiling(500_000)
+    .baseline(Some(previous_cost))    // `None` for a case not recorded yet
+    .tolerance_percent(10)            // 0 means "not one instruction more"
+    .assert_within(&cost);
+```
+
+`run()` makes the call, reads the metering that call left behind, and returns
+whatever the invocation returned:
+
+```rust
+let total = BudgetGuard::new("increment")
+    .cpu_ceiling(20_000_000)
+    .run(&env, || client.increment(&caller, &1));
+```
+
+The `budget_guard!` macro is the same call written around the invocation, with
+the limits in a block:
+
+```rust
+use soroban_testkit_core::budget_guard;
+
+budget_guard!(&env, "increment", { cpu_max: 20_000_000, mem_max: 20_000_000 }, || {
+    client.increment(&caller, &1)
+});
+```
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Every breach, not just the first</span>
+  <p><code>violations()</code> returns all limits one cost breaks — ceilings first, then growth — and <code>assert_within()</code> panics with one line per breach. A change that costs both CPU and memory is found in one run, and the lines are <code>key=value</code> pairs, so CI can grep them.</p>
+</div>
+
+```text
+BUDGET kind=growth case=transfer metric=cpu_insns actual=1500000 limit=1100000 baseline=1000000 tolerance_percent=10
+```
+
+## Baselines: recording cost so a regression is visible
+
+`BudgetBaseline` is a map of case name to recorded cost that reads and writes a
+JSON file, so the numbers a suite enforces live in the repository rather than in
+a test's memory.
+
+```rust
+use soroban_testkit_core::budget::BudgetBaseline;
+
+let baseline = BudgetBaseline::load(std::path::Path::new("tests/budget.json"))?;
+
+for (case, cost) in baseline.cases() {
+    baseline.guard(case).tolerance_percent(5).run(&env, || invoke(case));
+}
+```
+
+The file format is one version field and one map of costs:
+
+```json
+{
+  "version": 1,
+  "cases": {
+    "increment": { "cpu_insns": 32669, "mem_bytes": 5252 }
+  }
+}
+```
+
+Cases are keyed by name and iterated in name order, so a rewritten file stays a
+readable diff. A file whose `version` is newer than the loader is refused with
+`BaselineError::UnsupportedVersion` rather than silently read with missing cases.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Recording a baseline</span>
+  <p><code>record()</code> and <code>save()</code> write the file; what refreshes it is a policy choice. Committing the file and failing on drift keeps the numbers honest, so most projects regenerate it in one deliberate commit rather than on every test run — <a href="../guides/budget-testing.html">Budget-Aware Testing</a> walks through both. The pattern is applied in this repository: <code>examples/counter/budget.json</code> holds the counter's two hot paths, two <code>#[ignore]</code>d tests record and check it, and the <code>Budget baseline</code> workflow runs the check on one pinned runner and reports the numbers on the pull request.</p>
 </div>
 
 ## Error decoding

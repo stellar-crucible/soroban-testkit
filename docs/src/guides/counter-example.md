@@ -90,7 +90,7 @@ fn increment_accumulates_and_returns_the_new_value() {
 
 ## Step 3 — assert on events
 
-`EventMatcher` reads the events of the **most recent invocation**, which is what `env.events().all()` exposes in SDK v28. Assert between calls, not after the whole test.
+`EventMatcher` reads the events of the **most recent invocation**, which is what `env.events().all()` exposes in SDK v28 — so a per-call assertion goes right after that call. Judging several calls together is `EventLog`'s job, shown at the end of this step.
 
 ```rust
 use soroban_testkit_assert::events::EventMatcher;
@@ -133,38 +133,129 @@ EventMatcher::new(&ctx.env)
     .assert_not_emitted();
 ```
 
-It asserts against the latest invocation only — the same v28 scope as every other matcher here.
+It reads the latest invocation, so the topic is proven absent from the call under test; `EventLog` below widens that to a whole sequence of calls.
+
+The counter publishes its event with `#[contractevent]`, so the payload arrives as a map keyed by field name and `assert_data_matches` reads the field the test is about:
+
+```rust
+#[test]
+fn the_increment_event_carries_the_caller_and_the_new_count() {
+    let ctx = context(1);
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    client.increment(&caller, &12);
+
+    EventMatcher::new(&ctx.env)
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_data_matches(|data| {
+            data.field("new_count")
+                .and_then(|value| value.deserialize::<u32>())
+                == Some(12)
+        });
+}
+```
+
+A failed assertion reports the payload it was handed instead of only saying the predicate was wrong — this is the counter's event after an `increment` the predicate did not expect:
+
+```text
+Expected an event whose data matches, checked 1 event(s) with data [{"caller": Contract(CAAAAAA...FCT4), "new_count": 7}]
+```
+
+The account key is abbreviated here; a real message prints the whole strkey, because a hash of the public key is not what a test author compares against.
+
+See [soroban-testkit-assert](../crates/assert.html) for `deserialize`, `field` and `raw`.
+
+### Several calls as one set
+
+Counting the events of a whole run is the one thing a single-call matcher cannot say: "these increments emitted two events, and the first carried 5". `EventLog` collects after each call the test means to judge, and its matcher takes the same filters and assertions:
+
+```rust
+use soroban_testkit_assert::events::EventLog;
+
+#[test]
+fn a_sequence_of_calls_can_be_asserted_over_as_one_set() {
+    let ctx = context(1);
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    let mut log = EventLog::new(&ctx.env);
+    client.increment(&caller, &5);
+    log.collect();
+    client.get();
+    log.collect();
+    client.increment(&caller, &7);
+    log.collect();
+
+    log.matcher()
+        .from_contract(&contract_id)
+        .with_topic("incremented")
+        .assert_count(2);
+
+    log.matcher()
+        .with_topic("incremented")
+        .assert_data_matches(|data| {
+            data.field("new_count")
+                .and_then(|value| value.deserialize::<u32>())
+                == Some(5)
+        });
+}
+```
+
+`client.get()` publishes nothing, so it adds nothing to the log — that is what makes a log-wide `assert_not_emitted()` mean "never in these calls". Collection stays explicit because SDK v28 gives a test no per-invocation hook to drain: a call nobody collected from is simply not in scope. Events keep their call order, and `log.topics()` reads that order back.
 
 ## Step 4 — bound the cost
 
-Take a snapshot before and after the call, then assert the delta is non-zero and under a ceiling. The first `get()` warms the cost estimator so the reading is not zero.
+Wrap the call in a guard instead of reading the meter by hand. The guard runs the closure and judges the metering that call left behind, so there is no warm-up call and no delta to compute.
 
 ```rust
-use soroban_testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget_guard;
 
 #[test]
-fn increment_consumes_a_predictable_amount_of_cpu() {
+fn increment_stays_inside_its_cpu_ceiling() {
     let ctx = context(1);
     let (_id, client) = client_for(&ctx);
     let caller = ctx.users[0].clone();
 
-    client.get(); // warm up the estimator
-
-    let env = &ctx.env;
-    let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
-    client.increment(&caller, &1);
-    let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
-
-    let cost = before.diff(&after);
-    assert!(cost.cpu_insns > 0);
-    assert!(cost.cpu_insns < 20_000_000, "regressed to {} insns", cost.cpu_insns);
+    budget_guard!(&ctx.env, "increment", { cpu_max: 20_000_000, mem_max: 20_000_000 }, || {
+        client.increment(&caller, &1)
+    });
 }
 ```
 
+A ceiling is transaction headroom, not the measured cost. A contract registered with `register()` runs as native host code, so the VM's own instantiation and execution costs never appear in the reading — the call above meters at tens of thousands of instructions here while a network would bill more.
+
+The macro expands to the builder, so a test that loops over several calls can hold its own guard:
+
+```rust
+use soroban_testkit_core::budget::BudgetGuard;
+
+BudgetGuard::new("increment").cpu_ceiling(20_000_000).run(&ctx.env, || client.increment(&caller, &1));
+```
+
+The other half is a baseline. Record the cost of a call once, and the next run of the same call is judged against the build that produced it:
+
+```rust
+use soroban_testkit_core::budget::{BudgetBaseline, BudgetSnapshot};
+
+client.increment(&caller, &1);
+let measured = BudgetSnapshot::last_invocation(&ctx.env);
+
+let mut baseline = BudgetBaseline::new();
+baseline.record("increment", measured);
+
+baseline.guard("increment").tolerance_percent(25).run(&ctx.env, || {
+    client.increment(&caller, &1);
+});
+```
+
 <div class="tk-callout tk-callout--tip">
-  <span class="tk-callout__title">Why a ceiling and a floor</span>
-  <p><code>cpu_insns &gt; 0</code> catches a call that silently did nothing; the ceiling catches a change that made the call expensive. Together they are a regression test, and they fail with the number that broke the bound.</p>
+  <span class="tk-callout__title">Why a ceiling and a baseline</span>
+  <p>A ceiling says the call is still affordable; a baseline says it is still the call you measured. The first catches a rewrite that got loose, the second catches a drift no reviewer noticed. One guard checks both, prints every breach as a <code>key=value</code> line, and leaves the numbers in the pull request diff instead of in a deploy log.</p>
 </div>
+
+This crate carries its own baseline — <code>examples/counter/budget.json</code> — and two <code>#[ignore]</code>d tests that record and enforce it. They are ignored because an SDK bump moves every number at once and the recording test rewrites a file, neither of which belongs in <code>cargo test</code>; the <code>Budget baseline</code> workflow runs them on a pinned runner instead, so the numbers are still judged somewhere. See <a href="./budget-testing.html">Budget-aware testing</a> for the commands and the failure output.
 
 ## Step 5 — prove the authorisation is real
 
@@ -245,6 +336,6 @@ test test::increment_requires_authorization_when_auths_are_not_mocked - should p
   <div class="tk-card">
     <span class="tk-card__kicker">Crate</span>
     <h3 class="tk-card__title">soroban-testkit-core</h3>
-    <p class="tk-card__body"><a href="../crates/core.html">BudgetSnapshot</a> and the <code>BudgetRead</code> trait.</p>
+    <p class="tk-card__body"><a href="../crates/core.html">BudgetGuard and BudgetBaseline</a>, plus the <code>BudgetRead</code> trait.</p>
   </div>
 </div>

@@ -2,15 +2,16 @@
 
 A comprehensive testing and debugging toolkit for [Soroban](https://developers.stellar.org/docs/smart-contracts) smart contracts on the Stellar network.
 
-**📖 Documentation: [stellar-crucible.github.io/soroban-testkit](https://stellar-crucible.github.io/soroban-testkit/)**
+**📖 Documentation: [stellar-crucible.github.io/soroban-testkit](https://stellar-crucible.github.io/soroban-testkit/)** · **Telegram: [t.me/+_tukd5_0gtM1MzA0](https://t.me/+_tukd5_0gtM1MzA0)**
 
 [![Docs](https://img.shields.io/badge/docs-mdBook-1a2f6b.svg)](https://stellar-crucible.github.io/soroban-testkit/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
 [![Soroban SDK](https://img.shields.io/badge/soroban--sdk-28-purple.svg)](https://docs.rs/soroban-sdk)
 [![CI](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/ci.yml)
+[![Budget baseline](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml)
 [![Release](https://img.shields.io/github/v/release/stellar-crucible/soroban-testkit?label=release&color=brightgreen)](https://github.com/stellar-crucible/soroban-testkit/releases/latest)
-[![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=f79071)](https://crates.io/crates/soroban-testkit-core)
+[![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=brightgreen)](https://crates.io/crates/soroban-testkit-core)
 [![Open tasks](https://img.shields.io/github/issues/stellar-crucible/soroban-testkit/Stellar%20Wave?label=Stellar%20Wave%20tasks&color=5319E7)](https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aopen+is%3Aissue+label%3A%22Stellar+Wave%22)
 
 ## Documentation
@@ -47,20 +48,20 @@ Testkit fills these gaps with domain-specific tooling that complements (not repl
 
 ## Quick Start
 
-Add to your contract's `Cargo.toml`:
+Add to your contract's `Cargo.toml`, from [crates.io](https://crates.io):
 
 ```toml
 [dev-dependencies]
-soroban-testkit-fixtures = "0.2.0"
-soroban-testkit-assert = "0.2.0"
+soroban-testkit-fixtures = "0.3.0"
+soroban-testkit-assert = "0.3.0"
 ```
 
-Prefer pinning the source? Use the release tag, which always points at a commit whose CI is green:
+If you would rather pin the source, the same crates resolve from the release tag — a tag always points at a commit whose CI is green:
 
 ```toml
 [dev-dependencies]
-soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
-soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
+soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0" }
+soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0" }
 ```
 
 ### Test Fixtures
@@ -102,7 +103,27 @@ fn test_emits_transfer_event() {
         .from_contract(&contract_id)
         .with_topic("Transfer")
         .assert_emitted();
+
+    // ... and assert on what the event carried, not only that it fired
+    EventMatcher::new(&env)
+        .with_topic("Transfer")
+        .assert_data_matches(|data| data.deserialize::<i128>() == Some(1_000));
 }
+```
+
+Each matcher reads the call that just ran. `EventLog` gathers several calls so one assertion speaks about the sequence:
+
+```rust
+use soroban_testkit_assert::events::EventLog;
+
+let mut log = EventLog::new(&env);
+client.transfer(&sender, &receiver, &100);
+log.collect();
+client.close_offer(&sender);
+log.collect();
+
+log.matcher().with_topic("Transfer").assert_count(1);
+log.matcher().with_topic("Refund").assert_not_emitted();
 ```
 
 ### Budget Tracking
@@ -110,21 +131,22 @@ fn test_emits_transfer_event() {
 Catch resource issues before deployment:
 
 ```rust
-use soroban_testkit_core::budget::BudgetSnapshot;
+use soroban_testkit_core::budget::BudgetGuard;
 
 #[test]
 fn test_budget_within_limits() {
-    let env = Env::default();
-    let before = BudgetSnapshot::capture(&env.cost_estimate().budget());
-
-    // ... invoke contract function
-
-    let after = BudgetSnapshot::capture(&env.cost_estimate().budget());
-    let diff = before.diff(&after);
-
-    assert!(diff.cpu_insns < 1_000_000, "Function exceeded CPU budget");
+    BudgetGuard::new("transfer")
+        .cpu_ceiling(1_000_000)
+        .mem_ceiling(100_000)
+        .baseline(recorded_cost)      // from a committed JSON file
+        .tolerance_percent(10)
+        .run(&env, || client.transfer(&sender, &receiver, &1000));
 }
 ```
+
+A call that crosses a ceiling or grows past its recorded cost fails the test with
+one parseable line per breach, so a budget regression shows up in CI as a diff
+rather than as a surprise on mainnet.
 
 ### Property Testing
 
@@ -153,8 +175,9 @@ soroban-testkit/
 │   └── soroban-testkit-generators/   # Property testing strategies
 ├── examples/
 │   └── counter/              # Contract + integration tests using every crate
+│                             # + budget.json: the costs CI holds them to
 ├── docs/                     # mdBook documentation source (theme/custom.css)
-├── .github/                  # CI, docs deploy, templates, CODEOWNERS
+├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
 ├── Cargo.toml                # Workspace root
 └── LICENSE                   # Apache-2.0
 ```
@@ -162,7 +185,8 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 81 tests: all four crates + examples/counter
+cargo test --workspace --locked      # 153 tests: all four crates + examples/counter
+                                     # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 mdbook build docs                    # documentation site
@@ -171,8 +195,16 @@ cargo deny check all                 # advisories, licenses, duplicate versions,
 
 [`examples/counter`](examples/counter) is a real contract with a test suite that
 uses every crate in the workspace: fixtures for the environment and users,
-`EventMatcher` for contract events, `BudgetSnapshot` for CPU consumption, and a
-`#[should_panic]` case that shows an unmocked `require_auth` failing.
+`EventMatcher` for contract events and the data they carry, `BudgetGuard` and `budget_guard!` for CPU and
+memory ceilings, and a `#[should_panic]` case that shows an unmocked
+`require_auth` failing. Its [`budget.json`](examples/counter/budget.json) records
+what `get` and `increment` cost, and the `Budget baseline` workflow re-measures
+them on every pull request so a storage read nobody intended cannot slip in as a
+free change.
+
+## Community
+
+Release notices and discussion happen in the [Telegram channel](https://t.me/+_tukd5_0gtM1MzA0). Bug reports and feature requests go to [GitHub issues](https://github.com/stellar-crucible/soroban-testkit/issues), which is also where the funded tasks live.
 
 ## Contributing
 

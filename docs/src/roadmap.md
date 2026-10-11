@@ -3,7 +3,7 @@
 Where Soroban Testkit is going, and which parts are open for contributors. Anything listed here is a proposal until an issue exists for it — the tracker is the source of truth.
 
 <div class="tk-spec">
-  <div class="tk-spec__item"><span class="tk-spec__key">Current</span><span class="tk-spec__value">v0.2.0</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Current</span><span class="tk-spec__value">v0.3.0</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Cadence</span><span class="tk-spec__value">Monthly Wave cycle</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Tracking</span><span class="tk-spec__value">GitHub Issues</span></div>
 </div>
@@ -24,7 +24,7 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
   <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-core</span>
     <h3 class="tk-card__title">Budget snapshots</h3>
-    <p class="tk-card__body">Capture and diff CPU and memory consumption around a call.</p>
+    <p class="tk-card__body">Read the CPU and memory one call metered, and diff two readings of a running budget.</p>
   </div>
   <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-generators</span>
@@ -57,14 +57,44 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>assert_not_emitted()</code> and <code>assert_none_match()</code> prove a topic stayed silent, quoting the unexpected event when they fail — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/11">#11</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-assert</span>
+    <h3 class="tk-card__title">Event payload assertions</h3>
+    <p class="tk-card__body"><code>assert_data_matches()</code> reads what an event carried — a typed <code>deserialize</code>, one <code>field</code> of the map a <code>#[contractevent]</code> struct publishes, or the raw <code>ScVal</code> — and a failure prints every payload it rejected — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/18">#18</a>, closed.</p>
+  </div>
+  <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-assert</span>
+    <h3 class="tk-card__title">Events aggregated across calls</h3>
+    <p class="tk-card__body"><code>EventLog</code> gathers each invocation's events as a test runs, and <code>matcher()</code> hands the sequence to the same filters and assertions — so <code>assert_count</code>, <code>with_topic</code> and <code>assert_not_emitted</code> speak about several calls at once, and <code>topics()</code> reads the order back — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/19">#19</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-core</span>
     <h3 class="tk-card__title">Error code decoder</h3>
     <p class="tk-card__body"><code>DecodedError::from_error</code> names the host category and meaning behind a packed error code, and <code>ErrorRegistry</code> adds words for your own <code>#[contracterror]</code> codes — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/5">#5</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-fixtures</span>
+    <h3 class="tk-card__title">Ledger time helpers</h3>
+    <p class="tk-card__body"><code>advance_time()</code>, <code>set_timestamp()</code> and <code>advance_ledger()</code> move the clock or the height on their own, so a vesting or TTL test reads as a span instead of as a hand-built <code>LedgerInfo</code> — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/12">#12</a>, closed.</p>
+  </div>
+  <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-fixtures</span>
+    <h3 class="tk-card__title">Context reset</h3>
+    <p class="tk-card__body"><code>reset()</code> swaps in a fresh env — ledger, events, auths and storage gone — and carries every address across, so a two-phase test keeps its actors instead of rebuilding its fixture — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/17">#17</a>, closed.</p>
+  </div>
+  <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-core</span>
+    <h3 class="tk-card__title">Budget regression detection</h3>
+    <p class="tk-card__body"><code>BudgetGuard</code> and <code>budget_guard!</code> hold a call to a CPU and memory ceiling plus a growth allowance against a recorded cost, and <code>BudgetBaseline</code> keeps those costs in a committed JSON file — every breach printed as one parseable line — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/3">#3</a>, closed.</p>
+  </div>
+  <div class="tk-card">
+    <span class="tk-card__kicker">Tooling</span>
+    <h3 class="tk-card__title">Budgets diffed in CI</h3>
+    <p class="tk-card__body"><code>examples/counter/budget.json</code> commits the counter's hot-path costs, one ignored test records them and another enforces them, and the <code>Budget baseline</code> workflow runs the check on a pinned runner and reports every case on the pull request — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/14">#14</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
-    <h3 class="tk-card__title">On crates.io</h3>
-    <p class="tk-card__body">The workspace publishes as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, so a consumer adds a version requirement instead of a Git pin.</p>
+    <h3 class="tk-card__title">Published on crates.io</h3>
+    <p class="tk-card__body">All four crates are live on the registry as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, with <code>0.3.0</code> as the current stable release, so a consumer adds a version requirement instead of a Git pin. The release tag stays available for anyone who wants to pin the source commit its CI went green on.</p>
   </div>
 </div>
 
@@ -74,16 +104,10 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 |------|------|------------|
 | Assertions | `assert_event_emitted!` macro with topic and data matching ([#1](https://github.com/stellar-crucible/soroban-testkit/issues/1)) | `complexity:high` |
 | Assertions | `assert_auth_matches!` macro ([#2](https://github.com/stellar-crucible/soroban-testkit/issues/2)) | `complexity:medium` |
-| Assertions | Data predicates on emitted events ([#18](https://github.com/stellar-crucible/soroban-testkit/issues/18)) | `complexity:medium` |
-| Assertions | Matchers that aggregate events across several invocations ([#19](https://github.com/stellar-crucible/soroban-testkit/issues/19)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
-| Fixtures | Ledger time helpers on `TestContext` ([#12](https://github.com/stellar-crucible/soroban-testkit/issues/12)) | `complexity:trivial` |
-| Fixtures | Context reset between sub-tests ([#17](https://github.com/stellar-crucible/soroban-testkit/issues/17)) | `complexity:trivial` |
-| Core | Budget regression detection ([#3](https://github.com/stellar-crucible/soroban-testkit/issues/3)) | `complexity:high` |
 | Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
 | Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
-| Tooling | Budget baseline tracking across PRs in CI ([#14](https://github.com/stellar-crucible/soroban-testkit/issues/14)) | `complexity:medium` |
 
 ## Later
 

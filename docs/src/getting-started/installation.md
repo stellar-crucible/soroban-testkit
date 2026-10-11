@@ -1,6 +1,6 @@
 # Installation
 
-Add only the crates your test suite needs. They are published to [crates.io](https://crates.io) under the `soroban-testkit-*` names, or consumed straight from Git — pin a release tag rather than the default branch, so a Git build stays on a commit whose CI (tests, clippy and the `cargo deny` supply-chain gate) is green.
+Add only the crates your test suite needs. All four are published on [crates.io](https://crates.io) as `soroban-testkit-core`, `soroban-testkit-assert`, `soroban-testkit-fixtures` and `soroban-testkit-generators`. If you would rather pin the source, every release is also tagged — a tag points at a commit whose CI (tests, clippy and the `cargo deny` supply-chain gate) is green.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Rust</span><span class="tk-spec__value">1.91 or newer</span></div>
@@ -13,20 +13,20 @@ Add only the crates your test suite needs. They are published to [crates.io](htt
 
 ```toml
 [dev-dependencies]
-soroban-testkit-core = "0.2.0"
-soroban-testkit-assert = "0.2.0"
-soroban-testkit-fixtures = "0.2.0"
-soroban-testkit-generators = { version = "0.2.0", features = ["proptest"] }
+soroban-testkit-core = "0.3.0"
+soroban-testkit-assert = "0.3.0"
+soroban-testkit-fixtures = "0.3.0"
+soroban-testkit-generators = { version = "0.3.0", features = ["proptest"] }
 ```
 
-The same four crates pinned to a Git tag, if you would rather build from source:
+The same set pinned to the release tag:
 
 ```toml
 [dev-dependencies]
-soroban-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
-soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
-soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0" }
-soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.2.0", features = ["proptest"] }
+soroban-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0" }
+soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0" }
+soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0" }
+soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0", features = ["proptest"] }
 ```
 
 ## Install steps
