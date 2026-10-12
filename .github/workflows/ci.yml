@@ -33,7 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install mdbook --version "0.5.4" --locked
       - run: mdbook build docs --dest-dir site
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mdbook-preview
           path: site
