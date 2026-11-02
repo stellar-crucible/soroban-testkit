@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Three new required checks inspect a pull request before it is allowed to build, because `cargo clippy` and `cargo test` both compile and execute any `build.rs` in the diff — a pipeline that built first and inspected afterwards only ever inspected the aftermath. `Malware guard` diffs against the code-execution surface this repository has today and fails on anything new: a build script or `[build-dependencies]`, `.cargo/config.toml`, `.gitattributes` filter drivers, submodules, vendored trees, binaries, symlinks, git-sourced or `[patch]`-redirected dependencies, crates with network, process or FFI reach, and in Rust source `unsafe`, `process::Command`, `std::net`, `mem::transmute`, `include_bytes!`, `#[no_mangle]` and `extern "C"`. `check`, `Docs build` and `Supply chain audit` now `needs:` it, so none of them compiles until it passes. The baseline for every rule is zero, which is what makes it enforceable rather than aspirational
+- `Secret scan` reads the lines a diff adds for credential shapes — provider tokens, private key blocks, credentials embedded in a URL, a secret assigned to a literal — with a placeholder filter so the documented `export CARGO_REGISTRY_TOKEN=<paste your token>` stays legal
+- `CI integrity` audits the pipeline rather than the code, because a pull request that can weaken its own gate does not need to evade it: it fails on `pull_request_target` and `workflow_run`, on a missing `permissions` block, on write scopes granted to a pull-request-triggered workflow, on any `secrets.` reference, on a `github.event` field interpolated into shell source instead of passed through `env`, and on an action ref that is neither first-party, pinned to a 40-character SHA, nor one of the three third-party actions this repository already uses
+- Each job executes its own script fetched from the base branch rather than the copy in the change under inspection, so a pull request cannot edit its inspector. Deleting a workflow does not help either: an absent required check leaves the pull request unmergeable, so the gate cannot be removed by the thing it gates
+- `security-override` is the only way past a finding. A maintainer applies it, the findings stay printed on the run, and the reason belongs in the pull request rather than in an edited-away rule
+- GitHub secret scanning and push protection are enabled on the repository
+
+### Changed
+- `budget-baseline.yml` passed two `workflow_dispatch` inputs into `run:` scripts by interpolation. Both are now assigned in `env:` and read as variables, which is what the new `CI integrity` audit requires of every workflow. The step that used the free-text one is `pull_request`-only and the input only exists on a dispatch, so the value could not actually reach it — this removes the shape rather than a live injection
+- `SECURITY.md` gained a `What runs on every pull request` section that names all four required checks and states the two gaps plainly: the three third-party actions are on mutable tag refs rather than commit SHAs, and the guard inspects a diff, so it is not a sandbox and will not catch a payload that avoids every pattern on its list
+
 ## [0.4.1] - 2026-11-02
 
 No new API. This release stops the toolkit claiming a capability it does not have — `soroban-testkit-generators` advertised an `arbitrary` backend in its published description, its manifest and five places in the documentation, while not one line of Rust was gated on the flag — and gives a first-time contributor somewhere to start, since the funded tracker's smallest task was previously `complexity:medium`.

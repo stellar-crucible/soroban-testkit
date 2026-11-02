@@ -34,7 +34,7 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
   <div class="tk-card">
     <span class="tk-card__kicker">Quality</span>
     <h3 class="tk-card__title">Test suite for the toolkit</h3>
-    <p class="tk-card__body">Unit tests in all four crates, plus <code>cargo fmt</code>, <code>clippy -D warnings</code>, docs build and a <code>cargo deny</code> supply-chain gate in CI.</p>
+    <p class="tk-card__body">Unit tests in all four crates, plus <code>cargo fmt</code>, <code>clippy -D warnings</code>, docs build and a <code>cargo deny</code> supply-chain gate in CI. Every pull request is also inspected before anything compiles it: a malware guard over the diff, a secret scan, and an audit of the pipeline itself.</p>
   </div>
   <div class="tk-card">
     <span class="tk-card__kicker">examples/counter</span>

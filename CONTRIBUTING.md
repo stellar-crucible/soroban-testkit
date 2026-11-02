@@ -22,6 +22,8 @@ The loop is the same at every complexity level:
 
 If an issue turns out to be bigger than its label says, say so on the issue rather than quietly expanding the pull request. Rescoping is normal and the maintainer would rather hear it early.
 
+One required check is not a build check. **Malware guard** compares your diff against the surface this repository has today — no build script, no cargo config, no submodule, no vendored tree, no binary, no `unsafe`, no process or network call, no shell that pipes a remote response into an interpreter — and fails if you add any of it. It runs before anything compiles, because `cargo test` executes a `build.rs` in your diff whether or not anyone has read it yet. For an issue off the tracker you will not come near it; if you do trip it, the job prints the file, the line and the reason. Explain the change on the pull request and a maintainer applies the `security-override` label, which records the finding against the pull request and lets it through. Do not obfuscate the line it caught to get past it. [SECURITY.md](SECURITY.md) describes the whole gate.
+
 ## Development
 
 ```bash
@@ -53,7 +55,7 @@ Additional labels: `good first issue`, `bug`, `enhancement`, `documentation`, `h
 2. Implement your changes with tests — every new API needs a test that fails without it
 3. Ensure `cargo test`, `cargo clippy` and `cargo fmt --check` all pass locally with `RUSTFLAGS="-D warnings"`
 4. If you changed behaviour users can see, update the matching page under `docs/src/` in the same PR
-5. Submit a PR using the template; `main` is protected, so the `check`, `Docs build` and `Supply chain audit` jobs must be green before it can merge. A PR that touches the example contract or the budget code also runs `Budget baseline`, which posts the measured costs as a comment.
+5. Submit a PR using the template; `main` is protected, so `Malware guard`, `Secret scan`, `CI integrity`, `check`, `Docs build` and `Supply chain audit` must all be green before it can merge. `Malware guard` is a dependency of the last three, so nothing compiles a pull request's Rust until it has passed. A PR that touches the example contract or the budget code also runs `Budget baseline`, which posts the measured costs as a comment.
 6. A maintainer will review and merge
 
 ## Releasing
