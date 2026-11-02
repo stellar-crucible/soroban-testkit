@@ -9,6 +9,19 @@ Thank you for your interest in contributing! This project participates in the [S
 3. Run `cargo test --workspace --locked` to verify everything works — 159 tests should pass, plus 2 ignored baseline jobs that only CI enforces
 4. Pick an issue labeled `Stellar Wave` plus a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`); comment on it before starting so two people don't collide
 
+## Your first pull request
+
+Start at [`complexity:trivial`](https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aissue+is%3Aopen+label%3A%22complexity%3Atrivial%22). Those issues are deliberately small — one accessor, one enumeration method, one documentation page — and each one lists the acceptance criteria it will be merged against, so you know before you start what "done" means. You do not need to understand the Soroban host to finish one.
+
+The loop is the same at every complexity level:
+
+1. Comment on the issue to claim it.
+2. Branch from `main`, make the change, and add the test that fails without it.
+3. Run everything in [Development](#development) below.
+4. Open a pull request against the template. `main` is protected, so CI has to go green before it can merge — a red check is a fixable thing, not a rejection.
+
+If an issue turns out to be bigger than its label says, say so on the issue rather than quietly expanding the pull request. Rescoping is normal and the maintainer would rather hear it early.
+
 ## Development
 
 ```bash

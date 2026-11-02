@@ -17,7 +17,7 @@ Contributions of every size are welcome. The repository guide — [CONTRIBUTING.
   </li>
   <li>
     <h4>Claim an issue</h4>
-    <p>Every funded task carries both <code>Stellar Wave</code> and a <code>complexity:*</code> label. Comment on the issue before starting so two contributors do not collide — Wave issues are first-come, first-served.</p>
+    <p>Every funded task carries both <code>Stellar Wave</code> and a <code>complexity:*</code> label. Comment on the issue before starting so two contributors do not collide — Wave issues are first-come, first-served. If this is your first pull request here, start from the <a href="https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aissue+is%3Aopen+label%3A%22complexity%3Atrivial%22"><code>complexity:trivial</code> list</a>: those are scoped to one accessor, one method or one page, and each states the acceptance criteria it will be merged against.</p>
   </li>
   <li>
     <h4>Branch, commit, check</h4>

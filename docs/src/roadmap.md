@@ -105,8 +105,13 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 
 ## Next cycle
 
+Never contributed here before? The three `complexity:trivial` rows are the intended first pull request — each is one API or one page, scoped tightly enough to finish in an evening, and each lists the acceptance criteria it will be judged against.
+
 | Area | Work | Complexity |
 |------|------|------------|
+| Assertions | Enumerate a struct event's field names ([#50](https://github.com/stellar-crucible/soroban-testkit/issues/50)) | `complexity:trivial` |
+| Fixtures | A `user(index)` accessor that explains its own panic ([#51](https://github.com/stellar-crucible/soroban-testkit/issues/51)) | `complexity:trivial` |
+| Docs | A troubleshooting page for the four failures that cost newcomers the most time ([#52](https://github.com/stellar-crucible/soroban-testkit/issues/52)) | `complexity:trivial` |
 | Assertions | `assert_event_emitted!` macro with topic and data matching ([#1](https://github.com/stellar-crucible/soroban-testkit/issues/1)) | `complexity:high` |
 | Assertions | `assert_auth_matches!` macro ([#2](https://github.com/stellar-crucible/soroban-testkit/issues/2)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
