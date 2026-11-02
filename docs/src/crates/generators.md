@@ -15,6 +15,10 @@ Soroban-aware property-testing strategies for `proptest` and `arbitrary`, so gen
 | `token_amount()` | `i128` | 0 to 1e15 |
 | `ledger_sequence()` | `u32` | 1 to 10,000,000 |
 | `timestamp()` | `u64` | Sep 2020 to May 2033 |
+| `address()` | `AddressBytes` | an account or contract address |
+| `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
+| `contract_address()` | `AddressBytes` | a contract id (`C...`) |
+| `address_of_type(kind)` | `AddressBytes` | the format you ask for |
 
 ## Usage with proptest
 
@@ -33,6 +37,52 @@ proptest! {
     }
 }
 ```
+
+## Addresses
+
+Both Soroban address formats are 32 opaque bytes, so every address strategy
+returns an `AddressBytes` that carries those bytes *and* the format they were
+generated as. `as_bytes()` reads the raw value, and `to_address(&env)` turns it
+into the `Address` a contract call expects.
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Address, Env};
+use soroban_testkit_generators::strategies::{self, AddressType};
+
+proptest! {
+    #[test]
+    fn transfer_reaches_the_recipient(recipient in strategies::account_address()) {
+        let env = Env::default();
+        let recipient: Address = recipient.to_address(&env);
+
+        // recipient is always a valid ed25519 account address
+    }
+}
+```
+
+Filter by format with `address_of_type`, or use the two named shortcuts when a
+test only cares about one side of a transfer:
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies::{self, AddressType};
+
+proptest! {
+    #[test]
+    fn a_contract_never_receives_a_signature(
+        contract in strategies::address_of_type(AddressType::Contract),
+    ) {
+        assert_eq!(contract.address_type(), AddressType::Contract);
+        assert_eq!(contract.as_bytes().len(), 32);
+    }
+}
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">No duplicates by construction</span>
+  <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
+</div>
 
 ## Custom strategies
 
@@ -62,6 +112,6 @@ fn transfer_args() -> impl Strategy<Value = (i128, i128)> {
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">Good first issue</span>
     <h3 class="tk-card__title">More strategies</h3>
-    <p class="tk-card__body">Address, symbol and <code>BytesN&lt;32&gt;</code> generators are labelled <span class="tk-badge tk-badge--brand">Medium 150 pts</span> on the issue tracker.</p>
+    <p class="tk-card__body">Symbol and <code>BytesN&lt;32&gt;</code> generators are labelled <span class="tk-badge tk-badge--brand">Medium 150 pts</span> on the issue tracker.</p>
   </div>
 </div>

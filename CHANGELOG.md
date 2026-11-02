@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `soroban-testkit-generators`: `address()`, `account_address()`, `contract_address()` and `address_of_type()` generate valid 32-byte Soroban addresses in both ed25519 account and contract format. `AddressBytes` keeps the format tag and converts to a host `Address`, and a process-wide nonce makes every address unique within a run; tests cover validity, type filtering and uniqueness ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7))
+
 ### Changed
 - **Installation leads with the registry.** `soroban-testkit-core`, `-assert`, `-fixtures` and `-generators` are published on [crates.io](https://crates.io) at `0.3.0`, so the README, the installation page and the property-testing guide now give a version requirement first and the tagged Git pin as the alternative for anyone who wants to pin the source commit. Checked from a clean project whose only access to the toolkit is the registry: it resolves, compiles and its tests pass ([#34](https://github.com/stellar-crucible/soroban-testkit/issues/34))
 
