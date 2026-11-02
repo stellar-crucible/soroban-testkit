@@ -6,12 +6,51 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # Lives in this file rather than in security.yml because `needs:` cannot cross
+  # a workflow boundary, and the point of the job is that nothing else compiles
+  # a pull request until it has passed: `cargo clippy` and `cargo test` both run
+  # any build.rs the diff introduces, so compiling first and inspecting second
+  # would only inspect the aftermath.
+  #
+  # It runs the copy of the script stored on the base branch, not the one in the
+  # pull request. A pull request that could edit its own inspector would only
+  # have to delete the rule it is about to trip.
+  guard:
+    name: Malware guard
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+      BASE_BRANCH: ${{ github.base_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Take the inspector from the base branch
+        run: |
+          set -eu
+          path=.github/scripts/malware-guard.sh
+          if git fetch --no-tags --depth=1 origin "$BASE_BRANCH" \
+             && git show "FETCH_HEAD:$path" > "$RUNNER_TEMP/inspector.sh" 2>/dev/null; then
+            echo "inspector taken from $BASE_BRANCH"
+          else
+            cp "$path" "$RUNNER_TEMP/inspector.sh"
+            echo "::warning::$BASE_BRANCH has no $path yet, so this run inspects with the copy from the change under inspection. That only happens on the pull request that introduces it."
+          fi
+
+      - name: Scan the diff
+        run: bash "$RUNNER_TEMP/inspector.sh"
+
   check:
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +64,7 @@ jobs:
 
   docs:
     name: Docs build
+    needs: guard
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: ""
@@ -40,6 +80,7 @@ jobs:
 
   supply-chain:
     name: Supply chain audit
+    needs: guard
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: ""

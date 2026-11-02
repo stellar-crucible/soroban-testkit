@@ -74,6 +74,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.record != 'true'
         env:
           TESTKIT_BUDGET_TOLERANCE: ${{ github.event.inputs.tolerance || '10' }}
+          FAIL_ON_DRIFT: ${{ github.event.inputs.fail_on_drift }}
         run: |
           set -o pipefail
           status=0
@@ -88,7 +89,7 @@ jobs:
             grep -E '^(BUDGET |BUDGET_SUMMARY )' budget.log || echo 'no measurements reported'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$status" -ne 0 ] && [ "${{ github.event.inputs.fail_on_drift }}" = 'false' ]; then
+          if [ "$status" -ne 0 ] && [ "$FAIL_ON_DRIFT" = 'false' ]; then
             echo "::warning::costs drifted past the tolerance; this run was asked not to fail"
             exit 0
           fi
@@ -102,6 +103,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          TOLERANCE: ${{ github.event.inputs.tolerance || '10' }}
         run: |
           marker='<!-- soroban-testkit-budget-baseline -->'
           numbers=$(grep -E '^(BUDGET |BUDGET_SUMMARY )' budget.log || echo 'no measurements reported')
@@ -115,7 +117,7 @@ jobs:
           \`\`\`
 
           Measured on \`ubuntu-latest\` against \`examples/counter/budget.json\`, with a
-          tolerance of \`${{ github.event.inputs.tolerance || '10' }}\`%. Soroban metering is
+          tolerance of \`$TOLERANCE\`%. Soroban metering is
           deterministic, so these readings are a property of the contract and the pinned
           SDK rather than of this machine — an SDK or env-host bump is when the baseline
           gets re-recorded, from the workflow's Record run. See the
