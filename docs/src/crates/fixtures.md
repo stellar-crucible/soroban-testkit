@@ -155,7 +155,7 @@ impl TokenTestEnv {
 <div class="tk-grid tk-grid--2">
   <div class="tk-card">
     <span class="tk-card__kicker">Address generation</span>
-    <h3 class="tk-card__title">Behind `testutils`</h3>
+    <h3 class="tk-card__title">Behind <code>testutils</code></h3>
     <p class="tk-card__body"><code>Address::generate</code> is a test-only SDK API. SDK v28 requires <code>use soroban_sdk::testutils::Address as _;</code> plus the <code>testutils</code> feature.</p>
   </div>
   <div class="tk-card tk-card--accent">

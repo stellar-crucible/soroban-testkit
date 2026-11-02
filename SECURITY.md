@@ -4,7 +4,10 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.4.x   | :white_check_mark: |
+| < 0.4   | :x:                |
+
+Only the latest published minor is supported. This crate is pre-1.0, so a minor bump may change public API; security fixes land in a new minor rather than being back-ported to an older one.
 
 ## Reporting a Vulnerability
 

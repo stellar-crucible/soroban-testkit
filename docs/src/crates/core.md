@@ -16,6 +16,7 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `BudgetRead` | Trait implemented by any source `capture()` can read: invocation resources, the SDK budget, the host `Budget` |
 | `BudgetGuard` | Ceilings and a baseline tolerance for one named operation |
 | `BudgetViolation`, `ViolationKind` | The limit a cost broke, rendered as one parseable line |
+| `BudgetMetric` | Which resource a violation was measured against — `Cpu` or `Memory`, and the `cpu_insns` / `mem_bytes` word `as_str()` prints for it |
 | `BudgetBaseline` | Recorded costs per case, loaded from and saved to a JSON file |
 | `budget_guard!` | Macro form of the guard around a single invocation |
 | `DecodedError` | A Soroban error code split into category, meaning and context |
@@ -114,6 +115,8 @@ for (case, cost) in baseline.cases() {
 }
 ```
 
+`load` and `save` are the file-shaped ends; `parse` and `to_json_string` do the same work on a `&str` and a `String`, which is what a CI job that reads the baseline from an artifact needs. `get(case)` reads one recorded cost, `record(case, cost)` adds or replaces one and returns `&mut Self` so calls chain, and `len` / `is_empty` describe the map.
+
 The file format is one version field and one map of costs:
 
 ```json
@@ -193,6 +196,8 @@ let err = DecodedError {
 };
 assert!(format!("{}", err).contains("Insufficient balance"));
 ```
+
+The rest of the module is small. `DecodedError::from_contract_code(code)` decodes a bare `#[contracterror]` integer as read from `Error::get_code()`, with no error value to unpack, and `label()` renders a code the way the host does — `category/code` for a host error, the bare number for a contract one, which is why the output above reads `[12]` rather than `[contract/12]`. On the registry side, `lookup(code)` reads back a name you registered, `decoded_contract(code)` builds a `DecodedError` from it and says so plainly when the code is not registered, and `len` / `is_empty` describe the map. `CATEGORY_CONTRACT` is the exported constant for the `"contract"` category those compare against.
 
 ## Storage snapshots and diffs
 

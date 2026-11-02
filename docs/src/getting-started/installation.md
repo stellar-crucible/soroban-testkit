@@ -56,8 +56,9 @@ soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroba
 
 | Feature | Description |
 |---------|-------------|
-| `proptest` (default) | Enable proptest strategies |
-| `arbitrary` | Enable arbitrary trait implementations |
+| `proptest` (default) | Enable proptest strategies — the whole `strategies` module is gated on it |
+
+An `arbitrary` backend for the fuzzers that drive inputs through that crate instead of proptest is tracked as [#16](https://github.com/stellar-crucible/soroban-testkit/issues/16). There is no flag for it yet.
 
 <div class="tk-callout">
   <span class="tk-callout__title">Versioning</span>

@@ -126,7 +126,7 @@ Never contributed here before? The three `complexity:trivial` rows are the inten
   <div class="tk-problem">
     <span class="tk-problem__label">Mocking</span>
     <span class="tk-problem__body">Lightweight mock contract generation from trait definitions, so stubbing a dependency stops requiring a whole crate.</span>
-    <span class="tk-problem__fix">Tracked as <b>issue #10</b> · <span class="tk-badge tk-badge--brand">High 200 pts</span></span>
+    <span class="tk-problem__fix">Tracked as <a href="https://github.com/stellar-crucible/soroban-testkit/issues/10"><b>issue #10</b></a> · <span class="tk-badge tk-badge--brand">High 200 pts</span></span>
   </div>
 </div>
 

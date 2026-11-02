@@ -23,7 +23,7 @@ The Soroban SDK ships solid primitives — `Env::default()`, `testutils`, event 
   <div class="tk-problem">
     <span class="tk-problem__label">Verbose setup</span>
     <span class="tk-problem__body">Every test manually creates an environment, registers contracts, generates addresses and seeds state.</span>
-    <span class="tk-problem__fix">Solved by <b>soroban-testkit-fixtures</b> — a Foundry-style `setUp` context builder.</span>
+    <span class="tk-problem__fix">Solved by <b>soroban-testkit-fixtures</b> — a Foundry-style <code>setUp</code> context builder.</span>
   </div>
   <div class="tk-problem">
     <span class="tk-problem__label">Raw assertions</span>
@@ -43,7 +43,7 @@ The Soroban SDK ships solid primitives — `Env::default()`, `testutils`, event 
   <div class="tk-problem">
     <span class="tk-problem__label">No property-testing support</span>
     <span class="tk-problem__body">Soroban-aware generators have to be rebuilt from scratch in every project.</span>
-    <span class="tk-problem__fix">Solved by <b>soroban-testkit-generators</b> — `proptest` and `arbitrary` strategies for SDK types.</span>
+    <span class="tk-problem__fix">Solved by <b>soroban-testkit-generators</b> — <code>proptest</code> strategies for SDK types.</span>
   </div>
 </div>
 
@@ -73,8 +73,8 @@ Each crate is independent — adopt one, or combine all four for a complete test
   <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-generators</span>
     <h3 class="tk-card__title">Generate wildly</h3>
-    <p class="tk-card__body">Property-testing strategies for token amounts, ledger sequences and timestamps that respect Soroban limits.</p>
-    <div class="tk-card__meta"><span class="tk-badge">proptest</span><span class="tk-badge">arbitrary</span></div>
+    <p class="tk-card__body">Property-testing strategies for token amounts, ledger sequences, timestamps and 32-byte account or contract addresses that respect Soroban limits.</p>
+    <div class="tk-card__meta"><span class="tk-badge">proptest</span><span class="tk-badge">AddressBytes</span></div>
   </div>
 </div>
 
@@ -85,7 +85,7 @@ soroban-testkit/                    Cargo workspace, resolver 2
 ├── crates/soroban-testkit-core             budget snapshots · error decoding · storage
 ├── crates/soroban-testkit-assert           event matchers · authorization matchers
 ├── crates/soroban-testkit-fixtures         test context · context builder
-└── crates/soroban-testkit-generators       proptest strategies · arbitrary impls
+└── crates/soroban-testkit-generators       proptest strategies · address generators
 ```
 
 ## A First Look
