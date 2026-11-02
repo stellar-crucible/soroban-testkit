@@ -51,12 +51,13 @@ Both properties were exercised rather than assumed. A probe pull request added a
 
 The guard is a diff inspector, not a sandbox and not an antivirus. It is pattern-based, so it catches the shapes above and does not catch a payload that avoids them; a determined author who knows the rules can write Rust that exfiltrates without using any pattern on the list. What that author cannot do is get it merged past a required check that a maintainer has to look at, or get it published, since publishing is manual and version-pinned.
 
-Two known gaps, stated rather than papered over:
+One known gap, stated rather than papered over:
 
-- **Third-party actions are not pinned to commit SHAs.** `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2` and `EmbarkStudios/cargo-deny-action@v2` are mutable tag and branch refs. Two things hold the list closed: `CI integrity` allowlists exactly those three and requires anything else to be either first-party or a 40-character SHA, and the repository's Actions settings allow only GitHub-owned actions plus those same three patterns, so a workflow the audit somehow missed would still be refused at runtime. Both are edited only through files the guard protects. What neither addresses is that the three already there can change upstream without a diff in this repository. Pinning them is the obvious next change.
 - **The gate inspects the change, not the dependency tree's behaviour.** A malicious version of a legitimate crate is `cargo-deny`'s and the registry's problem, not the guard's. It has no checksum to compare against because this repository does not vendor anything.
 
-GitHub secret scanning and push protection are enabled on the repository. The default token permission for a workflow is read-only, workflows cannot approve pull request reviews, and the runner for a pull request from a fork gets no secrets — there are none stored to give it.
+Every third-party action is pinned to a 40-character commit SHA, with the tag it came from in a trailing comment. `CI integrity` enforces it: a third-party ref that is not a SHA is a failure, first-party `actions/*` semver tags are accepted, and there is no allowlist of permitted mutable refs to add to — an allowlist would have been the weak point, since a pull request could widen it. `dependabot.yml` declares a `github-actions` ecosystem, so the pins are bumped on a weekly schedule instead of rotting. Note what this does and does not fix: pinning `dtolnay/rust-toolchain` freezes the action's own code, not the compiler, because rustup resolves `stable` at install time.
+
+GitHub secret scanning, push protection and Dependabot vulnerability alerts are enabled on the repository. The default token permission for a workflow is read-only, workflows cannot approve pull request reviews, and the runner for a pull request from a fork gets no secrets — there are none stored to give it.
 
 ## Scope
 

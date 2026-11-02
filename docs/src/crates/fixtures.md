@@ -161,6 +161,6 @@ impl TokenTestEnv {
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">Roadmap</span>
     <h3 class="tk-card__title">Seeded state</h3>
-    <p class="tk-card__body">Registering contracts and seeding their state from the builder would turn the setup above into one line. Tracked as <a href="https://github.com/stellar-crucible/soroban-testkit/issues/6">issue #6</a>.</p>
+    <p class="tk-card__body">Registering contracts and seeding their state from the builder would turn the setup above into one line.</p>
   </div>
 </div>
