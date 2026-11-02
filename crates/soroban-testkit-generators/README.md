@@ -1,6 +1,6 @@
 # soroban-testkit-generators
 
-proptest strategies that produce Soroban values inside the ranges the chain actually accepts: token amounts, ledger sequences, timestamps.
+proptest strategies that produce Soroban values inside the ranges the chain actually accepts: token amounts, ledger sequences, timestamps and account or contract addresses.
 
 ```rust
 use proptest::prelude::*;
