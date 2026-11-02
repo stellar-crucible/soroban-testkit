@@ -13,7 +13,15 @@ all-features = true
 yanked = "deny"
 unmaintained = "workspace"
 git-fetch-with-cli = true
-ignore = []
+ignore = [
+    # soroban-env-host 28 pins k256 0.13 -> elliptic-curve 0.13 -> crypto-bigint 0.5,
+    # and crypto-bigint 0.5 has no compatible release that carries the fix
+    # (RUSTSEC-2026-0387 lands in 0.7.6). The advisory is about constant-time
+    # arithmetic on secret integers; the host's secp256k1 path recovers a public
+    # key from a signature, and this toolkit only runs in test environments.
+    # Drop this ignore when soroban-env-host moves to crypto-bigint >= 0.7.6.
+    "RUSTSEC-2026-0387",
+]
 
 [licenses]
 version = 2
