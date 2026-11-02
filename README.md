@@ -52,16 +52,16 @@ Add to your contract's `Cargo.toml`, from [crates.io](https://crates.io):
 
 ```toml
 [dev-dependencies]
-soroban-testkit-fixtures = "0.3.0"
-soroban-testkit-assert = "0.3.0"
+soroban-testkit-fixtures = "0.4.0"
+soroban-testkit-assert = "0.4.0"
 ```
 
 If you would rather pin the source, the same crates resolve from the release tag — a tag always points at a commit whose CI is green:
 
 ```toml
 [dev-dependencies]
-soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0" }
-soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.3.0" }
+soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.0" }
+soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.0" }
 ```
 
 ### Test Fixtures

@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-02
+
+The generators crate grows past amounts and ledger values: Soroban principals a property test can actually hand to a contract, which is what access-control invariants need. The documentation caught up with the suite at the same time — counts, the roadmap, and a guide section for the new strategies.
+
 ### Added
 - `soroban-testkit-generators`: `address()`, `account_address()`, `contract_address()` and `address_of_type()` generate valid 32-byte Soroban addresses in both ed25519 account and contract format. `AddressBytes` keeps the format tag and converts to a host `Address`, and a process-wide nonce makes every address unique within a run; tests cover validity, type filtering and uniqueness ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7))
+- 6 more tests in `soroban-testkit-generators`, taking the workspace suite to 159 running plus the 2 `#[ignore]`d budget jobs
+- A `Generating principals` section in the property-testing guide, so the strategies are reachable from the guide a reader lands on and not only from the crate reference
+- A `Community` section in the README and a link beside the documentation line, pointing at the project's Telegram channel — release notices and discussion now have somewhere to go that is not the issue tracker
 
 ### Changed
-- **Installation leads with the registry.** `soroban-testkit-core`, `-assert`, `-fixtures` and `-generators` are published on [crates.io](https://crates.io) at `0.3.0`, so the README, the installation page and the property-testing guide now give a version requirement first and the tagged Git pin as the alternative for anyone who wants to pin the source commit. Checked from a clean project whose only access to the toolkit is the registry: it resolves, compiles and its tests pass ([#34](https://github.com/stellar-crucible/soroban-testkit/issues/34))
+- **Installation leads with the registry.** `soroban-testkit-core`, `-assert`, `-fixtures` and `-generators` are on [crates.io](https://crates.io), so the README, the installation page and the property-testing guide give a version requirement first and the tagged Git pin as the alternative for anyone who wants to pin the source commit. Checked from a clean project whose only access to the toolkit is the registry: it resolves, compiles and its tests pass ([#34](https://github.com/stellar-crucible/soroban-testkit/issues/34))
+- README, `CONTRIBUTING.md` and the contributing guide quote the suite as it is rather than as it was before the generators work, and the roadmap moves the `Address` strategies row out of next-cycle work and into a shipped card
 
 ## [0.3.0] - 2026-10-09
 
@@ -99,6 +107,8 @@ First release, published for the Stellar Wave funding program.
 - Crate manifest metadata: keywords, categories and documentation URLs
 - Drips Wave complexity labels (trivial/medium/high) and labelled issues
 
+[0.4.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.4.0
+[0.3.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.2.0
 [0.1.1]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.1.0
