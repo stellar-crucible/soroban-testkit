@@ -21,7 +21,7 @@ We aim to acknowledge reports within 48 hours and provide an initial assessment 
 
 ## What runs on every pull request
 
-`main` is protected. Four required checks have to report before a pull request can merge, and three of them are about the change being allowed in at all rather than about whether it builds.
+`main` is protected. Six required checks have to report before a pull request can merge. Four of them are listed below; the other two, `check` and `Docs build`, are ordinary build checks, and `Malware guard` is a `needs:` dependency of both, so they do not start until it has passed.
 
 | Check | Workflow | What it does |
 | ----- | -------- | ------------ |
@@ -49,10 +49,10 @@ The guard is a diff inspector, not a sandbox and not an antivirus. It is pattern
 
 Two known gaps, stated rather than papered over:
 
-- **Third-party actions are not pinned to commit SHAs.** `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2` and `EmbarkStudios/cargo-deny-action@v2` are mutable tag and branch refs. `CI integrity` allowlists exactly those three and requires anything else to be either first-party or a 40-character SHA, so the list cannot grow without editing a file the guard protects — but the three already there can change upstream without a diff in this repository. Pinning them is the obvious next change.
+- **Third-party actions are not pinned to commit SHAs.** `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2` and `EmbarkStudios/cargo-deny-action@v2` are mutable tag and branch refs. Two things hold the list closed: `CI integrity` allowlists exactly those three and requires anything else to be either first-party or a 40-character SHA, and the repository's Actions settings allow only GitHub-owned actions plus those same three patterns, so a workflow the audit somehow missed would still be refused at runtime. Both are edited only through files the guard protects. What neither addresses is that the three already there can change upstream without a diff in this repository. Pinning them is the obvious next change.
 - **The gate inspects the change, not the dependency tree's behaviour.** A malicious version of a legitimate crate is `cargo-deny`'s and the registry's problem, not the guard's. It has no checksum to compare against because this repository does not vendor anything.
 
-GitHub secret scanning and push protection are enabled on the repository, and the Actions runner for a pull request from a fork gets a read-only `GITHUB_TOKEN` and no secrets — there are none stored to give it.
+GitHub secret scanning and push protection are enabled on the repository. The default token permission for a workflow is read-only, workflows cannot approve pull request reviews, and the runner for a pull request from a fork gets no secrets — there are none stored to give it.
 
 ## Scope
 
