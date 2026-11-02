@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Three `complexity:trivial` funded issues, so there is work below the current medium floor: enumerate a struct event's field names ([#50](https://github.com/stellar-crucible/soroban-testkit/issues/50)), a `TestContext::user(index)` accessor that explains its own panic ([#51](https://github.com/stellar-crucible/soroban-testkit/issues/51)), and a troubleshooting page for the failures that cost a newcomer the most time ([#52](https://github.com/stellar-crucible/soroban-testkit/issues/52))
+- A `Your first pull request` section in CONTRIBUTING, and the `complexity:trivial` tier named first in the roadmap's next-cycle table and in the docs contributing flow, each linking to the filtered tracker view
+
+### Changed
+- `Questions?` in CONTRIBUTING and the "Talk to a human first" callout on the docs contributing page now point at the project's Telegram channel as the place to ask before opening a pull request that might be rescoped ([#46](https://github.com/stellar-crucible/soroban-testkit/pull/46))
+
 ## [0.4.0] - 2026-11-02
 
 The generators crate grows past amounts and ledger values: Soroban principals a property test can actually hand to a contract, which is what access-control invariants need. The documentation caught up with the suite at the same time — counts, the roadmap, and a guide section for the new strategies.
