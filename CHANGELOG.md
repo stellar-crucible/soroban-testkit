@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `Questions?` in CONTRIBUTING and the "Talk to a human first" callout on the docs contributing page now point at the project's Telegram channel as the place to ask before opening a pull request that might be rescoped ([#46](https://github.com/stellar-crucible/soroban-testkit/pull/46))
+- The roadmap's next-cycle table now carries every open funded issue: `assert_storage_tier!` ([#13](https://github.com/stellar-crucible/soroban-testkit/issues/13)) was open and labelled but missing from it, so a reader comparing the page against the tracker would have concluded it was not claimable
 
 ## [0.4.0] - 2026-11-02
 
