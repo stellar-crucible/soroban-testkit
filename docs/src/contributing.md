@@ -21,11 +21,11 @@ Contributions of every size are welcome. The repository guide — [CONTRIBUTING.
   </li>
   <li>
     <h4>Branch, commit, check</h4>
-    <p>Run <code>cargo fmt --all --check</code> and <code>cargo clippy --workspace --all-targets --locked -- -D warnings</code> locally. <code>main</code> is protected: <code>check</code>, <code>Docs build</code> and <code>Supply chain audit</code> must all be green before a pull request can merge. A fourth job, <code>Budget baseline</code>, runs on any pull request that touches the counter example or the budget code — it re-measures the hot paths and comments the numbers on the pull request.</p>
+    <p>Run <code>cargo fmt --all --check</code> and <code>cargo clippy --workspace --all-targets --locked -- -D warnings</code> locally. <code>main</code> is protected: <code>Malware guard</code>, <code>Secret scan</code>, <code>CI integrity</code>, <code>check</code>, <code>Docs build</code> and <code>Supply chain audit</code> must all be green before a pull request can merge. <code>Malware guard</code> is a dependency of the last three, so nothing compiles your Rust until it has passed — <code>cargo test</code> executes a <code>build.rs</code> in your diff whether or not anyone has read it yet. Another job, <code>Budget baseline</code>, runs on any pull request that touches the counter example or the budget code — it re-measures the hot paths and comments the numbers on the pull request.</p>
   </li>
   <li>
     <h4>Open a pull request</h4>
-    <p>Reference the issue, describe what changed and why, and include the test evidence for behaviour changes.</p>
+    <p>Reference the issue, describe what changed and why, and include the test evidence for behaviour changes. If <code>Malware guard</code> goes red, read what it printed: it names the file, the line and the rule. An issue off the tracker will not come near it, and a deliberate change that does — a build script, an edit to CI — is allowed once you have explained it and a maintainer has applied the <code>security-override</code> label. Do not reword the line it caught to slip past; the label leaves a record and a worked-around check leaves nothing.</p>
   </li>
 </ol>
 
