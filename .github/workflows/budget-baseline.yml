@@ -52,7 +52,6 @@ jobs:
       # gate was still red. Same inspector, same base-branch copy, same
       # override label.
       - name: Inspect the change before compiling it
-        id: inspect
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -136,10 +135,8 @@ jobs:
 
       # Forks cannot write pull request comments, so a missing permission is
       # reported rather than turned into a red build on top of the drift itself.
-      # A change the inspector blocked never reached cargo, so there are no
-      # numbers to post — and "accepted" over an empty table would be a lie.
       - name: Report the numbers on the pull request
-        if: always() && github.event_name == 'pull_request' && steps.inspect.outcome != 'failure'
+        if: always() && github.event_name == 'pull_request'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -147,8 +144,21 @@ jobs:
           TOLERANCE: ${{ github.event.inputs.tolerance || '10' }}
         run: |
           marker='<!-- soroban-testkit-budget-baseline -->'
-          numbers=$(grep -E '^(BUDGET |BUDGET_SUMMARY )' budget.log || echo 'no measurements reported')
           status='accepted'
+          if [ ! -s budget.log ]; then
+            # Covers every reason the measurement step never ran: the inspector
+            # blocked the change, the toolchain failed, or the job was cancelled
+            # partway. A missing table is not a pass, and this comment is looked
+            # up and overwritten by the marker, so a run that goes silent would
+            # leave whatever the previous run said standing on the pull request.
+            body="$marker
+          ## Budget baseline (not measured)
+
+          No measurement was taken, so there is nothing to compare against the
+          baseline. Either the change was blocked before it was compiled or the
+          build did not reach the measurement step. This is not a pass."
+          else
+          numbers=$(grep -E '^(BUDGET |BUDGET_SUMMARY )' budget.log || echo 'no measurements reported')
           if grep -q '^BUDGET kind=' budget.log; then status='**rejected**'; fi
           body="$marker
           ## Budget baseline ($status)
@@ -163,6 +173,7 @@ jobs:
           SDK rather than of this machine — an SDK or env-host bump is when the baseline
           gets re-recorded, from the workflow's Record run. See the
           [budget testing guide](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html)."
+          fi
           existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
             --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -1)
           if [ -n "$existing" ]; then
