@@ -56,6 +56,11 @@ This project participates in the [Stellar Wave](https://www.drips.network/wave/s
   <p>If an issue is not merged inside the monthly cycle it carries over with its label intact — picking it up late still pays.</p>
 </div>
 
+<div class="tk-callout">
+  <span class="tk-callout__title">Talk to a human first</span>
+  <p>Unsure whether an issue is the right size, or stuck on a host behaviour that looks wrong? The <a href="https://t.me/+_tukd5_0gtM1MzA0">Telegram channel</a> is where the maintainer reads questions — asking there costs a minute and saves a pull request that has to be rescoped.</p>
+</div>
+
 <div class="tk-cta">
   <p>Ready to start? The tracker lists every open task with its complexity label and acceptance criteria.</p>
   <a class="tk-btn tk-btn--primary" href="https://github.com/stellar-crucible/soroban-testkit/issues">Browse issues</a>

@@ -78,4 +78,4 @@ Move the `Unreleased` CHANGELOG entries into a `[X.Y.Z]` section with the date i
 
 ## Questions?
 
-Open an issue or reach out on the [Stellar Developer Discord](https://discord.gg/stellardev).
+The [Telegram channel](https://t.me/+_tukd5_0gtM1MzA0) is where the maintainer reads questions — ask there before opening a pull request you suspect will be rescoped. For anything about the funding programme itself, see the [Stellar Wave](https://www.drips.network/wave/stellar) page and the [Stellar Developer Discord](https://discord.gg/stellardev).
