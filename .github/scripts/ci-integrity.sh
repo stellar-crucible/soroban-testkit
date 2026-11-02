@@ -19,12 +19,20 @@ set -uo pipefail
 RED=$'\033[31m'; YEL=$'\033[33m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; OFF=$'\033[0m'
 
 MODE=report
-OVERRIDE=false
-
 if [ "${GITHUB_EVENT_NAME:-}" = pull_request ]; then
   MODE=enforce
-  if jq -e '[.pull_request.labels[]?.name] | index("security-override")' \
-        "${GITHUB_EVENT_PATH:-/dev/null}" >/dev/null 2>&1; then
+fi
+
+# See the note in malware-guard.sh: the label is resolved by the workflow
+# through the API, because a re-run replays the payload from the original
+# trigger and a label applied afterwards would not be in it. The payload is the
+# fallback for a local run.
+OVERRIDE="${SECURITY_OVERRIDE:-}"
+if [ -z "$OVERRIDE" ]; then
+  OVERRIDE=false
+  if [ "$MODE" = enforce ] \
+     && jq -e '[.pull_request.labels[]?.name] | index("security-override")' \
+          "${GITHUB_EVENT_PATH:-/dev/null}" >/dev/null 2>&1; then
     OVERRIDE=true
   fi
 fi

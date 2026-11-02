@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 # Both jobs run the copy of their script stored on the base branch, not the one
 # in the pull request, and neither compiles anything from the change under
@@ -25,6 +26,9 @@ jobs:
           fetch-depth: 0
 
       - name: Take the inspector from the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -eu
           path=.github/scripts/secret-scan.sh
@@ -35,6 +39,18 @@ jobs:
             cp "$path" "$RUNNER_TEMP/inspector.sh"
             echo "::warning::$BASE_BRANCH has no $path yet, so this run inspects with the copy from the change under inspection. That only happens on the pull request that introduces it."
           fi
+
+          # Read through the API rather than the event payload: a re-run replays
+          # the payload from the original trigger, so a label applied afterwards
+          # would not be in it and the escape hatch would only work once.
+          override=false
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != null ]; then
+            if gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.labels[].name' \
+               | grep -qx security-override; then
+              override=true
+            fi
+          fi
+          echo "SECURITY_OVERRIDE=$override" >> "$GITHUB_ENV"
 
       - name: Scan the added lines for credentials
         run: bash "$RUNNER_TEMP/inspector.sh"
@@ -48,6 +64,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Take the auditor from the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -eu
           path=.github/scripts/ci-integrity.sh
@@ -58,6 +77,15 @@ jobs:
             cp "$path" "$RUNNER_TEMP/auditor.sh"
             echo "::warning::$BASE_BRANCH has no $path yet, so this run audits with the copy from the change under inspection. That only happens on the pull request that introduces it."
           fi
+
+          override=false
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != null ]; then
+            if gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.labels[].name' \
+               | grep -qx security-override; then
+              override=true
+            fi
+          fi
+          echo "SECURITY_OVERRIDE=$override" >> "$GITHUB_ENV"
 
       - name: Audit the workflow files
         run: bash "$RUNNER_TEMP/auditor.sh"
