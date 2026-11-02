@@ -41,15 +41,12 @@ fail=(); warn=()
 
 clip() { printf '%s' "$1" | tr -d '\r' | cut -c1-160; }
 
-# Third-party actions this repository already depends on. Adding one means
-# editing this list, and this file lives under .github/scripts, which the
-# Malware guard refuses to let a pull request change without the
-# security-override label.
-ALLOWED_THIRD_PARTY=(
-  'dtolnay/rust-toolchain@(stable|beta|nightly|[0-9]+\.[0-9]+(\.[0-9]+)?)'
-  'Swatinem/rust-cache@v[0-9]+'
-  'EmbarkStudios/cargo-deny-action@v[0-9]+'
-)
+# Every third-party action in this repository is pinned to a commit SHA, so
+# there is no allowlist of mutable refs to consult. An allowlist would be the
+# weak point: it would let any pull request introduce a moving third-party
+# dependency simply by adding a line here, and `dependabot.yml` declares a
+# github-actions ecosystem, so the pins get bumped on a schedule rather than
+# rotting.
 
 shopt -s nullglob
 files=(.github/workflows/*.yml .github/workflows/*.yaml)
@@ -152,13 +149,7 @@ for f in "${files[@]}"; do
     if printf '%s' "$ref" | grep -qE '^[^@/]+/[^@/]+@[0-9a-f]{40}$'; then
       continue   # pinned to a commit
     fi
-    ok=false
-    for allowed in "${ALLOWED_THIRD_PARTY[@]}"; do
-      if printf '%s' "$ref" | grep -qE "^$allowed$"; then ok=true; break; fi
-    done
-    if [ "$ok" = false ]; then
-      fail+=("$f: uses $ref, a mutable third-party ref. Pin it to a 40-character commit SHA, or add it to ALLOWED_THIRD_PARTY in this script with a reason")
-    fi
+    fail+=("$f: uses $ref, a mutable third-party ref. Pin it to the 40-character commit SHA the tag points at, with the tag in a trailing comment so the pin stays readable")
   done < <(grep -hoE '^[[:space:]]*(- )?uses:[[:space:]]*[^[:space:]#]+' "$f" \
              | sed -E 's/^[[:space:]]*(- )?uses:[[:space:]]*//')
 
