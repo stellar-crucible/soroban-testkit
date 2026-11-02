@@ -92,6 +92,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>examples/counter/budget.json</code> commits the counter's hot-path costs, one ignored test records them and another enforces them, and the <code>Budget baseline</code> workflow runs the check on a pinned runner and reports every case on the pull request — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/14">#14</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">soroban-testkit-generators</span>
+    <h3 class="tk-card__title">Address strategies</h3>
+    <p class="tk-card__body"><code>address()</code>, <code>account_address()</code>, <code>contract_address()</code> and <code>address_of_type()</code> generate valid 32-byte Soroban principals as an <code>AddressBytes</code> that carries its format tag and converts straight to a host <code>Address</code>, with a process-wide nonce keeping every address in a run unique — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/7">#7</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
     <h3 class="tk-card__title">Published on crates.io</h3>
     <p class="tk-card__body">All four crates are live on the registry as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, with <code>0.3.0</code> as the current stable release, so a consumer adds a version requirement instead of a Git pin. The release tag stays available for anyone who wants to pin the source commit its CI went green on.</p>
@@ -105,7 +110,7 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
 | Assertions | `assert_event_emitted!` macro with topic and data matching ([#1](https://github.com/stellar-crucible/soroban-testkit/issues/1)) | `complexity:high` |
 | Assertions | `assert_auth_matches!` macro ([#2](https://github.com/stellar-crucible/soroban-testkit/issues/2)) | `complexity:medium` |
 | Fixtures | Contract registration in the builder ([#6](https://github.com/stellar-crucible/soroban-testkit/issues/6)) | `complexity:medium` |
-| Generators | `Address` strategies ([#7](https://github.com/stellar-crucible/soroban-testkit/issues/7)) and XDR-compatible values ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:medium` / `high` |
+| Generators | XDR-compatible value generation ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
 | Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
 

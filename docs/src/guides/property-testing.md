@@ -54,6 +54,35 @@ proptest! {
   <p>Every generated case builds a real <code>Env</code> and executes on the host. If the suite slows down, reduce cases with <code>#![proptest_config(ProptestConfig::with_cases(64))]</code> before you narrow the strategy ranges.</p>
 </div>
 
+## Generating principals
+
+Access-control properties need callers, and a caller in Soroban is an address rather than a string. `address()` generates a valid 32-byte principal in either format, `account_address()` and `contract_address()` pin one, and `address_of_type(AddressType::Account)` takes the format as an argument. Each yields an `AddressBytes`, which becomes a host value through `to_address(&env)`.
+
+```rust
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn only_the_caller_moves_their_balance(
+        caller in strategies::account_address(),
+        amount in strategies::token_amount(),
+    ) {
+        let ctx = TestContextBuilder::new().build();
+        let caller = caller.to_address(&ctx.env);
+        // ... register the contract, fund `caller`, then assert that the same
+        //     call from a different address fails or records no authorization
+    }
+}
+```
+
+Generating the *contract* form is what catches an address-format assumption — a `C...` id where the code only ever saw a `G...` account. The full list with return types is in the [strategy reference](../crates/generators.html).
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Uniqueness is per run, not per seed</span>
+  <p>Every generated address carries a process-wide nonce, so two calls in one test run never collide even when their random prefixes do. The trade-off is that a value depends on generation order: judge a failing case by the bytes proptest prints rather than by replaying a seed alone.</p>
+</div>
+
 ## When to use property testing
 
 <div class="tk-grid tk-grid--2">
