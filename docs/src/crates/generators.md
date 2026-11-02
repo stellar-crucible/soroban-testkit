@@ -1,10 +1,10 @@
 # soroban-testkit-generators
 
-Soroban-aware property-testing strategies for `proptest` and `arbitrary`, so generated inputs respect the ranges real contracts accept.
+Soroban-aware property-testing strategies for `proptest`, so generated inputs respect the ranges real contracts accept.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default) · arbitrary</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Module</span><span class="tk-spec__value">strategies</span></div>
 </div>
 
@@ -42,8 +42,11 @@ proptest! {
 
 Both Soroban address formats are 32 opaque bytes, so every address strategy
 returns an `AddressBytes` that carries those bytes *and* the format they were
-generated as. `as_bytes()` reads the raw value, and `to_address(&env)` turns it
-into the `Address` a contract call expects.
+generated as. `as_bytes()` borrows the raw value, `into_bytes()` hands over
+ownership of the `[u8; 32]`, `address_type()` reads the format tag back, and
+`to_address(&env)` turns it into the `Address` a contract call expects.
+`ScAddress::from(address_bytes)` gives the XDR form instead, which is what you
+want when comparing against a ledger value rather than calling a contract.
 
 ```rust
 use proptest::prelude::*;
@@ -106,12 +109,12 @@ fn transfer_args() -> impl Strategy<Value = (i128, i128)> {
 <div class="tk-grid tk-grid--2">
   <div class="tk-card">
     <span class="tk-card__kicker">Feature flags</span>
-    <h3 class="tk-card__title">Opt in per backend</h3>
-    <p class="tk-card__body">Enable <code>proptest</code>, <code>arbitrary</code>, or both. Unused backends stay out of your dependency graph.</p>
+    <h3 class="tk-card__title">One backend today</h3>
+    <p class="tk-card__body"><code>proptest</code> is the default and currently the only backend, and it gates the whole <code>strategies</code> module — turn off default features and the crate compiles to nothing rather than to a second generator family.</p>
   </div>
   <div class="tk-card tk-card--accent">
-    <span class="tk-card__kicker">Good first issue</span>
-    <h3 class="tk-card__title">More strategies</h3>
-    <p class="tk-card__body">Symbol and <code>BytesN&lt;32&gt;</code> generators are labelled <span class="tk-badge tk-badge--brand">Medium 150 pts</span> on the issue tracker.</p>
+    <span class="tk-card__kicker">Open work</span>
+    <h3 class="tk-card__title">An <code>arbitrary</code> backend</h3>
+    <p class="tk-card__body"><a href="https://github.com/stellar-crucible/soroban-testkit/issues/16">#16</a> adds <code>Arbitrary</code> implementations behind an <code>arbitrary</code> flag, for the fuzzers that drive inputs through that crate instead of proptest — <span class="tk-badge tk-badge--brand">Medium 150 pts</span>. Until it lands there is no such flag.</p>
   </div>
 </div>

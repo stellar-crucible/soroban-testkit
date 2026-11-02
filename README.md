@@ -212,6 +212,12 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 This project participates in the [Stellar Wave](https://www.drips.network/wave/stellar) program via [Drips](https://www.drips.network). Check our [issues](https://github.com/stellar-crucible/soroban-testkit/issues) for open tasks with bounty labels.
 
+## Contributors
+
+Everyone with a merged pull request appears in the [contributors graph](https://github.com/stellar-crucible/soroban-testkit/graphs/contributors), which GitHub derives from commit authorship. This README deliberately does not repeat that list — a hand-maintained one goes stale and leaves people out, and the graph cannot.
+
+Attribution for the work itself lives in [CHANGELOG.md](CHANGELOG.md): every entry links the issue behind the change, and the pull request that closed it names its author.
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
