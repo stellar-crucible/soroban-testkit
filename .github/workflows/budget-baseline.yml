@@ -37,8 +37,47 @@ jobs:
   budget:
     name: Compare hot-path costs with the committed baseline
     runs-on: ubuntu-latest
+    env:
+      BASE_BRANCH: ${{ github.base_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # This job compiles the change under review, so it has to inspect it
+      # first — and `needs:` cannot reach the guard job in ci.yml across a
+      # workflow boundary. A pull request that only has to touch
+      # `examples/counter/**` or `crates/soroban-testkit-core/src/budget.rs`
+      # would otherwise get its own `build.rs` executed here while the required
+      # gate was still red. Same inspector, same base-branch copy, same
+      # override label.
+      - name: Inspect the change before compiling it
+        id: inspect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          path=.github/scripts/malware-guard.sh
+          if git fetch --no-tags --depth=1 origin "$BASE_BRANCH" \
+             && git show "FETCH_HEAD:$path" > "$RUNNER_TEMP/inspector.sh" 2>/dev/null; then
+            echo "inspector taken from $BASE_BRANCH"
+          else
+            cp "$path" "$RUNNER_TEMP/inspector.sh"
+            echo "::warning::$BASE_BRANCH has no $path yet, so this run inspects with the copy from the change under inspection."
+          fi
+
+          override=false
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != null ]; then
+            if gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.labels[].name' \
+               | grep -qx security-override; then
+              override=true
+            fi
+          fi
+          echo "SECURITY_OVERRIDE=$override" >> "$GITHUB_ENV"
+
+      - name: Scan the diff
+        run: bash "$RUNNER_TEMP/inspector.sh"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -97,8 +136,10 @@ jobs:
 
       # Forks cannot write pull request comments, so a missing permission is
       # reported rather than turned into a red build on top of the drift itself.
+      # A change the inspector blocked never reached cargo, so there are no
+      # numbers to post — and "accepted" over an empty table would be a lie.
       - name: Report the numbers on the pull request
-        if: always() && github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request' && steps.inspect.outcome != 'failure'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
