@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-02
+
+No new API. This release stops the toolkit claiming a capability it does not have — `soroban-testkit-generators` advertised an `arbitrary` backend in its published description, its manifest and five places in the documentation, while not one line of Rust was gated on the flag — and gives a first-time contributor somewhere to start, since the funded tracker's smallest task was previously `complexity:medium`.
+
 ### Added
-- Three `complexity:trivial` funded issues, so there is work below the current medium floor: enumerate a struct event's field names ([#50](https://github.com/stellar-crucible/soroban-testkit/issues/50)), a `TestContext::user(index)` accessor that explains its own panic ([#51](https://github.com/stellar-crucible/soroban-testkit/issues/51)), and a troubleshooting page for the failures that cost a newcomer the most time ([#52](https://github.com/stellar-crucible/soroban-testkit/issues/52))
+- Three `complexity:trivial` funded issues, so there is work below the medium floor: enumerate a struct event's field names ([#50](https://github.com/stellar-crucible/soroban-testkit/issues/50)), a `TestContext::user(index)` accessor that explains its own panic ([#51](https://github.com/stellar-crucible/soroban-testkit/issues/51)), and a troubleshooting page for the failures that cost a newcomer the most time ([#52](https://github.com/stellar-crucible/soroban-testkit/issues/52))
 - A `Your first pull request` section in CONTRIBUTING, and the `complexity:trivial` tier named first in the roadmap's next-cycle table and in the docs contributing flow, each linking to the filtered tracker view
 - A `Contributors` section in the README, pointing at the contributors graph GitHub derives from commit authorship rather than a hand-maintained list that would go stale
 
@@ -17,12 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The roadmap's next-cycle table now carries every open funded issue: `assert_storage_tier!` ([#13](https://github.com/stellar-crucible/soroban-testkit/issues/13)) was open and labelled but missing from it, so a reader comparing the page against the tracker would have concluded it was not claimable
 
 ### Removed
-- The `arbitrary` feature from `soroban-testkit-generators`, along with the dependency it pulled in and the crate description that advertised it. The flag was declared in the manifest and promised in three places in the documentation, but not one line of Rust was gated on it — enabling it added a dependency and exposed no API. `Arbitrary` implementations are tracked as [#16](https://github.com/stellar-crucible/soroban-testkit/issues/16), which will reintroduce the flag with something behind it
+- The `arbitrary` feature from `soroban-testkit-generators`, along with the dependency it pulled in and the crate description that advertised it. Enabling the flag added a dependency to a consumer's graph and exposed no API. `Arbitrary` implementations are tracked as [#16](https://github.com/stellar-crucible/soroban-testkit/issues/16), which will reintroduce the flag with something behind it — `Cargo.lock` keeps the package, since `soroban-sdk`, `soroban-env-common` and `stellar-xdr` still depend on it transitively
 
 ### Fixed
 - Every documentation surface that promised an `arbitrary` backend now says the truth: the generators reference page, the installation page's feature-flag table, and the introduction's problem card, crate card and architecture tree. The introduction's generators card also now names the address strategies added in 0.4.0, which it had not picked up
 - The generators reference page no longer tells readers that Symbol and `BytesN<32>` generators are labelled `complexity:medium` on the tracker. No such issue exists, and a contributor following that card would have found nothing to claim
-- `SECURITY.md` listed `0.1.x` as the only supported version while the workspace is at `0.4.0`, and `0.1.x` was never published to the registry. It now names the latest published minor and states that, being pre-1.0, fixes land in a new minor rather than being back-ported
+- `SECURITY.md` listed `0.1.x` as the only supported version while the crates were published at `0.4.0`, and `0.1.x` never reached the registry at all. It now names the latest published minor and states that, being pre-1.0, fixes land in a new minor rather than being back-ported
 - The core reference page now names `BudgetMetric` — the type of `BudgetViolation.metric`, used in prose and never listed — and documents the `BudgetBaseline` and `ErrorRegistry` accessors that were public but unmentioned
 - Three inline-code spans inside the docs' custom HTML blocks were written with markdown backticks, which mdBook passes through literally rather than rendering: the introduction's fixtures and generators problem cards, and the `testutils` card title on the fixtures reference page. They now use `<code>` like every other card in the book
 - The roadmap's *Later* card referred to the mock contract generator as bare text "issue #10" while every other issue reference on the page is a link
@@ -127,6 +131,7 @@ First release, published for the Stellar Wave funding program.
 - Crate manifest metadata: keywords, categories and documentation URLs
 - Drips Wave complexity labels (trivial/medium/high) and labelled issues
 
+[0.4.1]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.4.1
 [0.4.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.4.0
 [0.3.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/stellar-crucible/soroban-testkit/releases/tag/v0.2.0

@@ -14,7 +14,7 @@ Enable the `proptest` feature:
 
 ```toml
 [dev-dependencies]
-soroban-testkit-generators = { version = "0.4.0", features = ["proptest"] }
+soroban-testkit-generators = { version = "0.4.1", features = ["proptest"] }
 proptest = "1"
 ```
 

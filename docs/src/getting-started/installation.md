@@ -13,20 +13,20 @@ Add only the crates your test suite needs. All four are published on [crates.io]
 
 ```toml
 [dev-dependencies]
-soroban-testkit-core = "0.4.0"
-soroban-testkit-assert = "0.4.0"
-soroban-testkit-fixtures = "0.4.0"
-soroban-testkit-generators = { version = "0.4.0", features = ["proptest"] }
+soroban-testkit-core = "0.4.1"
+soroban-testkit-assert = "0.4.1"
+soroban-testkit-fixtures = "0.4.1"
+soroban-testkit-generators = { version = "0.4.1", features = ["proptest"] }
 ```
 
 The same set pinned to the release tag:
 
 ```toml
 [dev-dependencies]
-soroban-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.0" }
-soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.0" }
-soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.0" }
-soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.0", features = ["proptest"] }
+soroban-testkit-core = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.1" }
+soroban-testkit-assert = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.1" }
+soroban-testkit-fixtures = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.1" }
+soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroban-testkit", tag = "v0.4.1", features = ["proptest"] }
 ```
 
 ## Install steps
