@@ -75,11 +75,15 @@ for f in "${files[@]}"; do
 
   # --- Least privilege ----------------------------------------------------
 
-  if ! grep -qE '^permissions:' "$f"; then
-    fail+=("$f: has no top-level permissions block, so it inherits the repository default instead of asking for what it needs")
+  # A permissions key at any level counts; what matters is that the workflow
+  # asks for something instead of inheriting the repository default.
+  if ! grep -qE '^[[:space:]]*permissions:' "$f"; then
+    fail+=("$f: declares no permissions block, so it inherits the repository default instead of asking for what it needs")
   fi
 
-  if grep -qE '^[[:space:]]*pull_request:' "$f"; then
+  # pull_request_target counts as pull-request-triggered too: it is the more
+  # dangerous of the two, so its scopes matter even though it is already failed.
+  if grep -qE '^[[:space:]]*pull_request(_target)?:' "$f"; then
     while IFS= read -r scope; do
       [ -n "$scope" ] || continue
       fail+=("$f: grants $scope on a workflow triggered by pull_request, which runs code from a fork")
@@ -109,10 +113,10 @@ for f in "${files[@]}"; do
   while IFS= read -r line; do
     [ -n "$line" ] && fail+=("$f: interpolates an event field into a shell script — $(clip "$line")")
   done < <(awk '
-    function indented(l,   m) { match(l, /^[ ]*/); return RLENGTH }
+    function indented(l) { match(l, /^[ ]*/); return RLENGTH }
     {
       l = $0; i = indented(l)
-      if (l ~ /^[ ]*run:/) {
+      if (l ~ /^[ ]*(- )?run:/) {
         inrun = 1; runind = i
         if (l ~ /\$\{\{[[:space:]]*github\.event\./) print FNR ": " l
         next
@@ -147,7 +151,8 @@ for f in "${files[@]}"; do
     if [ "$ok" = false ]; then
       fail+=("$f: uses $ref, a mutable third-party ref. Pin it to a 40-character commit SHA, or add it to ALLOWED_THIRD_PARTY in this script with a reason")
     fi
-  done < <(grep -hoE '^[[:space:]]*uses:[[:space:]]*[^[:space:]#]+' "$f" | sed -E 's/^[[:space:]]*uses:[[:space:]]*//')
+  done < <(grep -hoE '^[[:space:]]*(- )?uses:[[:space:]]*[^[:space:]#]+' "$f" \
+             | sed -E 's/^[[:space:]]*(- )?uses:[[:space:]]*//')
 
 done
 
