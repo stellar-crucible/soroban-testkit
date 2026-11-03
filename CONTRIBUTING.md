@@ -1,12 +1,12 @@
 # Contributing to Soroban Testkit
 
-Thank you for your interest in contributing! This project participates in the [Stellar Wave](https://www.drips.network/wave/stellar) program, and we welcome contributors of all experience levels.
+Thank you for your interest in contributing! This project participates in the [Stellar Wave](https://www.drips.network/wave/stellar) program via [Drips](https://www.drips.network), and we welcome contributors of all experience levels.
 
 ## Getting Started
 
 1. Fork and clone the repository
 2. Install Rust 1.91+ via [rustup](https://rustup.rs/)
-3. Run `cargo test --workspace --locked` to verify everything works — 159 tests should pass, plus 2 ignored baseline jobs that only CI enforces
+3. Run `cargo test --workspace --locked` to verify everything works — 171 tests should pass, plus 2 ignored baseline jobs that only CI enforces
 4. Pick an issue labeled `Stellar Wave` plus a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`); comment on it before starting so two people don't collide
 
 ## Your first pull request
@@ -45,7 +45,6 @@ cargo deny check all                     # supply-chain gate over the committed 
 | `complexity:trivial` | Small, well-scoped task | 100 |
 | `complexity:medium` | Moderate feature or improvement | 150 |
 | `complexity:high` | Significant feature or complex task | 200 |
-| `Stellar Wave` | Funded through the Drips Stellar Wave program | — |
 
 Additional labels: `good first issue`, `bug`, `enhancement`, `documentation`, `help wanted`.
 
@@ -93,4 +92,4 @@ Move the `Unreleased` CHANGELOG entries into a `[X.Y.Z]` section with the date i
 
 ## Questions?
 
-The [Telegram channel](https://t.me/+_tukd5_0gtM1MzA0) is where the maintainer reads questions — ask there before opening a pull request you suspect will be rescoped. For anything about the funding programme itself, see the [Stellar Wave](https://www.drips.network/wave/stellar) page and the [Stellar Developer Discord](https://discord.gg/stellardev).
+The [Telegram channel](https://t.me/+_tukd5_0gtM1MzA0) is where the maintainer reads questions — ask there before opening a pull request you suspect will be rescoped. For anything about the funding programme itself, see the [Drips](https://www.drips.network) page and the [Stellar Developer Discord](https://discord.gg/stellardev).
