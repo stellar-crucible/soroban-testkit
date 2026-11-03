@@ -4,6 +4,7 @@ extern crate std;
 use std::{println, string::ToString, vec::Vec};
 
 use soroban_sdk::Address;
+use soroban_testkit_assert::assert_auth_matches;
 use soroban_testkit_assert::events::{EventLog, EventMatcher};
 use soroban_testkit_core::budget::{BudgetBaseline, BudgetMetric, BudgetSnapshot};
 use soroban_testkit_fixtures::builder::TestContextBuilder;
@@ -254,6 +255,41 @@ fn increment_requires_authorization_when_auths_are_not_mocked() {
     let caller = ctx.users[0].clone();
 
     client.increment(&caller, &1);
+}
+
+// The test above proves the call needs an authorization. This one supplies
+// exactly that authorization instead of mocking every requirement, so the call
+// only runs because the contract really asked for it — and the macro then reads
+// back who authorized which function, with which arguments.
+#[test]
+fn increment_records_the_callers_authorization() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    let ctx = TestContextBuilder::new()
+        .with_users(1)
+        .without_mock_auths()
+        .build();
+    let (contract_id, client) = client_for(&ctx);
+    let caller = ctx.users[0].clone();
+
+    ctx.env.mock_auths(&[MockAuth {
+        address: &caller,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "increment",
+            args: (&caller, 1u32).into_val(&ctx.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    client.increment(&caller, &1);
+
+    assert_auth_matches!(ctx.env, {
+        invoker: caller,
+        function: "increment",
+        args: [_, 1u32],
+    });
 }
 
 // The two tests below are `#[ignore]`d on purpose. Soroban metering is
