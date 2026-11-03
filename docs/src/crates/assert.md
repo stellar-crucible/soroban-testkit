@@ -23,6 +23,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventLog::matcher()` | A matcher over everything that log collected |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
+| `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
+| `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 
 ## Event matching
 
@@ -200,7 +202,51 @@ Scalars print their values, maps and vectors print their entries, an address pri
 
 ## Authorization matching
 
-Verify who had to sign for a call:
+Verify who had to sign for a call, and for what. A recorded authorization carries
+the invoker, the contract function, and the arguments `require_auth` demanded, and
+the macro names all three:
+
+```rust
+use soroban_testkit_assert::assert_auth_matches;
+
+client.increment(&caller, &1);
+
+// The invoker and the function are enough when the arguments are not the point.
+assert_auth_matches!(env, {
+    invoker: caller,
+    function: "increment",
+});
+
+// Arguments are matched position by position; `_` accepts any value.
+assert_auth_matches!(env, {
+    invoker: caller,
+    function: "increment",
+    args: [_, 1u32],
+});
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Scope: the invocation that just ran</span>
+  <p><code>assert_auth_matches!</code> reads <code>env.auths()</code>, which in SDK v28 reports the authorizations of the <strong>most recent contract invocation</strong> — the same scope as <code>EventMatcher::new</code>. Assert right after the call, or provide the expected auth with <code>env.mock_auths(..)</code> / <code>env.set_auths(..)</code> and let the call run with real requirements instead of <code>mock_all_auths()</code>.</p>
+</div>
+
+The matcher behind the macro is available directly when a test builds the filter
+in steps:
+
+```rust
+use soroban_testkit_assert::auth::{AuthArgs, AuthMatcher};
+
+AuthMatcher::new(&env)
+    .invoker(&admin)
+    .function("set_admin")
+    .assert_matches();
+
+AuthMatcher::new(&env)
+    .args(AuthArgs::new().any().value(&env, 7u32))
+    .assert_matches();
+```
+
+And the coarser questions still have their own assertions:
 
 ```rust
 use soroban_testkit_assert::auth::AuthMatcher;
@@ -210,6 +256,14 @@ AuthMatcher::new(&env).assert_no_auth_required();
 
 // Assert specific auth count
 AuthMatcher::new(&env).assert_auth_count(2);
+```
+
+A failed match prints the expectation next to every authorization the invocation
+recorded, so the wrong invoker, function, or argument is visible without a re-run:
+
+```text
+panicked at 'Expected an authorization matching { invoker Contract(C…FCT4), function "set_admin", args [_, 7] }, found 1 recorded authorization(s):
+  [0] invoker Contract(C…FCT4) contract Contract(C…D2KM) function "increment" args [Contract(C…FCT4), 1]'
 ```
 
 ## Failure messages

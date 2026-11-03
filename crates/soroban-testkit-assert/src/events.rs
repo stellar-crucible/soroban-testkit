@@ -323,7 +323,7 @@ fn event_data(event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::xdr::ScVa
 /// Scalars and the inside of maps and vectors are spelled out because those are
 /// the values a test author compares against; everything rarer falls back to the
 /// XDR debug form so a message never hides the payload it rejected.
-fn data_label(env: &Env, value: &soroban_sdk::xdr::ScVal) -> String {
+pub(crate) fn data_label(env: &Env, value: &soroban_sdk::xdr::ScVal) -> String {
     use soroban_sdk::xdr::ScVal;
 
     match value {

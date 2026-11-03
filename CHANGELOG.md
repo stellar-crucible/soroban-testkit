@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `assert_auth_matches!` in `soroban-testkit-assert` asserts *which* address authorized which contract function with which arguments, instead of only counting `env.auths()` entries. It matches arguments position by position with `_` for the ones a test does not care about, and a failed match prints the expectation next to every authorization the invocation recorded
+
 ### Security
 - Three new required checks inspect a pull request before it is allowed to build, because `cargo clippy` and `cargo test` both compile and execute any `build.rs` in the diff — a pipeline that built first and inspected afterwards only ever inspected the aftermath. `Malware guard` diffs against the code-execution surface this repository has today and fails on anything new: a build script or `[build-dependencies]`, `.cargo/config.toml`, `.gitattributes` filter drivers, submodules, vendored trees, binaries, symlinks, git-sourced or `[patch]`-redirected dependencies, crates with network, process or FFI reach, and in Rust source `unsafe`, `process::Command`, `std::net`, `mem::transmute`, `include_bytes!`, `#[no_mangle]` and `extern "C"`. `check`, `Docs build` and `Supply chain audit` now `needs:` it, so none of them compiles until it passes. The baseline for every rule is zero, which is what makes it enforceable rather than aspirational
 - `Secret scan` reads the lines a diff adds for credential shapes — provider tokens, private key blocks, credentials embedded in a URL, a secret assigned to a literal — with a placeholder filter so the documented `export CARGO_REGISTRY_TOKEN=<paste your token>` stays legal
