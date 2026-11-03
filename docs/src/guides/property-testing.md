@@ -54,6 +54,11 @@ proptest! {
   <p>Every generated case builds a real <code>Env</code> and executes on the host. If the suite slows down, reduce cases with <code>#![proptest_config(ProptestConfig::with_cases(64))]</code> before you narrow the strategy ranges.</p>
 </div>
 
+<div class="tk-callout">
+  <span class="tk-callout__title">A runnable version of this</span>
+  <p><code>examples/token/tests/property.rs</code> is a suite that follows every rule on this page: five cases over a live contract at 64 iterations, three strategy-only cases at 256, <code>prop_assume!</code> for the relations between generated amounts, and both address formats on the same call. <a href="./token-example.html">Worked Example: Token</a> walks through it.</p>
+</div>
+
 ## Generating principals
 
 Access-control properties need callers, and a caller in Soroban is an address rather than a string. `address()` generates a valid 32-byte principal in either format, `account_address()` and `contract_address()` pin one, and `address_of_type(AddressType::Account)` takes the format as an argument. Each yields an `AddressBytes`, which becomes a host value through `to_address(&env)`.

@@ -97,6 +97,11 @@ Where Soroban Testkit is going, and which parts are open for contributors. Anyth
     <p class="tk-card__body"><code>address()</code>, <code>account_address()</code>, <code>contract_address()</code> and <code>address_of_type()</code> generate valid 32-byte Soroban principals as an <code>AddressBytes</code> that carries its format tag and converts straight to a host <code>Address</code>, with a process-wide nonce keeping every address in a run unique — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/7">#7</a>, closed.</p>
   </div>
   <div class="tk-card">
+    <span class="tk-card__kicker">examples/token</span>
+    <h3 class="tk-card__title">A second worked example</h3>
+    <p class="tk-card__body">An ERC-20 shaped token whose suite is split one file per crate, so the parts the counter cannot reach are demonstrated rather than described: a three-field event payload, two contracts registered in one environment, storage tiers behind a pattern, and a <code>proptest</code> over generated amounts and both address formats — <a href="https://github.com/stellar-crucible/soroban-testkit/issues/9">#9</a>, closed.</p>
+  </div>
+  <div class="tk-card">
     <span class="tk-card__kicker">Distribution</span>
     <h3 class="tk-card__title">Published on crates.io</h3>
     <p class="tk-card__body">All four crates are live on the registry as <code>soroban-testkit-core</code>, <code>-assert</code>, <code>-fixtures</code> and <code>-generators</code>, with <code>0.4.1</code> as the current stable release, so a consumer adds a version requirement instead of a Git pin. The release tag stays available for anyone who wants to pin the source commit its CI went green on.</p>
@@ -117,7 +122,6 @@ Never contributed here before? The three `complexity:trivial` rows are the inten
 | Assertions | `assert_storage_tier!` — prove a key landed in instance, persistent or temporary storage ([#13](https://github.com/stellar-crucible/soroban-testkit/issues/13)) | `complexity:medium` |
 | Generators | XDR-compatible value generation ([#8](https://github.com/stellar-crucible/soroban-testkit/issues/8)) | `complexity:high` |
 | Generators | `Arbitrary` implementations for Soroban types ([#16](https://github.com/stellar-crucible/soroban-testkit/issues/16)) | `complexity:medium` |
-| Examples | Token example exercising every crate ([#9](https://github.com/stellar-crucible/soroban-testkit/issues/9)) | `complexity:medium` |
 
 ## Later
 
