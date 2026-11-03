@@ -22,6 +22,8 @@ pub struct Transfer {
     pub amount: i128,
 }
 
+/// A permission grant. The three fields are what a test needs to check that an
+/// allowance was set rather than merely that `approve` returned.
 #[contractevent(topics = ["token", "approve"])]
 #[derive(Clone)]
 pub struct Approval {
@@ -39,6 +41,8 @@ pub struct Minted {
     pub amount: i128,
 }
 
+/// Burning has no `to`, for the same reason minting has no `from`: one side of
+/// the move is the supply itself, and it is not an address.
 #[contractevent(topics = ["token", "burn"])]
 #[derive(Clone)]
 pub struct Burnt {
@@ -124,20 +128,23 @@ impl TokenContract {
             .expect("token not initialized")
     }
 
+    /// The supply that every mint and burn so far has produced.
     pub fn total_supply(env: Env) -> i128 {
         supply(&env)
     }
 
+    /// What `owner` holds. A holder that has never received a token holds zero.
     pub fn balance_of(env: Env, owner: Address) -> i128 {
         balances(&env).get(owner).unwrap_or(0)
     }
 
+    /// How much more `spender` may still move out of `owner`'s balance.
     pub fn allowance(env: Env, owner: Address, spender: Address) -> i128 {
         allowances(&env).get((owner, spender)).unwrap_or(0)
     }
 
     /// Creates `amount` new tokens for `to` and returns the supply they were
-    /// added to. Only the admin's authorization is enough.
+    /// added to. The admin's authorization is what makes it happen.
     pub fn mint(env: Env, to: Address, amount: i128) -> i128 {
         Self::admin(env.clone()).require_auth();
 

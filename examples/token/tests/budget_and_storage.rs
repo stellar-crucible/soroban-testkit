@@ -191,8 +191,8 @@ fn balances_and_allowances_share_a_tier_and_a_pattern() {
     client.mint(&owner, &500);
     client.approve(&owner, &spender, &100);
 
-    // Both maps are keyed by an holder-facing name ending in the same letters,
-    // so one suffix pattern covers the pair.
+    // Both maps carry the holder-facing names a token is queried by, and both
+    // end in the same letters, so one suffix pattern covers the pair.
     soroban_testkit_core::assert_storage_tier!(&env, &contract, "*es", StorageTier::Persistent);
 
     let snapshot = StorageSnapshot::capture(&env, &contract);
