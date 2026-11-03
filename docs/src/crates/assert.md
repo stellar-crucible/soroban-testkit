@@ -180,9 +180,18 @@ EventMatcher::new(&env)
 |------|---------|-------------|
 | `deserialize::<T>()` | `Option<T>` | the payload is one value of a known type — a number, `Address`, `Vec`/`Map`, or a `contracttype` struct |
 | `field("name")` | `Option<EventData>` | the payload is a map, which is what a `contractevent` struct becomes, and one field is the point |
+| `fields()` | `Vec<String>` | the payload is a map and you want to enumerate the field names in ledger order |
 | `raw()` | `&ScVal` | neither fits, or the test is about the shape itself |
 
 `deserialize` yields `None` rather than panicking, so one predicate can probe a payload without assuming it. `field` composes with it: `data.field("amount").and_then(|value| value.deserialize::<i128>())`.
+
+`fields()` returns the field names actually present on the ledger in order:
+
+```rust
+EventMatcher::new(&env)
+    .with_topic("moved")
+    .assert_data_matches(|data| data.fields() == ["amount", "to"]);
+```
 
 <div class="tk-callout tk-callout--warn">
   <span class="tk-callout__title">A <code>contractevent</code> struct is not a <code>contracttype</code> struct</span>

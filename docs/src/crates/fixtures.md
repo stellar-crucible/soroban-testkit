@@ -26,6 +26,23 @@ let ctx = TestContext::new();
 // ctx.env — pre-configured Env with mock_all_auths
 // ctx.admin — generated admin address
 // ctx.users — empty vec, add users as needed
+// ctx.user(i) — safe accessor with diagnostic panic message
+```
+
+## Accessing users
+
+Retrieve generated user addresses with `ctx.user(index)`:
+
+```rust
+let ctx = TestContextBuilder::new().with_users(3).build();
+let alice = ctx.user(0);
+let bob = ctx.user(1);
+```
+
+When called with an index out of bounds, `ctx.user(i)` panics with a descriptive diagnostic pointing directly at `TestContextBuilder::with_users`:
+
+```text
+user index out of bounds: index is 2 but context holds 2 users (did you call TestContextBuilder::with_users(3)?)
 ```
 
 ## Builder pattern

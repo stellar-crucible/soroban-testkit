@@ -52,6 +52,25 @@ impl TestContext {
         self.users.last().unwrap()
     }
 
+    /// Returns a reference to the user address at `index`.
+    ///
+    /// # Panics
+    ///
+    /// Panics with a diagnostic message if `index` is out of bounds, naming
+    /// the requested index, the actual user count, and pointing at
+    /// [`crate::builder::TestContextBuilder::with_users`].
+    pub fn user(&self, index: usize) -> &Address {
+        self.users.get(index).unwrap_or_else(|| {
+            panic!(
+                "user index out of bounds: index is {} but context holds {} user{} (did you call TestContextBuilder::with_users({})?)",
+                index,
+                self.users.len(),
+                if self.users.len() == 1 { "" } else { "s" },
+                index + 1
+            );
+        })
+    }
+
     /// The timestamp the ledger currently reports.
     pub fn timestamp(&self) -> u64 {
         self.env.ledger().timestamp()
@@ -170,6 +189,33 @@ mod tests {
     use soroban_sdk::xdr::ScAddress;
     use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
     use soroban_testkit_core::storage::StorageSnapshot;
+
+    #[test]
+    fn user_accessor_returns_same_as_indexing_users() {
+        let ctx = TestContextBuilder::new().with_users(3).build();
+        for i in 0..3 {
+            assert_eq!(ctx.user(i), &ctx.users[i]);
+        }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "user index out of bounds: index is 2 but context holds 2 users (did you call TestContextBuilder::with_users(3)?)"
+    )]
+    fn user_accessor_panics_with_diagnostic_when_out_of_bounds() {
+        let ctx = TestContextBuilder::new().with_users(2).build();
+        let _ = ctx.user(2);
+    }
+
+    #[test]
+    fn user_accessor_works_after_reset_and_reset_full() {
+        let mut ctx = TestContextBuilder::new().with_users(2).build();
+        assert_eq!(ctx.user(0), &ctx.users[0]);
+        ctx.reset();
+        assert_eq!(ctx.user(0), &ctx.users[0]);
+        ctx.reset_full();
+        assert_eq!(ctx.user(0), &ctx.users[0]);
+    }
 
     #[test]
     fn new_context_starts_without_users() {

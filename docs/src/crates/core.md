@@ -229,6 +229,21 @@ after.assert_unchanged(&StorageSnapshot::capture(&env, &contract));
 assert_eq!(after.in_tier(StorageTier::Temporary).len(), 1);
 ```
 
+### Storage tier assertions
+
+Use `assert_storage_tier!` to assert that a key or pattern belongs to the expected [`StorageTier`]:
+
+```rust
+use soroban_testkit_core::assert_storage_tier;
+use soroban_testkit_core::storage::StorageTier;
+
+// Assert an exact key
+assert_storage_tier!(&env, &contract, "admin", StorageTier::Instance);
+
+// Assert all keys matching a wildcard pattern
+assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
+```
+
 <div class="tk-callout tk-callout--info">
   <span class="tk-callout__title">Scope</span>
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>

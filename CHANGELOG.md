@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `assert_storage_tier!` macro in `soroban-testkit-core` for verifying that contract storage keys or patterns live in the expected `StorageTier` (instance, persistent, or temporary) with clear diagnostic output ([#13](https://github.com/stellar-crucible/soroban-testkit/issues/13))
+- `EventData::fields()` in `soroban-testkit-assert` to enumerate the field names present in a map-shaped payload in ledger order, respecting sparse SDK storage ([#50](https://github.com/stellar-crucible/soroban-testkit/issues/50))
+- `TestContext::user(index)` accessor in `soroban-testkit-fixtures` providing safe user lookups with diagnostic panic messages pointing at `TestContextBuilder::with_users` ([#51](https://github.com/stellar-crucible/soroban-testkit/issues/51))
+- Getting Started troubleshooting page documenting duplicate SDK versions, missing `testutils`, cross-environment address reuse, and multi-call event aggregation ([#52](https://github.com/stellar-crucible/soroban-testkit/issues/52))
+
 ### Security
 - Three new required checks inspect a pull request before it is allowed to build, because `cargo clippy` and `cargo test` both compile and execute any `build.rs` in the diff — a pipeline that built first and inspected afterwards only ever inspected the aftermath. `Malware guard` diffs against the code-execution surface this repository has today and fails on anything new: a build script or `[build-dependencies]`, `.cargo/config.toml`, `.gitattributes` filter drivers, submodules, vendored trees, binaries, symlinks, git-sourced or `[patch]`-redirected dependencies, crates with network, process or FFI reach, and in Rust source `unsafe`, `process::Command`, `std::net`, `mem::transmute`, `include_bytes!`, `#[no_mangle]` and `extern "C"`. `check`, `Docs build` and `Supply chain audit` now `needs:` it, so none of them compiles until it passes. The baseline for every rule is zero, which is what makes it enforceable rather than aspirational
 - `Secret scan` reads the lines a diff adds for credential shapes — provider tokens, private key blocks, credentials embedded in a URL, a secret assigned to a literal — with a placeholder filter so the documented `export CARGO_REGISTRY_TOKEN=<paste your token>` stays legal
