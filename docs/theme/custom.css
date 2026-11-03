@@ -1,598 +1,711 @@
 /* ============================================================================
-   Soroban Testkit — custom mdBook theme
-   Layer 1: design tokens         Layer 4: content components
-   Layer 2: theme palettes        Layer 5: utilities used from Markdown
-   Layer 3: chrome (sidebar, bar)
-   Paths in book.toml: additional-css = ["theme/custom.css"]
+   Soroban Testkit — Modern Cosmic Developer Theme
+   Inspired by Stellar, Soroban, Linear & Vercel aesthetics
    ========================================================================== */
 
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
 /* ----------------------------------------------------------------------------
-   1. Design tokens
+   1. Design Tokens & CSS Variables
    -------------------------------------------------------------------------- */
 :root {
     /* Layout */
-    --content-max-width: 1080px;
-    --page-padding: 24px;
-    --menu-bar-height: 56px;
-    --sidebar-target-width: 320px;
-    --code-font-size: 0.86em;
+    --content-max-width: 1100px;
+    --page-padding: 36px;
+    --menu-bar-height: 60px;
+    --sidebar-target-width: 300px;
+    --code-font-size: 0.88em;
 
-    /* Type */
-    --tk-font-sans: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont,
-        "Helvetica Neue", Arial, sans-serif;
-    --tk-font-display: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont,
-        sans-serif;
-    --tk-font-mono: "JetBrains Mono", var(--mono-font);
+    /* Typography */
+    --tk-font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --tk-font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --tk-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-    /* Brand */
-    --tk-brand: #3b6ef6;
-    --tk-brand-deep: #16225c;
-    --tk-accent: #17e0a6;
-    --tk-accent-dim: #0f9c76;
-    --tk-warn: #e8a33d;
+    /* Brand & Accent Palettes */
+    --tk-brand: #6366f1;
+    --tk-brand-light: #818cf8;
+    --tk-brand-deep: #4338ca;
+    --tk-purple: #a855f7;
+    --tk-cyan: #06b6d4;
+    --tk-teal: #14b8a6;
+    --tk-emerald: #10b981;
+    --tk-amber: #f59e0b;
+    --tk-rose: #f43f5e;
 
-    /* Shape */
-    --tk-radius-sm: 6px;
-    --tk-radius: 12px;
-    --tk-radius-lg: 18px;
+    /* Radii & Shadows */
+    --tk-radius-sm: 8px;
+    --tk-radius: 14px;
+    --tk-radius-lg: 20px;
+    --tk-radius-full: 9999px;
     --tk-border-width: 1px;
-    --tk-shadow-sm: 0 1px 2px rgba(12, 18, 40, 0.08);
-    --tk-shadow: 0 6px 20px rgba(12, 18, 40, 0.12);
-    --tk-gap: 16px;
+    
+    --tk-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+    --tk-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.25), 0 4px 12px -2px rgba(0, 0, 0, 0.12);
+    --tk-shadow-glow: 0 0 30px rgba(99, 102, 241, 0.25);
+    --tk-shadow-cyan: 0 0 30px rgba(6, 182, 212, 0.25);
 
-    /* Neutral surfaces (theme blocks below refine per palette) */
-    --tk-surface: #ffffff;
-    --tk-surface-alt: #f5f7fd;
-    --tk-surface-border: #e2e6f3;
-    --tk-muted: #5b6583;
+    /* Gradients */
+    --tk-gradient-primary: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #06b6d4 100%);
+    --tk-gradient-cosmic: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
+    --tk-gradient-glass: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+    --tk-gradient-dark-glass: linear-gradient(180deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%);
 
-    /* Chrome: the sidebar keeps one dark identity across every palette */
-    --sidebar-bg: #0d1428;
-    --sidebar-fg: #b9c4e0;
-    --sidebar-non-existant: #55618a;
-    --sidebar-active: var(--tk-accent);
-    --sidebar-spacer: #1d2749;
-    --sidebar-header-border-color: #24304f;
-    --icons: #8592b6;
-    --icons-hover: #ffffff;
-    --scrollbar: #34406a;
-    --searchbar-bg: #16203c;
-    --searchbar-border-color: #2a3760;
-    --searchbar-fg: #e6ebfa;
-    --searchbar-shadow-color: rgba(0, 0, 0, 0.35);
-    --searchresults-header-fg: #8592b6;
-    --searchresults-border-color: #2a3760;
-    --searchresults-li-bg: #16203c;
-    --search-mark-bg: var(--tk-accent);
-    --overlay-bg: rgba(6, 10, 24, 0.55);
+    /* Chrome Sidebar (Universal Cosmic Nav) */
+    --sidebar-bg: #0b0f19;
+    --sidebar-fg: #94a3b8;
+    --sidebar-non-existant: #475569;
+    --sidebar-active: #38bdf8;
+    --sidebar-spacer: rgba(255, 255, 255, 0.06);
+    --sidebar-header-border-color: rgba(255, 255, 255, 0.06);
+    --icons: #94a3b8;
+    --icons-hover: #f8fafc;
+    --scrollbar: #1e293b;
+    --searchbar-bg: #111827;
+    --searchbar-border-color: rgba(255, 255, 255, 0.12);
+    --searchbar-fg: #f1f5f9;
+    --searchbar-shadow-color: rgba(0, 0, 0, 0.5);
+    --searchresults-header-fg: #94a3b8;
+    --searchresults-border-color: rgba(255, 255, 255, 0.1);
+    --searchresults-li-bg: #111827;
+    --search-mark-bg: #38bdf8;
+    --overlay-bg: rgba(3, 7, 18, 0.8);
 }
 
 /* ----------------------------------------------------------------------------
-   2. Theme palettes — content surface only, chrome stays branded
+   2. Dark Mode (Default / Navy / Coal / Ayu)
    -------------------------------------------------------------------------- */
-.light,
-html:not(.js) {
-    --bg: #fdfdfe;
-    --fg: #1b2340;
-    --links: var(--tk-brand);
-    --inline-code-color: #b4345f;
-    --quote-bg: #f3f6fd;
-    --quote-border: var(--tk-brand);
-    --table-border-color: #e2e6f3;
-    --table-header-bg: #eef2fb;
-    --table-alternate-bg: #f7f9fd;
+.navy,
+.coal,
+.ayu,
+html:not(.light) {
+    --bg: #090d16;
+    --fg: #e2e8f0;
+    --fg-muted: #94a3b8;
+    --links: #38bdf8;
+    --links-hover: #7dd3fc;
+    --inline-code-color: #38bdf8;
+    --quote-bg: rgba(30, 41, 59, 0.5);
+    --quote-border: #6366f1;
+    --table-border-color: rgba(255, 255, 255, 0.08);
+    --table-header-bg: #0f172a;
+    --table-alternate-bg: rgba(255, 255, 255, 0.02);
+    --theme-popup-bg: #0f172a;
+    --theme-popup-border: rgba(255, 255, 255, 0.12);
+    --theme-hover: #1e293b;
+    --color-scheme: dark;
+    --tk-surface: #0f172a;
+    --tk-surface-alt: #141e33;
+    --tk-surface-border: rgba(255, 255, 255, 0.08);
+    --tk-surface-border-hover: rgba(99, 102, 241, 0.5);
+    --tk-muted: #94a3b8;
+    --tk-code-bg: #080d1a;
+    --tk-code-border: rgba(255, 255, 255, 0.09);
+    --sidebar-bg: #070a12;
+}
+
+/* ----------------------------------------------------------------------------
+   3. Light Mode (Linear / Stripe aesthetic)
+   -------------------------------------------------------------------------- */
+.light {
+    --bg: #f8fafc;
+    --fg: #0f172a;
+    --fg-muted: #475569;
+    --links: #4f46e5;
+    --links-hover: #6366f1;
+    --inline-code-color: #6366f1;
+    --quote-bg: #f1f5f9;
+    --quote-border: #6366f1;
+    --table-border-color: #e2e8f0;
+    --table-header-bg: #f1f5f9;
+    --table-alternate-bg: #f8fafc;
     --theme-popup-bg: #ffffff;
-    --theme-popup-border: #dfe4f2;
-    --theme-hover: #f1f5fd;
-    --copy-button-filter: invert(60%) sepia(12%) saturate(500%)
-        hue-rotate(180deg);
+    --theme-popup-border: #e2e8f0;
+    --theme-hover: #f1f5f9;
     --color-scheme: light;
     --tk-surface: #ffffff;
-    --tk-surface-alt: #f5f7fd;
-    --tk-surface-border: #e2e6f3;
-    --tk-muted: #5b6583;
-    --tk-code-bg: #f7f8fc;
-}
-
-.coal,
-.navy,
-.ayu {
-    --bg: #111a30;
-    --fg: #dde4f5;
-    --links: #86a9ff;
-    --inline-code-color: #7fe9c8;
-    --quote-bg: #182543;
-    --quote-border: var(--tk-brand);
-    --table-border-color: #26325a;
-    --table-header-bg: #1a2545;
-    --table-alternate-bg: #16203b;
-    --theme-popup-bg: #16203b;
-    --theme-popup-border: #2a3760;
-    --theme-hover: #1f2c52;
-    --color-scheme: dark;
-    --tk-surface: #17223e;
-    --tk-surface-alt: #1d2a4d;
-    --tk-surface-border: #2a3760;
-    --tk-muted: #93a0c4;
-    --tk-code-bg: #0f1830;
-}
-
-.coal,
-.navy,
-.ayu {
-    --tk-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --tk-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    --tk-surface-alt: #f1f5f9;
+    --tk-surface-border: #e2e8f0;
+    --tk-surface-border-hover: rgba(99, 102, 241, 0.4);
+    --tk-muted: #64748b;
+    --tk-code-bg: #f1f5f9;
+    --tk-code-border: #e2e8f0;
+    --sidebar-bg: #0f172a;
 }
 
 /* ----------------------------------------------------------------------------
-   3. Base typography
+   4. Base HTML & Global Styling
    -------------------------------------------------------------------------- */
 html {
     font-family: var(--tk-font-sans);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
 }
 
+body {
+    background-color: var(--bg);
+    background-image: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 10%, rgba(6, 182, 212, 0.08), transparent);
+    background-attachment: fixed;
+    color: var(--fg);
+    overflow-x: hidden;
+}
+
+::selection {
+    background: rgba(99, 102, 241, 0.35);
+    color: #ffffff;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.4);
+}
+
+/* Content Container */
 .content {
-    line-height: 1.75;
-    letter-spacing: 0.005em;
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    padding: 0 var(--page-padding) 64px;
+    line-height: 1.78;
+    letter-spacing: -0.01em;
 }
 
 .content main {
-    padding-top: 8px;
+    padding-top: 20px;
 }
 
+/* Headers */
 .content h1 {
     font-family: var(--tk-font-display);
-    font-size: 2.1rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    margin: 0 0 0.6em;
-    padding-bottom: 0.35em;
-    border-bottom: var(--tk-border-width) solid var(--tk-surface-border);
+    font-size: 2.35rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin: 0 0 0.8em;
+    padding-bottom: 0.4em;
+    border-bottom: 1px solid var(--tk-surface-border);
+    color: var(--fg);
 }
 
 .content h2 {
-    font-size: 1.45rem;
+    font-family: var(--tk-font-display);
+    font-size: 1.55rem;
+    font-weight: 750;
+    letter-spacing: -0.025em;
+    margin-top: 2.6em;
+    margin-bottom: 0.8em;
+    color: var(--fg);
+}
+
+.content h3 {
+    font-family: var(--tk-font-display);
+    font-size: 1.25rem;
     font-weight: 650;
-    letter-spacing: -0.01em;
-    margin-top: 2.4em;
-}
-
-.content h3 {
-    font-size: 1.15rem;
-    font-weight: 600;
-    margin-top: 2em;
-}
-
-.content h2,
-.content h3 {
-    scroll-margin-top: calc(var(--menu-bar-height) + 12px);
+    letter-spacing: -0.015em;
+    margin-top: 2.2em;
+    margin-bottom: 0.6em;
+    color: var(--fg);
 }
 
 .content h2::before,
 .content h3::before {
     content: "";
     display: block;
-    width: 34px;
+    width: 28px;
     height: 3px;
-    border-radius: 3px;
-    margin-bottom: 0.45em;
-    background: linear-gradient(90deg, var(--tk-brand), var(--tk-accent));
+    border-radius: var(--tk-radius-full);
+    margin-bottom: 0.6em;
+    background: var(--tk-gradient-primary);
 }
 
-.content p,
-.content li {
+.content p {
     color: var(--fg);
+    margin: 0 0 1.3em;
+    font-size: 1rem;
+}
+
+.content a {
+    color: var(--links);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 150ms ease, text-decoration-color 150ms ease;
+    border-bottom: 1px solid transparent;
+}
+
+.content a:hover {
+    color: var(--links-hover);
+    border-bottom-color: var(--links-hover);
 }
 
 .content strong {
-    font-weight: 650;
+    font-weight: 700;
+    color: var(--fg);
 }
 
-/* Sidebar chapter labels read as section eyebrows */
-.chapter li.part-title {
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--sidebar-non-existant);
-    margin-top: 1.6em;
+.content hr {
+    border: none;
+    height: 1px;
+    background: var(--tk-surface-border);
+    margin: 2.5em 0;
 }
 
 /* ----------------------------------------------------------------------------
-   4. Chrome: menu bar, sidebar, page furniture
+   5. Chrome: Top Navigation & Sidebar
    -------------------------------------------------------------------------- */
 #mdbook-menu-bar,
 .menu-bar {
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
-    backdrop-filter: blur(10px);
-    border-bottom: var(--tk-border-width) solid var(--tk-surface-border);
-    box-shadow: none;
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--tk-surface-border);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+    height: var(--menu-bar-height);
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
-.menu-title,
+.menu-title {
+    font-family: var(--tk-font-display);
+    font-weight: 750;
+    font-size: 1.12rem;
+    letter-spacing: -0.02em;
+    background: var(--tk-gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
 #mdbook-menu-bar .icon-button {
-    color: var(--fg);
+    color: var(--icons);
+    transition: color 150ms ease, transform 150ms ease;
+    padding: 6px;
+    border-radius: 8px;
+}
+
+#mdbook-menu-bar .icon-button:hover {
+    color: var(--icons-hover);
+    background: rgba(255, 255, 255, 0.06);
+    transform: scale(1.08);
+}
+
+/* Sidebar navigation */
+.sidebar {
+    background: var(--sidebar-bg);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
 }
 
 .sidebar .sidebar-scrollbox {
-    padding: 14px 16px 40px;
+    padding: 24px 18px 48px;
 }
 
 .sidebar .chapter {
-    padding: 0 4px;
+    padding: 0;
 }
 
 .sidebar .chapter li {
-    margin: 1px 0;
+    margin: 3px 0;
 }
 
-/* mdBook 0.5 nests each entry as li > span.chapter-link-wrapper > a */
+.chapter li.part-title {
+    font-size: 0.72rem;
+    font-weight: 750;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #64748b;
+    margin: 2em 0 0.6em 12px;
+}
+
 .sidebar .chapter .chapter-link-wrapper > a {
-    display: block;
-    padding: 7px 12px;
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
     border-radius: var(--tk-radius-sm);
-    color: var(--sidebar-fg);
-    font-size: 0.9rem;
+    color: #94a3b8;
+    font-size: 0.88rem;
+    font-weight: 500;
     text-decoration: none;
-    transition: background-color 140ms ease, color 140ms ease;
+    transition: all 140ms ease;
 }
 
 .sidebar .chapter .chapter-link-wrapper > a:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: #ffffff;
-    text-decoration: none;
+    background: rgba(255, 255, 255, 0.05);
+    color: #f8fafc;
+    transform: translateX(3px);
 }
 
 .sidebar .chapter .chapter-link-wrapper > a.active {
-    background: linear-gradient(
-        90deg,
-        rgba(59, 110, 246, 0.28),
-        rgba(23, 224, 166, 0.12)
-    );
-    color: #ffffff;
-    font-weight: 600;
-    box-shadow: inset 2px 0 0 var(--tk-accent);
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.22) 0%, rgba(6, 182, 212, 0.12) 100%);
+    color: #38bdf8;
+    font-weight: 650;
+    box-shadow: inset 3px 0 0 #38bdf8;
 }
 
-/* top-level chapters carry a touch more weight than sub-sections */
-.sidebar .chapter > li > .chapter-link-wrapper > a {
-    font-weight: 600;
-    color: #dfe6fa;
+/* Search bar & modal */
+#searchbar {
+    border-radius: var(--tk-radius-full);
+    padding: 10px 18px;
+    font-size: 0.88rem;
+    border: 1px solid var(--searchbar-border-color);
+    background: var(--searchbar-bg);
+    color: var(--searchbar-fg);
+    transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-/* the "on this page" tree under the active chapter */
-.sidebar .on-this-page {
-    margin: 2px 0 6px 10px;
-    padding-left: 10px;
-    border-left: 1px solid #2a3760;
+#searchbar:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    outline: none;
 }
 
-.sidebar .on-this-page .chapter-link-wrapper > a {
-    font-size: 0.82rem;
-    padding: 4px 10px;
-    color: var(--sidebar-non-existant);
+#searchresults {
+    margin-top: 16px;
 }
 
-.sidebar .on-this-page .chapter-link-wrapper > a:hover,
-.sidebar .on-this-page .chapter-link-wrapper > a.active {
-    color: #ffffff;
-}
-
-.sidebar .header-item {
-    list-style: none;
-}
-
-/* Prev / next page cards */
-.nav-chapters {
+#searchresults li {
     background: var(--tk-surface);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
-    border-radius: var(--tk-radius);
-    box-shadow: var(--tk-shadow-sm);
-    min-height: 96px;
-    max-width: 46%;
-    padding: 0 22px;
-    transition: transform 140ms ease, box-shadow 140ms ease;
+    border: 1px solid var(--tk-surface-border);
+    border-radius: var(--tk-radius-sm);
+    margin-bottom: 10px;
+    padding: 12px 16px;
+    transition: all 140ms ease;
 }
 
-.nav-chapters:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--tk-shadow);
-    background: var(--tk-surface);
+#searchresults li:hover,
+#searchresults li.focus {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, 0.08);
+    transform: translateX(4px);
 }
 
-.nav-links {
-    font-size: 1.02rem;
-    font-weight: 600;
+#searchresults a {
     color: var(--fg);
+    font-weight: 600;
+    text-decoration: none;
 }
 
-.sidebar-resize-indicator,
-.sidebar-resize-handle {
-    background: transparent;
+#searchresults p {
+    font-size: 0.88rem;
+    color: var(--tk-muted);
+    margin: 4px 0 0;
+}
+
+mark, .search-mark {
+    background: rgba(56, 189, 248, 0.25);
+    color: #38bdf8;
+    padding: 1px 4px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+/* Theme picker popup */
+.theme-popup {
+    background: var(--theme-popup-bg);
+    border: 1px solid var(--theme-popup-border);
+    border-radius: var(--tk-radius-sm);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    padding: 6px;
+    margin-top: 8px;
+}
+
+.theme-popup .theme {
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-family: var(--tk-font-sans);
+    font-size: 0.86rem;
+    font-weight: 500;
+    color: var(--fg);
+    transition: all 120ms ease;
+    border: none;
+    width: 100%;
+    text-align: left;
+}
+
+.theme-popup .theme:hover {
+    background: rgba(99, 102, 241, 0.18);
+    color: #38bdf8;
 }
 
 /* ----------------------------------------------------------------------------
-   5. Code blocks
+   6. Code Blocks & Terminal Aesthetics
    -------------------------------------------------------------------------- */
 .content pre {
+    position: relative;
     background: var(--tk-code-bg);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
-    border-left: 3px solid var(--tk-brand);
+    border: 1px solid var(--tk-code-border);
     border-radius: var(--tk-radius);
-    padding: 16px 18px;
-    box-shadow: var(--tk-shadow-sm);
+    padding: 22px 22px 20px;
+    margin: 1.8em 0;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
     overflow-x: auto;
+}
+
+.content pre::before {
+    content: "";
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #6366f1 0%, #06b6d4 100%);
+    border-top-left-radius: var(--tk-radius);
+    border-top-right-radius: var(--tk-radius);
 }
 
 .content pre code {
     font-family: var(--tk-font-mono);
-    line-height: 1.65;
-}
-
-:not(pre) > code,
-.hljs {
-    font-family: var(--tk-font-mono);
+    font-size: var(--code-font-size);
+    line-height: 1.7;
+    tab-size: 4;
 }
 
 :not(pre) > code {
-    background: var(--tk-surface-alt);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
-    border-radius: var(--tk-radius-sm);
-    padding: 0.12em 0.42em;
+    font-family: var(--tk-font-mono);
+    font-size: 0.86em;
+    background: rgba(99, 102, 241, 0.14);
+    color: var(--inline-code-color);
+    border: 1px solid rgba(99, 102, 241, 0.24);
+    border-radius: 6px;
+    padding: 0.15em 0.45em;
+    white-space: break-spaces;
 }
 
-/* keep highlighted tokens readable against our surfaces */
-.hljs-string,
-.hljs-attr {
-    color: var(--tk-accent-dim);
+/* Copy button */
+.buttons {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    display: flex;
+    gap: 6px;
+    z-index: 5;
 }
 
-/* ----------------------------------------------------------------------------
-   6. Tables, callouts, blockquotes
-   -------------------------------------------------------------------------- */
-.table-wrapper {
-    border-radius: var(--tk-radius);
-    box-shadow: var(--tk-shadow-sm);
-    margin: 1.6em 0;
+.buttons button,
+.copy-button {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    transition: all 140ms ease;
+    backdrop-filter: blur(4px);
 }
 
-table {
-    border-collapse: separate;
-    border-spacing: 0;
-    font-size: 0.94em;
-    width: 100%;
-}
-
-table thead th {
-    background: var(--tk-brand-deep);
-    color: #eaf0ff;
-    font-family: var(--tk-font-sans);
-    font-size: 0.82em;
-    font-weight: 650;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 12px 16px;
-    border: none;
-}
-
-table thead th:first-child {
-    border-top-left-radius: var(--tk-radius);
-}
-
-table thead th:last-child {
-    border-top-right-radius: var(--tk-radius);
-}
-
-table tbody td {
-    padding: 11px 16px;
-    border-bottom: var(--tk-border-width) solid var(--table-border-color);
-}
-
-blockquote {
-    background: var(--quote-bg);
-    border-left: 4px solid var(--quote-border);
-    border-radius: 0 var(--tk-radius) var(--tk-radius) 0;
-    margin: 1.6em 0;
-    padding: 14px 20px;
+.buttons button:hover,
+.copy-button:hover {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: #6366f1;
+    color: #ffffff;
 }
 
 /* ----------------------------------------------------------------------------
-   7. Components used from Markdown (raw HTML blocks)
+   7. Hero Component (.tk-hero)
    -------------------------------------------------------------------------- */
 .tk-hero {
     position: relative;
     overflow: hidden;
-    background: radial-gradient(
-            120% 160% at 12% 0%,
-            rgba(59, 110, 246, 0.85) 0%,
-            rgba(22, 34, 92, 0.95) 45%,
-            rgba(9, 14, 38, 1) 100%
-        ),
-        var(--tk-brand-deep);
+    background: radial-gradient(130% 160% at 5% 0%, #1e1b4b 0%, #0f172a 50%, #030712 100%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: var(--tk-radius-lg);
-    color: #eef3ff;
-    padding: 40px 36px 34px;
-    margin: 6px 0 30px;
-    box-shadow: var(--tk-shadow);
+    color: #f8fafc;
+    padding: 52px 46px 44px;
+    margin: 10px 0 40px;
+    box-shadow: var(--tk-shadow), 0 0 50px rgba(99, 102, 241, 0.18);
 }
 
-.tk-hero::after {
+.tk-hero::before {
     content: "";
     position: absolute;
-    right: -60px;
-    top: -70px;
-    width: 260px;
-    height: 260px;
+    top: -120px;
+    right: -100px;
+    width: 420px;
+    height: 420px;
     border-radius: 50%;
-    background: radial-gradient(
-        circle,
-        rgba(23, 224, 166, 0.32),
-        rgba(23, 224, 166, 0)
-    );
+    background: radial-gradient(circle, rgba(6, 182, 212, 0.32) 0%, rgba(99, 102, 241, 0.16) 50%, transparent 70%);
+    filter: blur(45px);
     pointer-events: none;
 }
 
 .tk-hero__eyebrow {
-    font-size: 0.74rem;
+    font-family: var(--tk-font-mono);
+    font-size: 0.78rem;
     font-weight: 700;
-    letter-spacing: 0.16em;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--tk-accent);
-    margin: 0 0 10px;
-}
-
-.tk-hero a {
-    color: var(--tk-accent);
-    text-decoration: none;
-}
-
-.tk-hero a:hover {
-    text-decoration: underline;
+    color: #38bdf8;
+    margin: 0 0 16px;
+    display: inline-block;
 }
 
 .tk-hero .tk-hero__title {
     font-family: var(--tk-font-display);
-    font-size: 2.35rem;
-    font-weight: 750;
-    letter-spacing: -0.025em;
-    line-height: 1.15;
-    margin: 0 0 12px;
+    font-size: 2.85rem;
+    font-weight: 850;
+    letter-spacing: -0.035em;
+    line-height: 1.12;
+    margin: 0 0 16px;
     border: none;
     padding: 0;
     color: #ffffff;
+    background: linear-gradient(135deg, #ffffff 40%, #94a3b8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .tk-hero__lede {
-    max-width: 62ch;
-    font-size: 1.03rem;
-    line-height: 1.7;
-    color: #c6d3f2;
-    margin: 0 0 22px;
+    max-width: 65ch;
+    font-size: 1.1rem;
+    line-height: 1.74;
+    color: #cbd5e1;
+    margin: 0 0 28px;
+}
+
+.tk-hero__lede a {
+    color: #38bdf8;
+    text-decoration: underline;
 }
 
 .tk-hero__actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 14px;
 }
 
+/* Action Buttons */
 .tk-btn {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 18px;
-    border-radius: 999px;
-    font-size: 0.9rem;
+    padding: 11px 24px;
+    border-radius: var(--tk-radius-full);
+    font-size: 0.92rem;
     font-weight: 600;
     text-decoration: none;
-    transition: transform 120ms ease, box-shadow 120ms ease,
-        background-color 120ms ease;
+    transition: all 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tk-btn:hover {
-    transform: translateY(-1px);
+    transform: translateY(-2px);
     text-decoration: none;
 }
 
 .tk-btn--primary {
-    background: var(--tk-accent);
-    color: #062033;
-    box-shadow: 0 4px 14px rgba(23, 224, 166, 0.3);
+    background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);
+    color: #030712;
+    font-weight: 700;
+    box-shadow: 0 4px 20px rgba(56, 189, 248, 0.4);
+}
+
+.tk-btn--primary:hover {
+    box-shadow: 0 6px 26px rgba(56, 189, 248, 0.6);
+    color: #000000;
 }
 
 .tk-btn--ghost {
-    background: rgba(255, 255, 255, 0.1);
-    color: #eef3ff;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+    background: rgba(255, 255, 255, 0.08);
+    color: #f1f5f9;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
-/* Badge strip ------------------------------------------------------------- */
+.tk-btn--ghost:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+}
+
+/* ----------------------------------------------------------------------------
+   8. Badges & Chips
+   -------------------------------------------------------------------------- */
 .tk-badges {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin: 18px 0 0;
+    gap: 10px;
+    margin: 24px 0 0;
 }
 
 .tk-badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 12px;
-    border-radius: 999px;
-    background: var(--tk-surface-alt);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
-    color: var(--tk-muted);
-    font-size: 0.76rem;
+    padding: 6px 14px;
+    border-radius: var(--tk-radius-full);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    font-size: 0.78rem;
     font-weight: 600;
     letter-spacing: 0.02em;
     text-decoration: none;
+    transition: all 140ms ease;
 }
 
 .tk-badge--brand {
-    background: rgba(59, 110, 246, 0.12);
-    border-color: rgba(59, 110, 246, 0.34);
-    color: var(--links);
+    background: rgba(99, 102, 241, 0.18);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: #a5b4fc;
 }
 
 .tk-badge--accent {
-    background: rgba(23, 224, 166, 0.14);
-    border-color: rgba(15, 156, 118, 0.4);
-    color: var(--tk-accent-dim);
+    background: rgba(6, 182, 212, 0.18);
+    border-color: rgba(6, 182, 212, 0.4);
+    color: #67e8f9;
 }
 
-/* Chips that sit on the dark hero read as glass, not paper */
-.tk-hero .tk-badge {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.22);
-    color: #dbe6ff;
-}
-
-.tk-hero .tk-badge--brand {
-    background: rgba(255, 255, 255, 0.16);
-    color: #ffffff;
-}
-
-.tk-hero .tk-badge--accent {
-    background: rgba(23, 224, 166, 0.2);
-    border-color: rgba(23, 224, 166, 0.45);
-    color: #9df3d8;
-}
-
-/* Card grids -------------------------------------------------------------- */
+/* ----------------------------------------------------------------------------
+   9. Cards & Grids
+   -------------------------------------------------------------------------- */
 .tk-grid {
     display: grid;
-    gap: var(--tk-gap);
-    margin: 1.4em 0 2em;
+    gap: 20px;
+    margin: 1.8em 0 2.4em;
 }
 
 .tk-grid--2 {
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-}
-
-.tk-grid--4 {
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
 }
 
 .tk-grid--3 {
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+}
+
+.tk-grid--4 {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
 .tk-card {
+    position: relative;
     background: var(--tk-surface);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border: 1px solid var(--tk-surface-border);
     border-radius: var(--tk-radius);
     box-shadow: var(--tk-shadow-sm);
-    padding: 20px 20px 18px;
-    transition: transform 140ms ease, box-shadow 140ms ease,
-        border-color 140ms ease;
+    padding: 24px;
+    transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms ease, border-color 180ms ease;
 }
 
 .tk-card:hover {
-    transform: translateY(-3px);
-    box-shadow: var(--tk-shadow);
-    border-color: rgba(59, 110, 246, 0.4);
+    transform: translateY(-4px);
+    box-shadow: var(--tk-shadow-glow), var(--tk-shadow);
+    border-color: var(--tk-surface-border-hover);
 }
 
 .tk-card__kicker {
@@ -600,16 +713,19 @@ blockquote {
     font-family: var(--tk-font-mono);
     font-size: 0.78rem;
     font-weight: 700;
-    letter-spacing: 0.01em;
-    color: var(--links);
-    margin: 0 0 6px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #38bdf8;
+    margin: 0 0 8px;
 }
 
 .tk-card h3,
 .tk-card__title {
-    font-size: 1.03rem;
-    font-weight: 650;
-    margin: 0 0 8px;
+    font-family: var(--tk-font-display);
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0 0 10px;
     padding: 0;
     border: none;
     color: var(--fg);
@@ -622,8 +738,8 @@ blockquote {
 
 .tk-card p,
 .tk-card__body {
-    font-size: 0.9rem;
-    line-height: 1.65;
+    font-size: 0.92rem;
+    line-height: 1.68;
     color: var(--tk-muted);
     margin: 0;
 }
@@ -631,67 +747,81 @@ blockquote {
 .tk-card__meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 14px;
+    gap: 8px;
+    margin-top: 18px;
 }
 
 .tk-card--accent {
-    border-left: 3px solid var(--tk-accent);
+    border-left: 3px solid #06b6d4;
 }
 
-/* Problem / solution rows ------------------------------------------------- */
+/* ----------------------------------------------------------------------------
+   10. Problems / Solutions Comparison Rows
+   -------------------------------------------------------------------------- */
 .tk-problems {
     display: grid;
-    gap: 10px;
-    margin: 1.2em 0 1.8em;
+    gap: 14px;
+    margin: 1.6em 0 2.2em;
 }
 
 .tk-problem {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 2px;
-    background: var(--tk-surface-alt);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
+    gap: 5px;
+    background: var(--tk-surface);
+    border: 1px solid var(--tk-surface-border);
+    border-left: 3px solid #f59e0b;
     border-radius: var(--tk-radius-sm);
-    padding: 14px 18px;
+    padding: 16px 20px;
+    transition: border-color 150ms ease, transform 150ms ease;
+}
+
+.tk-problem:hover {
+    border-color: rgba(245, 158, 11, 0.5);
+    transform: translateX(3px);
 }
 
 .tk-problem__label {
-    font-size: 0.74rem;
+    font-family: var(--tk-font-mono);
+    font-size: 0.75rem;
     font-weight: 700;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--tk-warn);
+    color: #f59e0b;
 }
 
 .tk-problem__body {
-    font-size: 0.94rem;
+    font-size: 0.96rem;
+    font-weight: 500;
     color: var(--fg);
 }
 
 .tk-problem__fix {
     font-size: 0.9rem;
     color: var(--tk-muted);
+    margin-top: 2px;
 }
 
 .tk-problem__fix b {
-    color: var(--tk-accent-dim);
+    color: #10b981;
 }
 
-/* Numbered steps ---------------------------------------------------------- */
+/* ----------------------------------------------------------------------------
+   11. Numbered Steps
+   -------------------------------------------------------------------------- */
 .tk-steps {
     list-style: none;
     counter-reset: tk-step;
-    margin: 1.4em 0 2em;
+    margin: 1.8em 0 2.4em;
     padding: 0;
 }
 
 .tk-steps > li {
     counter-increment: tk-step;
     position: relative;
-    margin: 0 0 18px;
-    padding: 4px 0 0 54px;
-    min-height: 34px;
+    margin: 0 0 26px;
+    padding: 4px 0 0 60px;
+    min-height: 40px;
 }
 
 .tk-steps > li::before {
@@ -701,22 +831,23 @@ blockquote {
     top: 0;
     display: grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
-    background: var(--tk-brand-deep);
-    color: #ffffff;
+    background: linear-gradient(135deg, #6366f1 0%, #38bdf8 100%);
+    color: #030712;
     font-family: var(--tk-font-mono);
-    font-size: 0.86rem;
-    font-weight: 700;
+    font-size: 0.92rem;
+    font-weight: 800;
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
 }
 
 .tk-steps > li::after {
     content: "";
     position: absolute;
-    left: 16px;
-    top: 40px;
-    bottom: -18px;
+    left: 18px;
+    top: 44px;
+    bottom: -22px;
     width: 2px;
     background: var(--tk-surface-border);
 }
@@ -726,31 +857,36 @@ blockquote {
 }
 
 .tk-steps h4 {
-    font-size: 0.98rem;
-    font-weight: 650;
-    margin: 4px 0 6px;
+    font-family: var(--tk-font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 2px 0 8px;
 }
 
-/* Callouts ---------------------------------------------------------------- */
+/* ----------------------------------------------------------------------------
+   12. Callouts
+   -------------------------------------------------------------------------- */
 .tk-callout {
     display: block;
     border-radius: var(--tk-radius);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
-    border-left: 4px solid var(--tk-brand);
-    background: var(--tk-surface-alt);
-    padding: 14px 18px;
-    margin: 1.5em 0;
-    font-size: 0.93rem;
+    border: 1px solid var(--tk-surface-border);
+    border-left: 4px solid #6366f1;
+    background: var(--tk-surface);
+    padding: 18px 22px;
+    margin: 1.8em 0;
+    font-size: 0.95rem;
+    box-shadow: var(--tk-shadow-sm);
 }
 
 .tk-callout__title {
     display: block;
-    font-size: 0.74rem;
+    font-family: var(--tk-font-mono);
+    font-size: 0.76rem;
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--tk-brand);
-    margin-bottom: 4px;
+    color: #818cf8;
+    margin-bottom: 6px;
 }
 
 .tk-callout p:last-child {
@@ -758,108 +894,173 @@ blockquote {
 }
 
 .tk-callout--tip {
-    border-left-color: var(--tk-accent);
+    border-left-color: #10b981;
 }
 
 .tk-callout--tip .tk-callout__title {
-    color: var(--tk-accent-dim);
+    color: #34d399;
 }
 
 .tk-callout--warn {
-    border-left-color: var(--tk-warn);
+    border-left-color: #f59e0b;
 }
 
 .tk-callout--warn .tk-callout__title {
-    color: var(--tk-warn);
+    color: #fbbf24;
 }
 
-/* Spec table (crate pages) ------------------------------------------------ */
+/* ----------------------------------------------------------------------------
+   13. Spec Grid (Crate References)
+   -------------------------------------------------------------------------- */
 .tk-spec {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-    gap: 10px;
-    margin: 1.2em 0 1.8em;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin: 1.6em 0 2.2em;
 }
 
 .tk-spec__item {
     background: var(--tk-surface);
-    border: var(--tk-border-width) solid var(--tk-surface-border);
+    border: 1px solid var(--tk-surface-border);
     border-radius: var(--tk-radius-sm);
-    padding: 12px 14px;
+    padding: 14px 18px;
+    transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.tk-spec__item:hover {
+    transform: translateY(-2px);
+    border-color: var(--tk-surface-border-hover);
 }
 
 .tk-spec__key {
-    font-size: 0.7rem;
+    font-family: var(--tk-font-mono);
+    font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--tk-muted);
+    display: block;
+    margin-bottom: 4px;
 }
 
 .tk-spec__value {
     font-family: var(--tk-font-mono);
-    font-size: 0.88rem;
+    font-size: 0.92rem;
     font-weight: 600;
     color: var(--fg);
 }
 
-/* Small helpers ----------------------------------------------------------- */
-.tk-muted {
-    color: var(--tk-muted);
-}
-
-.tk-eyebrow {
-    font-size: 0.74rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--tk-brand);
-}
-
-.tk-divider {
-    border: none;
-    border-top: var(--tk-border-width) solid var(--tk-surface-border);
-    margin: 2.2em 0;
-}
-
-.tk-cta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    background: linear-gradient(
-        100deg,
-        rgba(59, 110, 246, 0.14),
-        rgba(23, 224, 166, 0.12)
-    );
-    border: var(--tk-border-width) solid rgba(59, 110, 246, 0.3);
+/* ----------------------------------------------------------------------------
+   14. Tables & Blockquotes
+   -------------------------------------------------------------------------- */
+.table-wrapper {
     border-radius: var(--tk-radius);
-    padding: 20px 24px;
-    margin: 2em 0 1em;
+    box-shadow: var(--tk-shadow-sm);
+    border: 1px solid var(--tk-surface-border);
+    overflow: hidden;
+    margin: 1.8em 0;
 }
 
-.tk-cta p {
-    margin: 0;
-    font-size: 0.95rem;
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.94em;
+}
+
+table thead th {
+    background: var(--table-header-bg);
+    color: #f1f5f9;
+    font-family: var(--tk-font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--table-border-color);
+    text-align: left;
+}
+
+table tbody td {
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--table-border-color);
+}
+
+table tbody tr:nth-child(even) {
+    background: var(--table-alternate-bg);
+}
+
+blockquote {
+    background: var(--quote-bg);
+    border-left: 4px solid var(--quote-border);
+    border-radius: 0 var(--tk-radius) var(--tk-radius) 0;
+    margin: 1.8em 0;
+    padding: 16px 22px;
+}
+
+/* ----------------------------------------------------------------------------
+   15. Previous / Next Chapter Cards
+   -------------------------------------------------------------------------- */
+.nav-chapters {
+    display: flex;
+    align-items: center;
+    background: var(--tk-surface);
+    border: 1px solid var(--tk-surface-border);
+    border-radius: var(--tk-radius);
+    box-shadow: var(--tk-shadow-sm);
+    min-height: 90px;
+    padding: 0 24px;
+    transition: all 160ms ease;
+    text-decoration: none;
+}
+
+.nav-chapters:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--tk-shadow-glow), var(--tk-shadow);
+    border-color: var(--tk-surface-border-hover);
+    background: var(--tk-surface);
+    text-decoration: none;
+}
+
+.nav-links {
+    font-family: var(--tk-font-display);
+    font-size: 1.04rem;
+    font-weight: 650;
     color: var(--fg);
 }
 
 /* ----------------------------------------------------------------------------
-   8. Responsive + print
+   16. Call to Action (.tk-cta)
    -------------------------------------------------------------------------- */
-@media (max-width: 711px) {
+.tk-cta {
+    background: radial-gradient(130% 160% at 5% 0%, #1e1b4b 0%, #0f172a 100%);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: var(--tk-radius);
+    padding: 24px 28px;
+    margin: 2em 0;
+    box-shadow: var(--tk-shadow-sm);
+}
+
+.tk-cta p {
+    font-size: 1.02rem;
+    line-height: 1.7;
+    margin: 0 0 16px;
+}
+
+/* ----------------------------------------------------------------------------
+   17. Responsive Tweaks
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
     :root {
-        --page-padding: 14px;
+        --page-padding: 18px;
     }
 
     .tk-hero {
-        padding: 26px 20px 24px;
+        padding: 34px 24px 28px;
         border-radius: var(--tk-radius);
     }
 
-    .tk-hero__title {
-        font-size: 1.75rem;
+    .tk-hero .tk-hero__title {
+        font-size: 2.1rem;
     }
 
     .tk-grid--2,
@@ -869,13 +1070,6 @@ blockquote {
     }
 
     .content h1 {
-        font-size: 1.7rem;
-    }
-}
-
-@media print {
-    .tk-hero,
-    .tk-card {
-        box-shadow: none;
+        font-size: 1.9rem;
     }
 }
