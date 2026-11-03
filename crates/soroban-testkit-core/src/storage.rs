@@ -288,6 +288,102 @@ pub fn inspect_storage(env: &Env, contract: &Address) -> Vec<StorageEntry> {
     StorageSnapshot::capture(env, contract).into_entries()
 }
 
+/// Assert that a key or keys matching a pattern are stored in the expected storage tier.
+///
+/// # Panics
+///
+/// Panics if no matching keys exist in the contract's storage, or if any matching
+/// key is stored in a tier other than `expected_tier`.
+pub fn assert_storage_tier(
+    env: &Env,
+    contract: &Address,
+    pattern: &str,
+    expected_tier: StorageTier,
+) {
+    let snapshot = StorageSnapshot::capture(env, contract);
+    let is_pattern = pattern.contains('*');
+
+    if is_pattern {
+        let prefix = pattern.strip_suffix('*');
+        let suffix = pattern.strip_prefix('*');
+
+        let matches: Vec<&StorageEntry> = snapshot
+            .entries()
+            .iter()
+            .filter(|e| {
+                if pattern == "*" {
+                    true
+                } else if let Some(p) = prefix {
+                    e.key.starts_with(p)
+                } else if let Some(s) = suffix {
+                    e.key.ends_with(s)
+                } else {
+                    e.key == pattern
+                }
+            })
+            .collect();
+
+        if matches.is_empty() {
+            panic!(
+                "Expected storage entries matching pattern '{}' in tier {}, but no matching keys were found in contract storage",
+                pattern,
+                expected_tier.as_str()
+            );
+        }
+
+        for entry in matches {
+            if entry.tier != expected_tier {
+                panic!(
+                    "Storage tier mismatch for key '{}': expected {}, found {}",
+                    entry.key,
+                    expected_tier.as_str(),
+                    entry.tier.as_str()
+                );
+            }
+        }
+    } else {
+        match snapshot.get(pattern) {
+            Some(entry) => {
+                if entry.tier != expected_tier {
+                    panic!(
+                        "Storage tier mismatch for key '{}': expected {}, found {}",
+                        pattern,
+                        expected_tier.as_str(),
+                        entry.tier.as_str()
+                    );
+                }
+            }
+            None => {
+                panic!(
+                    "Expected key '{}' to be stored in tier {}, but key was not found in contract storage",
+                    pattern,
+                    expected_tier.as_str()
+                );
+            }
+        }
+    }
+}
+
+/// Asserts that a contract storage key or pattern is stored in the expected [`StorageTier`].
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use soroban_testkit_core::assert_storage_tier;
+/// use soroban_testkit_core::storage::StorageTier;
+///
+/// # fn example(env: &soroban_sdk::Env, contract: &soroban_sdk::Address) {
+/// assert_storage_tier!(env, contract, "admin", StorageTier::Instance);
+/// assert_storage_tier!(env, contract, "balances:*", StorageTier::Persistent);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! assert_storage_tier {
+    ($env:expr, $contract:expr, $pattern:expr, $expected_tier:expr) => {
+        $crate::storage::assert_storage_tier($env, $contract, $pattern, $expected_tier);
+    };
+}
+
 fn index(entries: &[StorageEntry]) -> BTreeMap<(StorageTier, String), &StorageEntry> {
     entries
         .iter()
@@ -399,6 +495,57 @@ mod tests {
         let contract = env.register(Store, ());
         StoreClient::new(&env, &contract).seed(&Address::generate(&env));
         (env, contract)
+    }
+
+    #[test]
+    fn assert_storage_tier_matches_each_tier() {
+        let (env, contract) = seeded();
+        assert_storage_tier!(&env, &contract, "admin", StorageTier::Instance);
+        assert_storage_tier!(&env, &contract, "count", StorageTier::Persistent);
+        assert_storage_tier!(&env, &contract, "ttl", StorageTier::Temporary);
+    }
+
+    #[test]
+    fn assert_storage_tier_matches_wildcard_patterns() {
+        let (env, contract) = seeded();
+        assert_storage_tier!(&env, &contract, "ad*", StorageTier::Instance);
+        assert_storage_tier!(&env, &contract, "*unt", StorageTier::Persistent);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Storage tier mismatch for key 'admin': expected persistent, found instance"
+    )]
+    fn assert_storage_tier_fails_on_tier_mismatch() {
+        let (env, contract) = seeded();
+        assert_storage_tier!(&env, &contract, "admin", StorageTier::Persistent);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Expected key 'missing' to be stored in tier instance, but key was not found in contract storage"
+    )]
+    fn assert_storage_tier_fails_when_key_missing() {
+        let (env, contract) = seeded();
+        assert_storage_tier!(&env, &contract, "missing", StorageTier::Instance);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Expected storage entries matching pattern 'missing*' in tier persistent, but no matching keys were found in contract storage"
+    )]
+    fn assert_storage_tier_fails_when_pattern_finds_no_keys() {
+        let (env, contract) = seeded();
+        assert_storage_tier!(&env, &contract, "missing*", StorageTier::Persistent);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Storage tier mismatch for key 'admin': expected temporary, found instance"
+    )]
+    fn assert_storage_tier_fails_when_pattern_mismatches_tier() {
+        let (env, contract) = seeded();
+        assert_storage_tier!(&env, &contract, "ad*", StorageTier::Temporary);
     }
 
     #[test]

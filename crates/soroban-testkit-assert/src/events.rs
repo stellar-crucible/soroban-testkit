@@ -310,6 +310,32 @@ impl<'a> EventData<'a> {
                 .then(|| EventData::new(self.env, entry.val.clone()))
         })
     }
+
+    /// Enumerate the symbol field names present in a map-shaped payload, in ledger order.
+    ///
+    /// Returns a `Vec<String>` containing the keys of the map.
+    /// Returns an empty vector when the payload is a scalar, a vector, or otherwise not a map.
+    ///
+    /// # Note
+    ///
+    /// The Soroban SDK publishes event maps **sparse** by default: a field whose
+    /// value is `None` is absent from the map rather than stored as `void`.
+    /// The returned fields therefore describe the fields the ledger actually carries,
+    /// which may not include every field declared on the struct.
+    pub fn fields(&self) -> Vec<String> {
+        let soroban_sdk::xdr::ScVal::Map(Some(map)) = &self.raw else {
+            return Vec::new();
+        };
+        map.iter()
+            .filter_map(|entry| {
+                let soroban_sdk::xdr::ScVal::Symbol(symbol) = &entry.key else {
+                    return None;
+                };
+                let bytes: &[u8] = AsRef::<[u8]>::as_ref(symbol);
+                String::from_utf8(bytes.to_vec()).ok()
+            })
+            .collect()
+    }
 }
 
 /// The data payload of an event, unwrapped from its XDR body.
@@ -654,6 +680,45 @@ mod tests {
                         amount: 500,
                     })
             });
+    }
+
+    #[test]
+    fn event_data_fields_enumerates_struct_fields_in_ledger_order() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let to = Address::generate(&env);
+
+        client.emit_shapes(&to);
+
+        EventMatcher::new(&env)
+            .with_topic("moved")
+            .assert_data_matches(|data| {
+                let names = data.fields();
+                names == ["amount", "to"]
+            });
+    }
+
+    #[test]
+    fn event_data_fields_returns_empty_for_scalar_payload() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        client.emit_scalars(&100);
+
+        EventMatcher::new(&env)
+            .with_topic("count")
+            .assert_data_matches(|data| data.fields().is_empty());
+    }
+
+    #[test]
+    fn event_data_fields_returns_empty_for_vector_payload() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let to = Address::generate(&env);
+        client.emit_shapes(&to);
+
+        EventMatcher::new(&env)
+            .with_topic("list")
+            .assert_data_matches(|data| data.fields().is_empty());
     }
 
     #[test]

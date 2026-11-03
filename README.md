@@ -12,7 +12,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 [![Budget baseline](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml/badge.svg)](https://github.com/stellar-crucible/soroban-testkit/actions/workflows/budget-baseline.yml)
 [![Release](https://img.shields.io/github/v/release/stellar-crucible/soroban-testkit?label=release&color=brightgreen)](https://github.com/stellar-crucible/soroban-testkit/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=brightgreen)](https://crates.io/crates/soroban-testkit-core)
-[![Open tasks](https://img.shields.io/github/issues/stellar-crucible/soroban-testkit/Stellar%20Wave?label=Stellar%20Wave%20tasks&color=5319E7)](https://github.com/stellar-crucible/soroban-testkit/issues?q=is%3Aopen+is%3Aissue+label%3A%22Stellar+Wave%22)
+[![Stellar Wave](https://img.shields.io/badge/Stellar%20Wave-Drips-5319E7.svg)](https://www.drips.network/wave/stellar)
 
 ## Documentation
 
@@ -21,6 +21,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 | Introduction & architecture | [Docs home](https://stellar-crucible.github.io/soroban-testkit/) |
 | Installation | [Getting started](https://stellar-crucible.github.io/soroban-testkit/getting-started/installation.html) |
 | First test in 5 minutes | [Quick start](https://stellar-crucible.github.io/soroban-testkit/getting-started/quick-start.html) |
+| Troubleshooting | [Troubleshooting](https://stellar-crucible.github.io/soroban-testkit/getting-started/troubleshooting.html) |
 | Crate references | [core](https://stellar-crucible.github.io/soroban-testkit/crates/core.html) · [assert](https://stellar-crucible.github.io/soroban-testkit/crates/assert.html) · [fixtures](https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html) · [generators](https://stellar-crucible.github.io/soroban-testkit/crates/generators.html) |
 | Recipes | [Testing patterns](https://stellar-crucible.github.io/soroban-testkit/guides/testing-patterns.html) · [Worked example: counter](https://stellar-crucible.github.io/soroban-testkit/guides/counter-example.html) · [Budget-aware testing](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html) · [Property testing](https://stellar-crucible.github.io/soroban-testkit/guides/property-testing.html) |
 | Contribute & earn | [Contributing guide](https://stellar-crucible.github.io/soroban-testkit/contributing.html) · [Roadmap](https://stellar-crucible.github.io/soroban-testkit/roadmap.html) |
@@ -185,7 +186,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 159 tests: all four crates + examples/counter
+cargo test --workspace --locked      # 171 tests: all four crates + examples/counter
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
@@ -210,7 +211,7 @@ Release notices and discussion happen in the [Telegram channel](https://t.me/+_t
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-This project participates in the [Stellar Wave](https://www.drips.network/wave/stellar) program via [Drips](https://www.drips.network). Check our [issues](https://github.com/stellar-crucible/soroban-testkit/issues) for open tasks with bounty labels.
+This project participates in the [Stellar Wave](https://www.drips.network/wave/stellar) program via [Drips](https://www.drips.network). Check our [issues](https://github.com/stellar-crucible/soroban-testkit/issues) for open tasks and roadmap items.
 
 ## Contributors
 
