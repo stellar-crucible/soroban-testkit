@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This project participates in the [S
 
 1. Fork and clone the repository
 2. Install Rust 1.91+ via [rustup](https://rustup.rs/)
-3. Run `cargo test --workspace --locked` to verify everything works — 182 tests should pass, plus 2 ignored baseline jobs that only CI enforces
+3. Run `cargo test --workspace --locked` to verify everything works — 220 tests should pass, plus 2 ignored baseline jobs that only CI enforces
 4. Pick an issue labeled `Stellar Wave` plus a complexity level (`complexity:trivial`, `complexity:medium`, or `complexity:high`); comment on it before starting so two people don't collide
 
 ## Your first pull request
@@ -27,7 +27,7 @@ One required check is not a build check. **Malware guard** compares your diff ag
 ## Development
 
 ```bash
-cargo test --workspace --locked          # all crates + examples/counter
+cargo test --workspace --locked          # all four crates + examples/counter + examples/token
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check                  # CI runs the check, not the write
 mdbook build docs                        # documentation site must build clean
@@ -79,7 +79,8 @@ cargo publish -p soroban-testkit-generators
 git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
 ```
 
-`examples/counter` carries `publish = false` — it is a worked example, not a distribution.
+`examples/counter` and `examples/token` carry `publish = false` — they are worked
+examples, not a distribution.
 
 Move the `Unreleased` CHANGELOG entries into a `[X.Y.Z]` section with the date in the same commit as the version bump, and add the section's link reference to the tag URL. Update `Installation` and the roadmap's `Current` row to the new version, since both quote a version requirement.
 

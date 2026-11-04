@@ -23,7 +23,7 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 | First test in 5 minutes | [Quick start](https://stellar-crucible.github.io/soroban-testkit/getting-started/quick-start.html) |
 | Troubleshooting | [Troubleshooting](https://stellar-crucible.github.io/soroban-testkit/getting-started/troubleshooting.html) |
 | Crate references | [core](https://stellar-crucible.github.io/soroban-testkit/crates/core.html) · [assert](https://stellar-crucible.github.io/soroban-testkit/crates/assert.html) · [fixtures](https://stellar-crucible.github.io/soroban-testkit/crates/fixtures.html) · [generators](https://stellar-crucible.github.io/soroban-testkit/crates/generators.html) |
-| Recipes | [Testing patterns](https://stellar-crucible.github.io/soroban-testkit/guides/testing-patterns.html) · [Worked example: counter](https://stellar-crucible.github.io/soroban-testkit/guides/counter-example.html) · [Budget-aware testing](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html) · [Property testing](https://stellar-crucible.github.io/soroban-testkit/guides/property-testing.html) |
+| Recipes | [Testing patterns](https://stellar-crucible.github.io/soroban-testkit/guides/testing-patterns.html) · [Worked example: counter](https://stellar-crucible.github.io/soroban-testkit/guides/counter-example.html) · [Worked example: token](https://stellar-crucible.github.io/soroban-testkit/guides/token-example.html) · [Budget-aware testing](https://stellar-crucible.github.io/soroban-testkit/guides/budget-testing.html) · [Property testing](https://stellar-crucible.github.io/soroban-testkit/guides/property-testing.html) |
 | Contribute & earn | [Contributing guide](https://stellar-crucible.github.io/soroban-testkit/contributing.html) · [Roadmap](https://stellar-crucible.github.io/soroban-testkit/roadmap.html) |
 
 ## Why Testkit?
@@ -175,8 +175,9 @@ soroban-testkit/
 │   ├── soroban-testkit-fixtures/     # Test context builder and fixtures
 │   └── soroban-testkit-generators/   # Property testing strategies
 ├── examples/
-│   └── counter/              # Contract + integration tests using every crate
-│                             # + budget.json: the costs CI holds them to
+│   ├── counter/        # Contract + integration tests using every crate
+│   │                   # + budget.json: the costs CI holds them to
+│   └── token/          # ERC-20 style contract, one test file per crate
 ├── docs/                     # mdBook documentation source (theme/custom.css)
 ├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
 ├── Cargo.toml                # Workspace root
@@ -186,7 +187,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 182 tests: all four crates + examples/counter
+cargo test --workspace --locked      # 220 tests: all four crates + examples/counter + examples/token
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
@@ -202,6 +203,16 @@ memory ceilings, and a `#[should_panic]` case that shows an unmocked
 what `get` and `increment` cost, and the `Budget baseline` workflow re-measures
 them on every pull request so a storage read nobody intended cannot slip in as a
 free change.
+
+[`examples/token`](examples/token) is an ERC-20 shaped token, and it is the
+example for the parts a counter cannot reach: a three-field event payload
+(`from`, `to`, `amount`), two contracts registered in the same environment, an
+allowance a spender draws down, and a `proptest` suite over generated amounts
+and both address formats. Its four test files split by crate — `src/test.rs` on
+fixtures, `tests/assert_events.rs` on assertions, `tests/budget_and_storage.rs`
+on core, `tests/property.rs` on generators — so each one reads as a page of the
+documentation that happens to run. [Worked Example: Token](https://stellar-crucible.github.io/soroban-testkit/guides/token-example.html)
+walks through them.
 
 ## Community
 

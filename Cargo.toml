@@ -6,6 +6,7 @@ members = [
     "crates/soroban-testkit-fixtures",
     "crates/soroban-testkit-generators",
     "examples/counter",
+    "examples/token",
 ]
 
 [workspace.package]
