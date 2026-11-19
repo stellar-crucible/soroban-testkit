@@ -29,6 +29,10 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
 | `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
+| `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
+| `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
+| `CompatibilityAuditor` | Evaluates contracts against upcoming SDK v29 / Protocol 22+ changes and flags deprecated host calls |
+| `CompatibilityScorecard` | Actionable readiness scorecard with grades, remediation advice, and Markdown output |
 
 ## Budget snapshots
 
@@ -253,6 +257,33 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
 
+## Storage Namespace Auditing
+
+When contracts compose multiple modules or traits, bare symbol keys such as
+`"admin"` can collide and silently overwrite another module's state.
+`NamespaceAuditor` records keys per module and reports collisions and
+un-namespaced keys.
+
+```rust
+use soroban_testkit_core::namespace_auditor::NamespaceAuditor;
+
+let mut auditor = NamespaceAuditor::new(&env, &contract);
+auditor
+    .record("ownable", "ownable::admin")
+    .record("pausable", "pausable::paused");
+
+let report = auditor.audit();
+assert!(!report.has_collisions(), "Storage collision: {:?}", report.collisions());
+println!("{report}");
+```
+
+Keys are considered namespaced when they contain a namespace separator
+(`::`, `:`, `.`, `/`) such as `DataKey::Admin` or `ownable:admin`. Bare keys
+like `admin` are flagged as collision risks. A collision is reported when the
+same key is written by two independent modules. `report.modules()` returns the
+full key map, while `NamespaceAuditor::from_entries` infers module ownership
+from a `StorageEntry` snapshot.
+
 ## Storage footprint diffs in CI
 
 A refactor that widens a struct or adds a key silently grows what a contract
@@ -346,6 +377,47 @@ extracts:
 Post `footprint.md` as the pull-request comment the same way the `Budget
 baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
 as a function, for embedding it in an `xtask` without spawning a process.
+
+## Storage fragmentation analyzer
+
+Storing data across dozens of small scalar entries inflates the ledger footprint due to repeated `LedgerKey` overhead and redundant key serialization. `StorageFragmentationAnalyzer` inspects contract storage across `instance`, `persistent`, and `temporary` tiers to measure key-to-value byte ratios, identify fragmented entries sharing common prefixes, and calculate projected byte and Stroop rent savings:
+
+```rust
+use soroban_testkit_core::{StorageFragmentationAnalyzer, StorageTier};
+
+let analyzer = StorageFragmentationAnalyzer::new()
+    .with_overhead_threshold(0.40)      // Flag entries where key bytes >= 40% of total
+    .with_stroop_rate_per_byte(100);    // Rent rate assumption for Stroop savings
+
+let report = analyzer.analyze(&env, &contract_id);
+
+println!("Overall overhead ratio: {:.1}%", report.overall_overhead_ratio * 100.0);
+println!("Potential byte savings: {} B", report.total_projected_byte_savings());
+println!("Projected Stroop savings: {} Stroops", report.total_projected_stroop_savings());
+
+// Render an optimization report as Markdown:
+let markdown = report.to_markdown();
+```
+
+## SDK v29 compatibility auditor
+
+As protocol standards move from Protocol 21/22 toward Protocol 23 and SDK v29, legacy host functions and untyped APIs are deprecated. `CompatibilityAuditor` monitors contract invocations, events, and host errors to identify deprecated calls early, outputting a compatibility scorecard with concrete remediation instructions:
+
+```rust
+use soroban_testkit_core::{CompatibilityAuditor, CompatibilityGrade};
+
+let mut auditor = CompatibilityAuditor::new()
+    .with_target_protocol(22); // Target Protocol 22 / SDK v29
+
+// Audit contract interactions:
+let scorecard = auditor.audit_contract(&env, &contract_id);
+
+println!("Readiness grade: {}", scorecard.grade.as_str());
+assert!(scorecard.is_ready_for_upgrade, "Contract contains critical obsolete calls!");
+
+// Render a CI-ready Markdown report:
+let markdown_report = scorecard.to_markdown();
+```
 
 <hr class="tk-divider" />
 

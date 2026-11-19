@@ -1224,6 +1224,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "multisig-vault"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1960,6 +1972,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-flash-mint"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-token"
 version = "0.4.1"
 dependencies = [
@@ -1975,6 +1999,7 @@ dependencies = [
 name = "soroban-testkit-fixtures"
 version = "0.4.1"
 dependencies = [
+ "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",
 ]
@@ -1983,7 +2008,10 @@ dependencies = [
 name = "soroban-testkit-generators"
 version = "0.4.1"
 dependencies = [
+ "ed25519-dalek",
+ "k256",
  "proptest",
+ "sha2",
  "soroban-sdk",
 ]
 

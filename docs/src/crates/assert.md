@@ -27,6 +27,9 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
+| `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
+| `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
 
 ## Event matching
 
@@ -363,6 +366,101 @@ Assertions fail with the counts they observed, which is what makes them worth us
 
 ```text
 assertion `left == right` failed: Expected 3 events, found 1
+```
+
+## Storage tier quota assertions
+
+Protocols must keep storage tier entry counts within bounded budgets: instance storage is reserved for small singleton configuration, persistent storage holds durable state, and temporary storage manages short-lived queues. `assert_storage_tier_count!` validates entry count quotas per tier:
+
+```rust
+use soroban_testkit_assert::assert_storage_tier_count;
+
+// Enforce quotas using block syntax:
+assert_storage_tier_count!(env, contract_id, {
+    instance: 1,           // Exactly 1 instance entry
+    max_persistent: 10,    // At most 10 persistent entries
+    temporary: 0,          // No temporary storage entries
+});
+
+// Or concise assignment syntax:
+assert_storage_tier_count!(env, contract_id, max_instance = 3, max_persistent = 10);
+```
+
+When a quota is breached, the assertion prints an informative breakdown table listing all stored keys per tier:
+
+```text
+Storage allocation quota exceeded for contract:
+Breached tiers: persistent (found 12, expected max 10)
+
+| Tier        | Count | Quota          | Status | Keys                                       |
+|-------------|-------|----------------|--------|--------------------------------------------|
+| instance    | 1     | max 5          | PASS   | "cfg"                                      |
+| persistent  | 12    | max 10         | BREACH | "u_1", "u_2", "u_3", ... (total 12)        |
+| temporary   | 0     | exact 0        | PASS   | (none)                                     |
+```
+
+## Multi-party balance conservation
+
+Asserting balance conservation across multi-user operations (e.g., swaps, multi-hop routes, fee splits, or batch transfers) commonly leads to repetitive boilerplate when querying balances before and after calls. The `assert_balance_conserved!` macro captures pre-invocation balances, runs the operation, verifies that total tokens across all tracked participants plus reserves are conserved, and accounts for explicit external mints or burns:
+
+```rust
+use soroban_testkit_assert::assert_balance_conserved;
+
+// Standard 2-party transfer:
+assert_balance_conserved!(
+    accounts: [&alice, &bob],
+    balance: |addr| token_client.balance(addr),
+    call: {
+        token_client.transfer(&alice, &bob, &100);
+    }
+);
+
+// Multi-party swap with fees, liquidity pool reserve, and custom labels:
+assert_balance_conserved!(
+    accounts: [
+        (&alice, "Alice (Trader)"),
+        (&bob, "Bob (Recipient)"),
+        (&pool, "AMM Liquidity Pool"),
+        (&treasury, "Protocol Fee Vault")
+    ],
+    balance: |addr| token_client.balance(addr),
+    call: {
+        router.swap(&alice, &bob, &1000);
+    }
+);
+
+// Invocations involving external mints or burns:
+assert_balance_conserved!(
+    accounts: [&alice, &vault],
+    balance: |addr| token_client.balance(addr),
+    mint: 500,
+    burn: 100,
+    call: {
+        token_client.mint(&alice, &500);
+        token_client.burn(&vault, &100);
+    }
+);
+```
+
+When an invariant is violated (for example, if a fee calculation suffers from fractional token loss or round-off leakage), `assert_balance_conserved!` panics with a formatted debit/credit reconciliation table:
+
+```text
+Balance Conservation Breach: Discrepancy = -1 (LEAK DETECTED)
+Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
+
+------------------------------------------------------------------------------------------------------
+| Account / Reserve            |    Pre-Balance |   Post-Balance |     Delta (Debit/Credit) |
+------------------------------------------------------------------------------------------------------
+| Alice                        |           1000 |            900 |                     -100 |
+| Bob                          |              0 |             97 |                      +97 |
+| Fee Collector                |              0 |              2 |                       +2 |
+------------------------------------------------------------------------------------------------------
+| Total Tracked                |           1000 |            999 |                       -1 |
+| External Mints (+)           |                |                |                       +0 |
+| External Burns (-)           |                |                |                       -0 |
+------------------------------------------------------------------------------------------------------
+| Discrepancy                  |                |                |       -1 (LEAK DETECTED) |
+------------------------------------------------------------------------------------------------------
 ```
 
 <div class="tk-grid tk-grid--2">
