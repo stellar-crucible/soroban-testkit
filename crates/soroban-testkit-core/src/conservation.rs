@@ -158,7 +158,8 @@ impl ConservationVerifier {
         if from_balance < amount as u64 {
             // This would go negative - record it anyway for tracking
         }
-        self.user_balances.insert(*from, from_balance.saturating_sub(amount));
+        self.user_balances
+            .insert(*from, from_balance.saturating_sub(amount));
 
         // Update to balance
         let to_balance = self.user_balances.get(to).copied().unwrap_or(0);
