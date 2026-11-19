@@ -188,7 +188,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 280 tests: all four crates + all three examples
+cargo test --workspace --locked      # 370 tests: all four crates + all three examples
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
