@@ -58,6 +58,423 @@ impl AuthArgs {
         self.args.push(AuthArg::Exact(value.into_val(env)));
         self
     }
+
+    fn matches_vec(&self, env: &Env, actual: &soroban_sdk::Vec<Val>) -> bool {
+        self.args.len() == actual.len() as usize
+            && self
+                .args
+                .iter()
+                .zip(actual.iter())
+                .all(|(pattern, actual_val)| pattern.matches(env, &actual_val))
+    }
+
+    fn describe(&self, env: &Env) -> String {
+        self.args
+            .iter()
+            .map(|arg| match arg {
+                AuthArg::Any => "_".to_string(),
+                AuthArg::Exact(value) => ScVal::try_from_val(env, value)
+                    .map(|value| data_label(env, &value))
+                    .unwrap_or_else(|_| format!("{value:?}")),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// One entry in a node's expected child invocation list.
+///
+/// Inside `sub_invocations: [..]`, `_` matches any single child invocation,
+/// `..` matches zero or more arbitrary child invocations, and `{ .. }` matches
+/// a nested [`AuthSubTree`].
+pub enum SubInvocationPattern {
+    /// Matches any single child invocation (`_`).
+    Any,
+    /// Matches zero or more child invocations (`..`).
+    AnyMany,
+    /// Matches a nested authorization sub-tree.
+    Node(AuthSubTree),
+}
+
+/// An ordered pattern list over a node's `sub_invocations`, built by
+/// `assert_auth_sub_tree_matches!`.
+#[derive(Default)]
+pub struct SubInvocations {
+    patterns: Vec<SubInvocationPattern>,
+}
+
+impl SubInvocations {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Matches any single child invocation at the next position (`_`).
+    pub fn any(mut self) -> Self {
+        self.patterns.push(SubInvocationPattern::Any);
+        self
+    }
+
+    /// Matches zero or more child invocations at this position (`..`).
+    pub fn any_many(mut self) -> Self {
+        self.patterns.push(SubInvocationPattern::AnyMany);
+        self
+    }
+
+    /// Requires the next child invocation to match `node`.
+    pub fn node(mut self, node: AuthSubTree) -> Self {
+        self.patterns.push(SubInvocationPattern::Node(node));
+        self
+    }
+}
+
+/// One node in an expected authorization sub-tree.
+///
+/// Every filter (`contract`, `function`, `args`, `sub_invocations`) is
+/// optional: leaving a filter unset accepts any value there. Leaving
+/// `sub_invocations` unset (or calling [`Self::any_sub_invocations`]) accepts
+/// any child invocations, whereas passing an empty [`SubInvocations`] requires
+/// a leaf node with no children.
+#[derive(Default)]
+pub struct AuthSubTree {
+    contract: Option<Address>,
+    function: Option<String>,
+    args: Option<AuthArgs>,
+    sub_invocations: Option<SubInvocations>,
+}
+
+impl AuthSubTree {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Restricts matches to invocations targeting `contract`.
+    pub fn contract(mut self, contract: &Address) -> Self {
+        self.contract = Some(contract.clone());
+        self
+    }
+
+    /// Restricts matches to contract calls named `function`.
+    pub fn function(mut self, function: impl Into<String>) -> Self {
+        self.function = Some(function.into());
+        self
+    }
+
+    /// Restricts matches to invocations whose arguments satisfy `args`.
+    pub fn args(mut self, args: AuthArgs) -> Self {
+        self.args = Some(args);
+        self
+    }
+
+    /// Requires this node's child invocations to match `children`.
+    pub fn sub_invocations(mut self, children: SubInvocations) -> Self {
+        self.sub_invocations = Some(children);
+        self
+    }
+
+    /// Accepts any child invocations under this node (zero or more).
+    pub fn any_sub_invocations(mut self) -> Self {
+        self.sub_invocations = None;
+        self
+    }
+
+    fn matches_header(&self, env: &Env, invocation: &AuthorizedInvocation) -> bool {
+        let needs_contract_fn =
+            self.contract.is_some() || self.function.is_some() || self.args.is_some();
+        if !needs_contract_fn {
+            return true;
+        }
+
+        let AuthorizedFunction::Contract((contract, function, args)) = &invocation.function else {
+            return false;
+        };
+
+        if self
+            .contract
+            .as_ref()
+            .is_some_and(|expected| expected != contract)
+        {
+            return false;
+        }
+
+        if self
+            .function
+            .as_ref()
+            .is_some_and(|expected| function.to_string() != *expected)
+        {
+            return false;
+        }
+
+        match &self.args {
+            Some(expected) => expected.matches_vec(env, args),
+            None => true,
+        }
+    }
+
+    fn matches_root(&self, env: &Env, invocation: &AuthorizedInvocation) -> bool {
+        if !self.matches_header(env, invocation) {
+            return false;
+        }
+        match &self.sub_invocations {
+            Some(expected) => {
+                matches_children(env, &expected.patterns, &invocation.sub_invocations)
+            }
+            None => true,
+        }
+    }
+
+    fn matches_anywhere(&self, env: &Env, invocation: &AuthorizedInvocation) -> bool {
+        if self.matches_root(env, invocation) {
+            return true;
+        }
+        invocation
+            .sub_invocations
+            .iter()
+            .any(|child| self.matches_anywhere(env, child))
+    }
+
+    fn describe_header(&self, env: &Env) -> String {
+        let mut parts = Vec::new();
+        if let Some(contract) = &self.contract {
+            parts.push(format!("contract {contract:?}"));
+        }
+        if let Some(function) = &self.function {
+            parts.push(format!("function \"{function}\""));
+        }
+        if let Some(args) = &self.args {
+            parts.push(format!("args [{}]", args.describe(env)));
+        }
+        if parts.is_empty() {
+            "_".to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+}
+
+/// Asserts that an authorization sub-tree matching the pattern appears at any
+/// depth inside the authorizations recorded by the most recent invocation.
+///
+/// Multi-hop routing protocols (such as `aggregator -> pool -> vault`) record
+/// nested `AuthorizedInvocation` trees in `env.auths()`. This macro locates
+/// and validates a sub-tree starting from any intermediate contract node,
+/// without requiring the test to repeat outer wrapper calls.
+///
+/// All fields are optional and may appear in any order:
+///
+/// - `invoker: addr` (or `_` / omitted) restricts matches to authorizations
+///   owned by `addr`.
+/// - `contract: id` (or `_` / omitted) restricts matches to calls targeting
+///   contract `id`.
+/// - `function: "name"` (or `_` / omitted) restricts matches to calls named
+///   `"name"`.
+/// - `args: [_, val]` (or `_` / omitted) matches arguments positionally with
+///   `_` wildcards.
+/// - `sub_invocations: [...]` matches child invocations in order, where `_`
+///   matches any single child, `..` matches zero or more children, and
+///   `{ ... }` matches a nested sub-tree. Omitting `sub_invocations` or writing
+///   `sub_invocations: _` accepts any children; `sub_invocations: []` requires
+///   a leaf node with no children.
+///
+/// ```text
+/// assert_auth_sub_tree_matches!(env, {
+///     invoker: user,
+///     contract: pool_id,
+///     function: "route",
+///     args: [_, 100i128],
+///     sub_invocations: [
+///         {
+///             contract: vault_id,
+///             function: "deposit",
+///             args: [_, 100i128],
+///         },
+///         ..,
+///     ],
+/// });
+/// ```
+///
+/// Failing the assertion renders a side-by-side comparison of the expected
+/// sub-tree (highlighting missing branches with `[MISSING]`) next to every
+/// recorded authorization tree.
+#[macro_export]
+macro_rules! assert_auth_sub_tree_matches {
+    ($env:expr, { $($body:tt)* }) => {{
+        let matcher = $crate::auth::AuthSubTreeMatcher::new(&$env);
+        let env = matcher.env();
+        let _ = env;
+        $crate::__assert_auth_sub_tree_root!(
+            env;
+            matcher;
+            $($body)*
+        )
+        .assert_matches()
+    }};
+}
+
+/// Parses root-level fields of `assert_auth_sub_tree_matches!`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __assert_auth_sub_tree_root {
+    ($env:expr; $matcher:expr;) => {
+        $matcher
+    };
+    ($env:expr; $matcher:expr; invoker: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!($env; $matcher; $($($rest)*)?)
+    };
+    ($env:expr; $matcher:expr; invoker: $invoker:expr $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.invoker(&$invoker);
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $matcher:expr; contract: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!($env; $matcher; $($($rest)*)?)
+    };
+    ($env:expr; $matcher:expr; contract: $contract:expr $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.contract(&$contract);
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $matcher:expr; function: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!($env; $matcher; $($($rest)*)?)
+    };
+    ($env:expr; $matcher:expr; function: $function:expr $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.function($function);
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $matcher:expr; args: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!($env; $matcher; $($($rest)*)?)
+    };
+    ($env:expr; $matcher:expr; args: [$($args:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.args($crate::__assert_auth_args!(
+                $env;
+                $crate::auth::AuthArgs::new();
+                $($args)*
+            ));
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $matcher:expr; sub_invocations: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.any_sub_invocations();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $matcher:expr; sub_invocations: [$($children:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.sub_invocations($crate::__assert_auth_sub_tree_children!(
+                $env;
+                $crate::auth::SubInvocations::new();
+                $($children)*
+            ));
+            $($($rest)*)?
+        )
+    };
+}
+
+/// Parses nested node fields inside `sub_invocations: [ { ... } ]`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __assert_auth_sub_tree_node {
+    ($env:expr; $node:expr;) => {
+        $node
+    };
+    ($env:expr; $node:expr; contract: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!($env; $node; $($($rest)*)?)
+    };
+    ($env:expr; $node:expr; contract: $contract:expr $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.contract(&$contract);
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; function: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!($env; $node; $($($rest)*)?)
+    };
+    ($env:expr; $node:expr; function: $function:expr $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.function($function);
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; args: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!($env; $node; $($($rest)*)?)
+    };
+    ($env:expr; $node:expr; args: [$($args:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.args($crate::__assert_auth_args!(
+                $env;
+                $crate::auth::AuthArgs::new();
+                $($args)*
+            ));
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; sub_invocations: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.any_sub_invocations();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; sub_invocations: [$($children:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.sub_invocations($crate::__assert_auth_sub_tree_children!(
+                $env;
+                $crate::auth::SubInvocations::new();
+                $($children)*
+            ));
+            $($($rest)*)?
+        )
+    };
+}
+
+/// Builds a [`SubInvocations`] list from the token list inside
+/// `sub_invocations: [..]`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __assert_auth_sub_tree_children {
+    ($env:expr; $builder:expr;) => {
+        $builder
+    };
+    ($env:expr; $builder:expr; _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_children!(
+            $env;
+            $builder.any();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $builder:expr; .. $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_children!(
+            $env;
+            $builder.any_many();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $builder:expr; { $($node:tt)* } $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_children!(
+            $env;
+            $builder.node($crate::__assert_auth_sub_tree_node!(
+                $env;
+                $crate::auth::AuthSubTree::new();
+                $($node)*
+            ));
+            $($($rest)*)?
+        )
+    };
 }
 
 /// Asserts that the invocation that just ran recorded an authorization matching
@@ -244,14 +661,7 @@ impl<'a> AuthMatcher<'a> {
         }
 
         match &self.args {
-            Some(expected) => {
-                expected.args.len() == args.len() as usize
-                    && expected
-                        .args
-                        .iter()
-                        .zip(args.iter())
-                        .all(|(pattern, actual)| pattern.matches(self.env, &actual))
-            }
+            Some(expected) => expected.matches_vec(self.env, args),
             None => true,
         }
     }
@@ -266,20 +676,430 @@ impl<'a> AuthMatcher<'a> {
             parts.push(format!("function \"{function}\""));
         }
         if let Some(args) = &self.args {
-            let patterns = args
-                .args
-                .iter()
-                .map(|arg| match arg {
-                    AuthArg::Any => "_".to_string(),
-                    AuthArg::Exact(value) => ScVal::try_from_val(self.env, value)
-                        .map(|value| data_label(self.env, &value))
-                        .unwrap_or_else(|_| format!("{value:?}")),
-                })
-                .collect::<Vec<_>>();
-            parts.push(format!("args [{}]", patterns.join(", ")));
+            parts.push(format!("args [{}]", args.describe(self.env)));
         }
         format!("{{ {} }}", parts.join(", "))
     }
+}
+
+/// Assertions over authorization sub-trees at any depth in `env.auths()`.
+///
+/// Unlike [`AuthMatcher`], which inspects only top-level authorizations,
+/// `AuthSubTreeMatcher` searches every recorded [`AuthorizedInvocation`] tree
+/// recursively so multi-hop routing tests can validate an intermediate
+/// contract hop without repeating the entire outer call stack.
+pub struct AuthSubTreeMatcher<'a> {
+    env: &'a Env,
+    invoker: Option<Address>,
+    root: AuthSubTree,
+}
+
+impl<'a> AuthSubTreeMatcher<'a> {
+    pub fn new(env: &'a Env) -> Self {
+        Self {
+            env,
+            invoker: None,
+            root: AuthSubTree::new(),
+        }
+    }
+
+    /// The environment this matcher inspects.
+    pub fn env(&self) -> &'a Env {
+        self.env
+    }
+
+    /// Restricts matches to authorization trees owned by `invoker`.
+    pub fn invoker(mut self, invoker: &Address) -> Self {
+        self.invoker = Some(invoker.clone());
+        self
+    }
+
+    /// Replaces the expected sub-tree pattern directly.
+    pub fn sub_tree(mut self, root: AuthSubTree) -> Self {
+        self.root = root;
+        self
+    }
+
+    /// Restricts the sub-tree root to invocations targeting `contract`.
+    pub fn contract(mut self, contract: &Address) -> Self {
+        self.root = self.root.contract(contract);
+        self
+    }
+
+    /// Restricts the sub-tree root to calls named `function`.
+    pub fn function(mut self, function: impl Into<String>) -> Self {
+        self.root = self.root.function(function);
+        self
+    }
+
+    /// Restricts the sub-tree root to calls whose arguments fit `args`.
+    pub fn args(mut self, args: AuthArgs) -> Self {
+        self.root = self.root.args(args);
+        self
+    }
+
+    /// Requires the sub-tree root's child invocations to match `children`.
+    pub fn sub_invocations(mut self, children: SubInvocations) -> Self {
+        self.root = self.root.sub_invocations(children);
+        self
+    }
+
+    /// Accepts any child invocations under the sub-tree root (zero or more).
+    pub fn any_sub_invocations(mut self) -> Self {
+        self.root = self.root.any_sub_invocations();
+        self
+    }
+
+    /// Fails unless at least one recorded authorization tree contains a node
+    /// matching this sub-tree at any depth, printing a side-by-side tree
+    /// comparison on failure.
+    pub fn assert_matches(&self) {
+        let auths = self.env.auths();
+        let matched = auths.iter().any(|(invoker, invocation)| {
+            let invoker_ok = match &self.invoker {
+                Some(expected) => expected == invoker,
+                None => true,
+            };
+            invoker_ok && self.root.matches_anywhere(self.env, invocation)
+        });
+
+        if matched {
+            return;
+        }
+
+        let comparison = self.render_side_by_side(&auths);
+        panic!(
+            "Expected authorization sub-tree did not match any recorded authorization ({} recorded):\n\n{}",
+            auths.len(),
+            comparison,
+        );
+    }
+
+    fn render_side_by_side(&self, auths: &[(Address, AuthorizedInvocation)]) -> String {
+        let mut expected_lines = Vec::new();
+        let invoker_matched = match &self.invoker {
+            Some(expected) => auths.iter().any(|(invoker, _)| invoker == expected),
+            None => !auths.is_empty(),
+        };
+
+        if let Some(invoker) = &self.invoker {
+            let suffix = if invoker_matched { "" } else { " [MISSING]" };
+            expected_lines.push(format!("invoker {invoker:?}{suffix}"));
+        }
+
+        let best_candidate = if invoker_matched {
+            self.find_best_candidate(auths)
+        } else {
+            None
+        };
+        render_expected_node(
+            self.env,
+            &self.root,
+            best_candidate,
+            "",
+            TreeBranch::Root,
+            &mut expected_lines,
+        );
+
+        let mut recorded_lines = Vec::new();
+        if auths.is_empty() {
+            recorded_lines.push("(none recorded)".to_string());
+        } else {
+            for (index, (invoker, invocation)) in auths.iter().enumerate() {
+                if index > 0 {
+                    recorded_lines.push(String::new());
+                }
+                recorded_lines.push(format!("[{index}] invoker {invoker:?}"));
+                render_recorded_node(
+                    self.env,
+                    invocation,
+                    "",
+                    TreeBranch::Root,
+                    &mut recorded_lines,
+                );
+            }
+        }
+
+        format_side_by_side(
+            "Expected sub-tree",
+            &expected_lines,
+            "Recorded authorization tree(s)",
+            &recorded_lines,
+        )
+    }
+
+    fn find_best_candidate<'b>(
+        &self,
+        auths: &'b [(Address, AuthorizedInvocation)],
+    ) -> Option<&'b AuthorizedInvocation> {
+        let mut best: Option<(usize, &'b AuthorizedInvocation)> = None;
+        for (invoker, invocation) in auths {
+            if self
+                .invoker
+                .as_ref()
+                .is_some_and(|expected| expected != invoker)
+            {
+                continue;
+            }
+            collect_best_candidate(self.env, &self.root, invocation, &mut best);
+        }
+        best.map(|(_, node)| node)
+    }
+}
+
+enum TreeBranch {
+    Root,
+    Middle,
+    Last,
+}
+
+impl TreeBranch {
+    fn connector(&self) -> &'static str {
+        match self {
+            TreeBranch::Root => "",
+            TreeBranch::Middle => "├── ",
+            TreeBranch::Last => "└── ",
+        }
+    }
+
+    fn child_indent(&self) -> &'static str {
+        match self {
+            TreeBranch::Root => "",
+            TreeBranch::Middle => "│   ",
+            TreeBranch::Last => "    ",
+        }
+    }
+}
+
+fn matches_children(
+    env: &Env,
+    patterns: &[SubInvocationPattern],
+    actuals: &[AuthorizedInvocation],
+) -> bool {
+    match patterns.split_first() {
+        None => actuals.is_empty(),
+        Some((SubInvocationPattern::AnyMany, rest_patterns)) => {
+            for skip in 0..=actuals.len() {
+                if matches_children(env, rest_patterns, &actuals[skip..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        Some((SubInvocationPattern::Any, rest_patterns)) => {
+            let Some((_, rest_actuals)) = actuals.split_first() else {
+                return false;
+            };
+            matches_children(env, rest_patterns, rest_actuals)
+        }
+        Some((SubInvocationPattern::Node(node), rest_patterns)) => {
+            let Some((first_actual, rest_actuals)) = actuals.split_first() else {
+                return false;
+            };
+            node.matches_root(env, first_actual)
+                && matches_children(env, rest_patterns, rest_actuals)
+        }
+    }
+}
+
+fn collect_best_candidate<'b>(
+    env: &Env,
+    expected: &AuthSubTree,
+    actual: &'b AuthorizedInvocation,
+    best: &mut Option<(usize, &'b AuthorizedInvocation)>,
+) {
+    let score = candidate_score(env, expected, actual);
+    if score > 0 && best.is_none_or(|(best_score, _)| score > best_score) {
+        *best = Some((score, actual));
+    }
+    for child in &actual.sub_invocations {
+        collect_best_candidate(env, expected, child, best);
+    }
+}
+
+fn candidate_score(env: &Env, expected: &AuthSubTree, actual: &AuthorizedInvocation) -> usize {
+    let AuthorizedFunction::Contract((contract, function, args)) = &actual.function else {
+        return usize::from(
+            expected.contract.is_none() && expected.function.is_none() && expected.args.is_none(),
+        );
+    };
+
+    if expected
+        .contract
+        .as_ref()
+        .is_some_and(|wanted| wanted != contract)
+    {
+        return 0;
+    }
+
+    if expected
+        .function
+        .as_ref()
+        .is_some_and(|wanted| function.to_string() != *wanted)
+    {
+        return 0;
+    }
+
+    let mut score = 1;
+    if expected
+        .args
+        .as_ref()
+        .is_none_or(|wanted| wanted.matches_vec(env, args))
+    {
+        score += 2;
+    }
+
+    if let Some(children) = &expected.sub_invocations {
+        for pattern in &children.patterns {
+            if let SubInvocationPattern::Node(child_expected) = pattern {
+                let matched = actual
+                    .sub_invocations
+                    .iter()
+                    .any(|child| child_expected.matches_header(env, child));
+                score += usize::from(matched);
+            }
+        }
+    }
+
+    score
+}
+
+fn render_expected_node(
+    env: &Env,
+    node: &AuthSubTree,
+    candidate: Option<&AuthorizedInvocation>,
+    prefix: &str,
+    branch: TreeBranch,
+    out: &mut Vec<String>,
+) {
+    let header_matches = candidate.is_some_and(|actual| node.matches_header(env, actual));
+    let status = if header_matches { "" } else { " [MISSING]" };
+    let connector = branch.connector();
+    let header = node.describe_header(env);
+    out.push(format!("{prefix}{connector}{header}{status}"));
+
+    let child_prefix = format!("{prefix}{}", branch.child_indent());
+    let Some(children) = &node.sub_invocations else {
+        return;
+    };
+
+    if children.patterns.is_empty() {
+        let mismatch = candidate.is_some_and(|actual| !actual.sub_invocations.is_empty());
+        let suffix = if mismatch { " [MISMATCH]" } else { "" };
+        out.push(format!("{child_prefix}└── (no sub-invocations){suffix}"));
+        return;
+    }
+
+    let actual_children = candidate
+        .filter(|_| header_matches)
+        .map(|actual| actual.sub_invocations.as_slice())
+        .unwrap_or(&[]);
+
+    let last_index = children.patterns.len() - 1;
+    for (index, pattern) in children.patterns.iter().enumerate() {
+        let child_branch = if index == last_index {
+            TreeBranch::Last
+        } else {
+            TreeBranch::Middle
+        };
+        match pattern {
+            SubInvocationPattern::Any => {
+                let suffix = if actual_children.is_empty() {
+                    " [MISSING]"
+                } else {
+                    ""
+                };
+                let connector = child_branch.connector();
+                out.push(format!("{child_prefix}{connector}_{suffix}"));
+            }
+            SubInvocationPattern::AnyMany => {
+                out.push(format!("{child_prefix}{}..", child_branch.connector()));
+            }
+            SubInvocationPattern::Node(child_node) => {
+                let child_candidate = actual_children
+                    .iter()
+                    .find(|actual| child_node.matches_root(env, actual))
+                    .or_else(|| {
+                        actual_children
+                            .iter()
+                            .filter(|actual| candidate_score(env, child_node, actual) > 0)
+                            .max_by_key(|actual| candidate_score(env, child_node, actual))
+                    });
+                render_expected_node(
+                    env,
+                    child_node,
+                    child_candidate,
+                    &child_prefix,
+                    child_branch,
+                    out,
+                );
+            }
+        }
+    }
+}
+
+fn render_recorded_node(
+    env: &Env,
+    invocation: &AuthorizedInvocation,
+    prefix: &str,
+    branch: TreeBranch,
+    out: &mut Vec<String>,
+) {
+    let connector = branch.connector();
+    let label = describe_invocation(env, invocation);
+    out.push(format!("{prefix}{connector}{label}"));
+
+    let child_prefix = format!("{prefix}{}", branch.child_indent());
+    let count = invocation.sub_invocations.len();
+    for (index, child) in invocation.sub_invocations.iter().enumerate() {
+        let child_branch = if index + 1 == count {
+            TreeBranch::Last
+        } else {
+            TreeBranch::Middle
+        };
+        render_recorded_node(env, child, &child_prefix, child_branch, out);
+    }
+}
+
+fn format_side_by_side(
+    left_header: &str,
+    left_lines: &[String],
+    right_header: &str,
+    right_lines: &[String],
+) -> String {
+    let left_width = left_lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(left_header.chars().count());
+    let right_width = right_lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(right_header.chars().count());
+
+    let mut rows = Vec::with_capacity(left_lines.len().max(right_lines.len()) + 2);
+    let header_pad = " ".repeat(left_width.saturating_sub(left_header.chars().count()));
+    rows.push(format!("{left_header}{header_pad} | {right_header}"));
+    let left_rule = "-".repeat(left_width);
+    let right_rule = "-".repeat(right_width);
+    rows.push(format!("{left_rule}-+-{right_rule}"));
+
+    let total_rows = left_lines.len().max(right_lines.len());
+    for row in 0..total_rows {
+        let left = left_lines.get(row).map_or("", String::as_str);
+        let right = right_lines.get(row).map_or("", String::as_str);
+        let pad = left_width.saturating_sub(left.chars().count());
+        if right.is_empty() {
+            rows.push(format!("{left}{} |", " ".repeat(pad)));
+        } else {
+            rows.push(format!("{left}{} | {right}", " ".repeat(pad)));
+        }
+    }
+
+    rows.join("\n")
 }
 
 /// Two ledger values are the same when their XDR is the same.
@@ -297,9 +1117,8 @@ fn same_value(env: &Env, expected: &Val, actual: &Val) -> bool {
     }
 }
 
-/// One recorded authorization as the failure message spells it.
-fn describe_auth(env: &Env, invoker: &Address, invocation: &AuthorizedInvocation) -> String {
-    let function = match &invocation.function {
+fn describe_invocation(env: &Env, invocation: &AuthorizedInvocation) -> String {
+    match &invocation.function {
         AuthorizedFunction::Contract((contract, name, args)) => format!(
             "contract {contract:?} function \"{}\" args {}",
             name.to_string(),
@@ -309,13 +1128,17 @@ fn describe_auth(env: &Env, invoker: &Address, invocation: &AuthorizedInvocation
         AuthorizedFunction::CreateContractV2HostFn(_) => {
             "create_contract v2 host function".to_string()
         }
-    };
-    format!("invoker {invoker:?} {function}")
+    }
+}
+
+/// One recorded authorization as the failure message spells it.
+fn describe_auth(env: &Env, invoker: &Address, invocation: &AuthorizedInvocation) -> String {
+    format!("invoker {invoker:?} {}", describe_invocation(env, invocation))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthArgs, AuthMatcher};
+    use super::{AuthArgs, AuthMatcher, AuthSubTree, AuthSubTreeMatcher, SubInvocations};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{contract, contractimpl, Address, Env};
 
@@ -522,5 +1345,402 @@ mod tests {
 
         let matcher = AuthMatcher::new(&env).args(args);
         assert_eq!(matcher.describe(), format!("{{ args [_, {:?}] }}", signer));
+    }
+
+    // Multi-hop routing contracts (Aggregator -> Pool -> Vault / FeeCollector)
+    // that record real nested `AuthorizedInvocation` sub-trees.
+    #[contract]
+    pub struct VaultContract;
+
+    #[contractimpl]
+    impl VaultContract {
+        pub fn deposit(env: Env, user: Address, amount: i128) {
+            user.require_auth();
+            let _ = (env, amount);
+        }
+    }
+
+    #[contract]
+    pub struct FeeContract;
+
+    #[contractimpl]
+    impl FeeContract {
+        pub fn collect(env: Env, user: Address, fee: i128) {
+            user.require_auth();
+            let _ = (env, fee);
+        }
+    }
+
+    #[contract]
+    pub struct PoolContract;
+
+    #[contractimpl]
+    impl PoolContract {
+        pub fn route(env: Env, user: Address, vault: Address, amount: i128) {
+            user.require_auth();
+            VaultContractClient::new(&env, &vault).deposit(&user, &amount);
+        }
+
+        pub fn route_with_fee(
+            env: Env,
+            user: Address,
+            vault: Address,
+            fee_contract: Address,
+            amount: i128,
+        ) {
+            user.require_auth();
+            let fee = amount / 10;
+            VaultContractClient::new(&env, &vault).deposit(&user, &amount);
+            FeeContractClient::new(&env, &fee_contract).collect(&user, &fee);
+        }
+    }
+
+    #[contract]
+    pub struct AggregatorContract;
+
+    #[contractimpl]
+    impl AggregatorContract {
+        pub fn swap(env: Env, user: Address, pool: Address, vault: Address, amount: i128) {
+            user.require_auth();
+            PoolContractClient::new(&env, &pool).route(&user, &vault, &amount);
+        }
+
+        pub fn swap_with_fee(
+            env: Env,
+            user: Address,
+            pool: Address,
+            vault: Address,
+            fee_contract: Address,
+            amount: i128,
+        ) {
+            user.require_auth();
+            PoolContractClient::new(&env, &pool).route_with_fee(
+                &user,
+                &vault,
+                &fee_contract,
+                &amount,
+            );
+        }
+    }
+
+    struct RoutingFixture {
+        env: Env,
+        aggregator: Address,
+        pool: Address,
+        vault: Address,
+        fee_contract: Address,
+        user: Address,
+    }
+
+    fn routing_fixture() -> RoutingFixture {
+        let env = Env::default();
+        env.mock_all_auths();
+        let aggregator = env.register(AggregatorContract, ());
+        let pool = env.register(PoolContract, ());
+        let vault = env.register(VaultContract, ());
+        let fee_contract = env.register(FeeContract, ());
+        let user = Address::generate(&env);
+        RoutingFixture {
+            env,
+            aggregator,
+            pool,
+            vault,
+            fee_contract,
+            user,
+        }
+    }
+
+    #[test]
+    fn sub_tree_matches_intermediate_node_at_depth_one() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &500i128,
+        );
+
+        // Matches Pool -> Vault without mentioning the top-level Aggregator hop.
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            contract: fx.pool,
+            function: "route",
+            args: [_, fx.vault.clone(), 500i128],
+            sub_invocations: [
+                {
+                    contract: fx.vault,
+                    function: "deposit",
+                    args: [fx.user.clone(), 500i128],
+                    sub_invocations: [],
+                },
+            ],
+        });
+    }
+
+    #[test]
+    fn sub_tree_matches_leaf_node_at_depth_two() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &250i128,
+        );
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            contract: fx.vault,
+            function: "deposit",
+            args: [_, 250i128],
+            sub_invocations: [],
+        });
+    }
+
+    #[test]
+    fn sub_tree_matches_full_three_hop_chain_from_root() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &100i128,
+        );
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            contract: fx.aggregator,
+            function: "swap",
+            sub_invocations: [
+                {
+                    contract: fx.pool,
+                    function: "route",
+                    sub_invocations: [
+                        {
+                            contract: fx.vault,
+                            function: "deposit",
+                            args: [_, 100i128],
+                        },
+                    ],
+                },
+            ],
+        });
+    }
+
+    #[test]
+    fn sub_tree_supports_wildcard_arguments_and_child_patterns() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap_with_fee(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &fx.fee_contract,
+            &1_000i128,
+        );
+
+        // `sub_invocations: _` accepts any child invocations.
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            contract: fx.pool,
+            function: "route_with_fee",
+            args: _,
+            sub_invocations: _,
+        });
+
+        // `_` matches any single child invocation.
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            function: "route_with_fee",
+            sub_invocations: [
+                {
+                    contract: fx.vault,
+                    function: "deposit",
+                    args: [_, 1_000i128],
+                },
+                _,
+            ],
+        });
+
+        // `..` matches zero or more child invocations before or after a node.
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            function: "route_with_fee",
+            sub_invocations: [
+                ..,
+                {
+                    contract: fx.fee_contract,
+                    function: "collect",
+                    args: [_, 100i128],
+                },
+            ],
+        });
+    }
+
+    #[test]
+    fn sub_tree_matches_when_invoker_is_omitted_or_wildcarded() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &75i128,
+        );
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            function: "deposit",
+            args: [_, 75i128],
+        });
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: _,
+            contract: fx.pool,
+            function: "route",
+        });
+    }
+
+    #[test]
+    fn sub_tree_builder_api_validates_nested_invocations() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap_with_fee(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &fx.fee_contract,
+            &200i128,
+        );
+
+        let expected = AuthSubTree::new()
+            .contract(&fx.pool)
+            .function("route_with_fee")
+            .sub_invocations(
+                SubInvocations::new()
+                    .node(
+                        AuthSubTree::new()
+                            .contract(&fx.vault)
+                            .function("deposit")
+                            .args(AuthArgs::new().any().value(&fx.env, 200i128)),
+                    )
+                    .any_many(),
+            );
+
+        AuthSubTreeMatcher::new(&fx.env)
+            .invoker(&fx.user)
+            .sub_tree(expected)
+            .assert_matches();
+    }
+
+    #[test]
+    #[should_panic(expected = "[MISSING]")]
+    fn sub_tree_failure_highlights_missing_child_branch() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &300i128,
+        );
+
+        // `swap` calls only `Vault::deposit`, never `FeeContract::collect`.
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            contract: fx.pool,
+            function: "route",
+            sub_invocations: [
+                {
+                    contract: fx.vault,
+                    function: "deposit",
+                },
+                {
+                    contract: fx.fee_contract,
+                    function: "collect",
+                },
+            ],
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected sub-tree")]
+    fn sub_tree_failure_formats_side_by_side_comparison() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &300i128,
+        );
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            contract: fx.pool,
+            function: "nonexistent",
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Recorded authorization tree(s)")]
+    fn sub_tree_failure_includes_recorded_tree_column() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &300i128,
+        );
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            function: "route",
+            sub_invocations: [
+                {
+                    function: "deposit",
+                    args: [_, 999i128],
+                },
+            ],
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "[MISSING]")]
+    fn sub_tree_fails_when_invoker_does_not_match() {
+        let fx = routing_fixture();
+        let stranger = Address::generate(&fx.env);
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &100i128,
+        );
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: stranger,
+            function: "route",
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "[MISMATCH]")]
+    fn sub_tree_fails_when_leaf_expected_but_children_exist() {
+        let fx = routing_fixture();
+        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
+            &fx.user,
+            &fx.pool,
+            &fx.vault,
+            &100i128,
+        );
+
+        assert_auth_sub_tree_matches!(fx.env, {
+            invoker: fx.user,
+            contract: fx.pool,
+            function: "route",
+            sub_invocations: [],
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "(none recorded)")]
+    fn sub_tree_fails_cleanly_when_no_authorizations_were_recorded() {
+        let env = Env::default();
+        assert_auth_sub_tree_matches!(env, {
+            function: "deposit",
+        });
     }
 }
