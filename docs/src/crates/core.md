@@ -1,10 +1,10 @@
 # soroban-testkit-core
 
-Budget tracking, error decoding and storage inspection — the primitives the rest of Testkit is built on.
+Budget tracking, error decoding, storage inspection and contract dependency graphs — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · footprint</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -28,6 +28,9 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `FootprintSnapshot` | XDR byte size of every live storage key of one contract, by tier |
 | `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
 | `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
+| `DependencyGraph` | Directed graph of inter-contract calls, built from an invocation's `fn_call` diagnostics |
+| `DependencyEdge` | One caller → callee edge with its call count and functions |
+| `DependencyCycle` | A closed call chain such as `A -> B -> C -> A`, with self-recursion as `A -> A` |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
 
 ## Budget snapshots
@@ -346,6 +349,96 @@ extracts:
 Post `footprint.md` as the pull-request comment the same way the `Budget
 baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
 as a function, for embedding it in an `xtask` without spawning a process.
+
+## Contract call dependency graphs
+
+A micro-contract ecosystem can lock up when contracts call each other in a
+loop: `A` calls `B`, `B` calls `C`, and `C` calls back into `A`. `DependencyGraph`
+reads the host's `fn_call` diagnostic events, so a test can see every nested
+contract invocation without instrumenting the contracts themselves, then ask
+whether the calls can be ordered and whether one loops back.
+
+```rust
+use soroban_testkit_core::DependencyGraph;
+
+// The invocation under test, including all of its nested contract calls.
+client.route(&pool, &vault);
+let graph = DependencyGraph::from_env(&env);
+
+// Every contract is a node; every caller -> callee pair is an edge.
+for node in graph.nodes() {
+    println!("contract: {node}");
+}
+for edge in graph.edges() {
+    println!("{} -> {} ({} calls, {:?})", edge.caller, edge.callee, edge.calls, edge.functions);
+}
+```
+
+`from_env` reads the most recent top-level invocation, like
+`EventMatcher::new`. The entry point the test called is a node with no incoming
+edge, because the harness — not a contract — invoked it. To judge several calls
+as one scenario, record each of them into one graph:
+
+```rust
+let mut graph = DependencyGraph::new();
+client.open(&user, &amount);
+graph.record(&env);
+client.route(&pool, &vault);
+graph.record(&env);
+
+// Calls are aggregated: the same edge twice reports calls == 2.
+let order = graph.topological_sort().expect("calls can be ordered");
+println!("safe order: {order:?}");
+```
+
+`topological_sort` returns every contract, isolated ones included, ordered so
+that each caller precedes the contracts it invokes; ties break
+lexicographically, so the order is stable. It returns a `DependencyCycle`
+instead when no such order exists. `has_cycle()`, `find_cycle()` and
+`assert_acyclic()` answer the shorter questions, and `cycles()` reports one
+representative loop per strongly connected component:
+
+```rust
+if let Some(cycle) = graph.find_cycle() {
+    panic!("contracts call each other in a loop: {cycle}");
+}
+
+// A self-call is recursion, and reports as the two-entry path A -> A.
+if let Some(cycle) = graph.find_cycle() {
+    assert!(!cycle.is_self_recursive(), "recursive contract call: {cycle}");
+}
+```
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">Cycles do not need to run to be found</span>
+  <p>Soroban refuses contract re-entry at runtime, so a true loop between deployed contracts panics rather than spinning. Build the graph from a specification with <code>add_edge</code> / <code>add_contract_edge</code> to reject a cyclic call plan before it is exercised, or use the graph captured from a successful acyclic run as a regression check.</p>
+</div>
+
+Both graph formats are ready to paste into a report or a pull request. Graphviz
+DOT:
+
+```dot
+digraph contract_dependencies {
+  rankdir=LR;
+  node [shape=box, style=rounded, fontname="monospace"];
+  "CAAAA…A" [label="CAAAA…A"];
+  "CBBBB…B" [label="CBBBB…B"];
+  "CAAAA…A" -> "CBBBB…B" [label="route"];
+}
+```
+
+Mermaid, with stable `n0`, `n1`, … node ids and strkey labels:
+
+```mermaid
+flowchart LR
+  n0["CAAAA…A"]
+  n1["CBBBB…B"]
+  n0 -->|route| n1
+```
+
+The edge label names the invoked functions, and appends `xN` when the call
+happened more than once. `to_dot()` and `to_mermaid()` escape quotes and
+delimiters, so a hand-added node name cannot break the output.
 
 <hr class="tk-divider" />
 
