@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot vulnerability alerts were enabled. Security *updates* (automated bump pull requests) were deliberately left off, because the contributor queue is the thing this project needs real people to fill and automated PRs compete with them for attention
 
 ### Changed
+- The locally-runnable test count that `README.md`, `CONTRIBUTING.md` and `docs/src/contributing.md` quote moved from 220 to 266, measured with `cargo test --workspace --locked` after the domain-service example and its suite landed
 - `budget-baseline.yml` passed two `workflow_dispatch` inputs into `run:` scripts by interpolation. Both are now assigned in `env:` and read as variables, which is what the new `CI integrity` audit requires of every workflow. The step that used the free-text one is `pull_request`-only and the input only exists on a dispatch, so the value could not actually reach it — this removes the shape rather than a live injection
 - `SECURITY.md` gained a `What runs on every pull request` section that names the six required checks and states what the gate does not do: it inspects a diff, so it is not a sandbox and will not catch a payload that avoids every pattern on its list
 - `docs/src/roadmap.md` and `docs/src/crates/fixtures.md` both linked the funded builder-registration issue, which no longer exists. The roadmap row is gone and the fixtures card keeps the idea without the dead link

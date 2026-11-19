@@ -25,6 +25,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
+| `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
+| `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
 
 ## Event matching
 
@@ -273,6 +275,86 @@ recorded, so the wrong invoker, function, or argument is visible without a re-ru
 ```text
 panicked at 'Expected an authorization matching { invoker Contract(C…FCT4), function "set_admin", args [_, 7] }, found 1 recorded authorization(s):
   [0] invoker Contract(C…FCT4) contract Contract(C…D2KM) function "increment" args [Contract(C…FCT4), 1]'
+```
+
+### Sub-tree authorization matching
+
+Multi-hop routing protocols (such as `aggregator -> pool -> vault`) record nested
+`AuthorizedInvocation` trees in `env.auths()`. `assert_auth_sub_tree_matches!`
+locates and validates a sub-tree starting at any depth, so a modular test can
+verify an intermediate contract hop without repeating the entire outer call stack:
+
+```rust
+use soroban_testkit_assert::assert_auth_sub_tree_matches;
+
+aggregator.swap(&user, &pool_id, &vault_id, &500i128);
+
+// Matches Pool -> Vault inside Aggregator -> Pool -> Vault without naming Aggregator.
+assert_auth_sub_tree_matches!(env, {
+    invoker: user,
+    contract: pool_id,
+    function: "route",
+    args: [_, vault_id.clone(), 500i128],
+    sub_invocations: [
+        {
+            contract: vault_id,
+            function: "deposit",
+            args: [user.clone(), 500i128],
+            sub_invocations: [],
+        },
+    ],
+});
+```
+
+Every field (`invoker`, `contract`, `function`, `args`, `sub_invocations`) is
+optional and accepts `_` as a wildcard. Inside `sub_invocations: [..]`:
+
+| Pattern | Matches |
+|---------|---------|
+| Omitted or `sub_invocations: _` | Any child invocations (zero or more) |
+| `sub_invocations: []` | Exactly zero child invocations (leaf node) |
+| `_` | Any single child invocation at that position |
+| `..` | Zero or more child invocations at that position |
+| `{ ... }` | A nested sub-tree node with its own filters and `sub_invocations` |
+
+The same matching is available through the chainable builder types
+`AuthSubTree`, `SubInvocations`, and `AuthSubTreeMatcher`:
+
+```rust
+use soroban_testkit_assert::auth::{AuthArgs, AuthSubTree, AuthSubTreeMatcher, SubInvocations};
+
+let expected = AuthSubTree::new()
+    .contract(&pool_id)
+    .function("route_with_fee")
+    .sub_invocations(
+        SubInvocations::new()
+            .node(
+                AuthSubTree::new()
+                    .contract(&vault_id)
+                    .function("deposit")
+                    .args(AuthArgs::new().any().value(&env, 1_000i128)),
+            )
+            .any_many(),
+    );
+
+AuthSubTreeMatcher::new(&env)
+    .invoker(&user)
+    .sub_tree(expected)
+    .assert_matches();
+```
+
+When a sub-tree fails to match, the assertion renders a side-by-side tree
+comparison highlighting missing branches with `[MISSING]`:
+
+```text
+Expected authorization sub-tree did not match any recorded authorization (1 recorded):
+
+Expected sub-tree                                            | Recorded authorization tree(s)
+-------------------------------------------------------------+-------------------------------------------------------------
+invoker Contract(C…1234)                                     | [0] invoker Contract(C…1234)
+contract Contract(C…BBBB) function "route"                   | contract Contract(C…AAAA) function "swap" args [...]
+├── contract Contract(C…CCCC) function "deposit"             | └── contract Contract(C…BBBB) function "route" args [...]
+└── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
 ```
 
 ## Failure messages

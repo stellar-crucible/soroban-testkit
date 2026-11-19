@@ -215,6 +215,17 @@ on core, `tests/property.rs` on generators — so each one reads as a page of th
 documentation that happens to run. [Worked Example: Token](https://stellar-crucible.github.io/soroban-testkit/guides/token-example.html)
 walks through them.
 
+[`examples/domain_service`](examples/domain_service) is a name registry, and it is
+the example for what depends on the ledger rather than on a value: a term is
+validated by `env.ledger().timestamp()` instead of a stored flag, a grace period
+keeps an expired name with its previous owner before anyone can claim it, and
+records only resolve while the term lasts. Its suite also carries the storage
+growth benchmark — every registration rewrites one `domains` map, so the test
+measures bytes per name rather than keys per name — and the property that every
+term length becomes claimable exactly one second past expiry plus grace.
+[Worked Example: Domain Service](https://stellar-crucible.github.io/soroban-testkit/guides/domain-service-example.html)
+walks through it.
+
 ## Community
 
 Release notices and discussion happen in the [Telegram channel](https://t.me/+_tukd5_0gtM1MzA0). Bug reports and feature requests go to [GitHub issues](https://github.com/stellar-crucible/soroban-testkit/issues), which is also where the funded tasks live.
