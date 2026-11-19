@@ -29,6 +29,9 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `byte_array_32()` | `[u8; 32]` | any 32 bytes — hashes, keys, seeds |
 | `byte_array_64()` | `[u8; 64]` | any 64 bytes — ed25519 signatures |
 | `byte_array::<N>()` | `[u8; N]` | any `N` bytes |
+| `contract_executable_wasm_hash()` | `[u8; 32]` | any 32-byte WASM bytecode hash |
+| `contract_executable()` | `ContractExecutable` | `Wasm`, `StellarAsset`, or `ExternalRef` variants |
+| `deployer_salt()` | `[u8; 32]` | 32-byte salt for deterministic deployment |
 | `entry_ttl(current, min_threshold, max_ttl)` | `EntryTtl` | a live entry whose TTL is in `min_threshold..=max_ttl` |
 | `expired_ttl(current)` | `EntryTtl` | an entry that expired before `current` |
 | `ttl_extension_delta()` | `u32` | 1 to `MAINNET_MAX_ENTRY_TTL` (3,110,400) ledgers |
@@ -293,6 +296,44 @@ Supported mutation operators:
 a failure, mirroring proptest's shrinking so failures are reported with the
 smallest event that still reproduces the bug. `shrink_candidates` returns each
 intermediate step for debugging.
+
+## Contract executables and deployer salts
+
+Factory contracts and deployment utilities dynamically deploy child contracts using WASM hashes or contract executable descriptors. `contract_executable_wasm_hash()`, `contract_executable()`, and `deployer_salt()` test factory patterns and verify deterministic contract address calculation:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Address, BytesN, Env};
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn deterministic_factory_address(
+        salt in strategies::deployer_salt(),
+        wasm_hash in strategies::contract_executable_wasm_hash(),
+    ) {
+        let env = Env::default();
+        let deployer = Address::generate(&env);
+        let salt_n = BytesN::from_array(&env, &salt);
+
+        // Precompute deterministic deployment address
+        let predicted = env
+            .deployer()
+            .with_address(deployer.clone(), salt_n.clone())
+            .deployed_address();
+
+        // Repeated address calculations with identical inputs match
+        let predicted_repeat = env
+            .deployer()
+            .with_address(deployer, salt_n)
+            .deployed_address();
+
+        assert_eq!(predicted, predicted_repeat);
+    }
+}
+```
+
+`contract_executable()` generates variants across `ContractExecutable::Wasm`, `ContractExecutable::StellarAsset`, and `ContractExecutable::ExternalRef`, allowing comprehensive fuzzing of contract installation and factory routines.
 
 ## Custom strategies
 

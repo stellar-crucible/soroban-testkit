@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
+pub use crate::executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+
 use proptest::prelude::*;
 use soroban_sdk::xdr::{
     AccountId, ContractId, Hash, Limits, PublicKey, ScAddress, ScMap, ScMapEntry, ScVal, ScVec,

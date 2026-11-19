@@ -3,6 +3,8 @@ pub mod event_fuzz;
 #[cfg(feature = "proptest")]
 pub mod errors;
 #[cfg(feature = "proptest")]
+pub mod executables;
+#[cfg(feature = "proptest")]
 pub mod strategies;
 #[cfg(feature = "proptest")]
 pub mod ttl;
@@ -11,6 +13,8 @@ pub mod tuples;
 
 #[cfg(feature = "proptest")]
 pub use errors::{host_error_code_coverage, HostError};
+#[cfg(feature = "proptest")]
+pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 #[cfg(feature = "proptest")]
 pub use ttl::{
     entry_ttl, expired_ttl, ttl_extension_delta, ttl_extension_delta_up_to, EntryTtl,
