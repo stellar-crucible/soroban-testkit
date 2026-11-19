@@ -17,3 +17,7 @@ soroban-sdk = { workspace = true }
 soroban-env-host = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[[bin]]
+name = "storage-footprint-diff"
+path = "src/bin/storage_footprint_diff.rs"

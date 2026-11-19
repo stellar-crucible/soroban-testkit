@@ -197,6 +197,12 @@ impl BudgetGuard {
         self
     }
 
+    /// Set the growth tolerance percent directly (alias for `tolerance_percent`).
+    pub fn growth_tolerance(mut self, percent: u64) -> Self {
+        self.tolerance_percent = percent;
+        self
+    }
+
     /// Every limit this cost breaks, ceilings first then growth, CPU first.
     pub fn violations(&self, cost: &BudgetSnapshot) -> Vec<BudgetViolation> {
         let mut found = Vec::new();
