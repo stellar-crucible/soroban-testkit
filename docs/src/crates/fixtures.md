@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · archival</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -76,6 +76,7 @@ almost all of that without building a `LedgerInfo` by hand:
 | `ctx.set_timestamp(t)` | Jump to absolute time `t` |
 | `ctx.advance_time(s)` | Add `s` seconds, return the new timestamp |
 | `ctx.advance_ledger(n)` | Add `n` to the sequence, return the new height |
+| `ctx.archive_expired(n)` | Advance `n` ledgers, archive everything past its TTL, return the `ArchivalSweepSimulator` holding it |
 
 ```rust
 use soroban_testkit_fixtures::TestContext;
@@ -105,6 +106,72 @@ assert_eq!(unlocked_at, 1_702_592_000);
 Both helpers saturate instead of wrapping: advancing past `u64::MAX` or
 `u32::MAX` returns the maximum rather than panicking or rolling the clock back
 to a date in 1970.
+
+## Archival sweeps
+
+On a real network an entry lives only as long as its rent. When the rent runs
+out, a persistent entry is *archived* — still on the ledger, but unreadable
+until a restore operation pays to bring it back — and a temporary entry is
+deleted for good. The SDK test environment does not reproduce that: it
+re-extends an expired persistent entry the moment a test reads it, so a test
+that wants to see the failure has to perform the sweep itself.
+
+`ArchivalSweepSimulator` does that against the whole environment, every
+registered contract at once:
+
+```rust
+use soroban_testkit_fixtures::archival::ArchivalSweepSimulator;
+
+let mut simulator = ArchivalSweepSimulator::new();
+let sweep = simulator.sweep(&env, 5_000);   // advance 5,000 ledgers, then sweep
+
+assert_eq!(sweep.archived, 1);               // the persistent entry is gone
+assert_eq!(client.balance(&holder), None);   // the contract reads it as missing
+assert!(client.try_withdraw(&holder).is_err());
+
+let restored = simulator.restore_all(&env, 5_000); // a restore operation
+assert_eq!(restored, 1);
+assert_eq!(client.balance(&holder), Some(1_000));  // the original data is back
+```
+
+| Method | Effect |
+|--------|--------|
+| `sweep(&env, ledgers_ahead)` | Advance the ledger, then sweep; returns an `ArchivalSweep` |
+| `sweep_expired(&env)` | Sweep at the current sequence without moving the ledger |
+| `archived()`, `len()`, `is_archived(key)`, `entry(key)` | What the sweep took, and the `ArchivedEntry` for one key |
+| `restore_all(&env, extra_ttl)` | Put every archived entry back, returning how many were restored |
+| `restore(&env, key, extra_ttl)` | Put one entry back; `false` when the sweep never took it |
+| `assert_archived(&env, key)`, `assert_restored(&env, key)` | Fail unless the ledger agrees the entry is gone, or back |
+
+An `ArchivedEntry` carries the exact `LedgerEntry` the host held, not a
+re-encoding of it, so a restore hands the contract back the data it wrote — the
+unit tests compare the value, the rendered storage snapshot and the restored
+TTL, not merely that a read succeeded. `extra_ttl` is the rent the restore buys;
+a restore always grants at least one ledger, so an entry restored with `0` is not
+immediately eligible for the next sweep.
+
+```rust
+let sweep = simulator.sweep(&env, 5_000);
+assert_eq!(sweep.ledger, 5_000);
+assert_eq!(sweep.evicted_temporary, 1);   // temporary entries die, unarchived
+assert_eq!(sweep.kept_live, 1);           // and everything inside its TTL stays
+assert_eq!(simulator.restore_all(&env, 5_000), 0); // nothing comes back for those
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Reading an archived entry is StorageNotFound</span>
+  <p>An archived entry is absent from the ledger: a contract's <code>persistent().get()</code> returns <code>None</code>, <code>has()</code> returns <code>false</code>, and an operation that requires the entry — extending its TTL, restoring it from inside a call — fails with the host's <code>Storage/MissingValue</code>. Because a native test contract is a guest call, the env narrows that code at the boundary to <code>Context/InvalidAction</code>, which is what a <code>try_*</code> client method reports; inspect the storage state or use <code>assert_archived</code> when the test needs to name the absence itself.</p>
+</div>
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">The contract stays callable</span>
+  <p>A sweep skips the contract's instance entry and its code entry, so the contract can still be invoked while its data entries are archived — otherwise the test could not observe what the sweep did. An expired instance entry is left as it is and the host re-extends it on the next call.</p>
+</div>
+
+<div class="tk-callout tk-callout--tip">
+  <span class="tk-callout__title">Do not hard-code the rent</span>
+  <p>How many ledgers an entry has left is network configuration, not a constant a test should write down. Read it back from <code>StorageSnapshot::capture(&env, &contract).get("balance").live_until</code> and advance past it, or sweep far enough with <code>ctx.archive_expired(10_000)</code> when the exact figure does not matter.</p>
+</div>
 
 ## Resetting the chain underneath a test
 

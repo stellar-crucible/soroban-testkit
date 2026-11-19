@@ -1963,6 +1963,7 @@ dependencies = [
 name = "soroban-testkit-fixtures"
 version = "0.4.1"
 dependencies = [
+ "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",
 ]

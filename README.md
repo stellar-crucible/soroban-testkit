@@ -42,9 +42,9 @@ Testkit fills these gaps with domain-specific tooling that complements (not repl
 
 | Crate | Description |
 |-------|-------------|
-| [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, storage inspection |
+| [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, memory pressure profiles, storage inspection |
 | [`soroban-testkit-assert`](crates/soroban-testkit-assert) | Ergonomic assertion matchers for events and authorizations |
-| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder and setup framework |
+| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder, ledger control and archival sweeps |
 | [`soroban-testkit-generators`](crates/soroban-testkit-generators) | Soroban-aware property testing strategies for proptest |
 
 ## Quick Start
@@ -189,7 +189,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 266 tests: all four crates + examples/counter + examples/domain_service + examples/token
+cargo test --workspace --locked      # 307 tests: all four crates + examples/counter + examples/domain_service + examples/token
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check

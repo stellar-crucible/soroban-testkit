@@ -4,7 +4,7 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · memory · storage</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -19,6 +19,9 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `BudgetMetric` | Which resource a violation was measured against — `Cpu` or `Memory`, and the `cpu_insns` / `mem_bytes` word `as_str()` prints for it |
 | `BudgetBaseline` | Recorded costs per case, loaded from and saved to a JSON file |
 | `budget_guard!` | Macro form of the guard around a single invocation |
+| `MemoryPressureAuditor` | Measures what each invocation allocated, copied and kept live; `measure()` returns the call's value |
+| `AllocationProfile` | One invocation's allocations, allocated bytes, peak live bytes, copied bytes, churn ratio and efficiency score |
+| `AllocationReport` | Every measured profile, the hotspot filter and the Markdown report |
 | `DecodedError` | A Soroban error code split into category, meaning and context |
 | `ErrorRegistry` | Your `#[contracterror]` codes mapped to the words they mean |
 | `ClientOutcome`, `unwrap_decoded` | Unwrap a v28 `try_*` client call, panicking with the decoded error |
@@ -135,6 +138,70 @@ readable diff. A file whose `version` is newer than the loader is refused with
 <div class="tk-callout">
   <span class="tk-callout__title">Recording a baseline</span>
   <p><code>record()</code> and <code>save()</code> write the file; what refreshes it is a policy choice. Committing the file and failing on drift keeps the numbers honest, so most projects regenerate it in one deliberate commit rather than on every test run — <a href="../guides/budget-testing.html">Budget-Aware Testing</a> walks through both. The pattern is applied in this repository: <code>examples/counter/budget.json</code> holds the counter's two hot paths, two <code>#[ignore]</code>d tests record and check it, and the <code>Budget baseline</code> workflow runs the check on one pinned runner and reports the numbers on the pull request.</p>
+</div>
+
+## Memory pressure
+
+A contract that allocates a great deal of short-lived host memory is not slow
+because it is large — it is slow because of the churn. `MemoryPressureAuditor`
+wraps one invocation at a time and reports what that invocation actually spent:
+
+```rust
+use soroban_testkit_core::memory::MemoryPressureAuditor;
+
+let mut auditor = MemoryPressureAuditor::new();
+auditor.measure(&env, "transfer", || client.transfer(&from, &to, &amount));
+auditor.measure(&env, "mint", || client.mint(&to, &amount));
+
+println!("{}", auditor.to_markdown());
+```
+
+`measure()` rewinds the host's cost tracker before the closure and reads it
+afterwards, so each profile describes exactly one call — two profiles never
+accumulate into each other, and two measured cases can be compared directly.
+The closure's return value is handed back, so the measurement does not get in
+the way of the assertions a test already makes.
+
+| Field | Meaning |
+|-------|---------|
+| `allocations` | Host `MemAlloc` charges the invocation paid — one per allocation |
+| `allocated_bytes` | Total bytes those charges asked the host for |
+| `peak_live_bytes` | The highest modelled host memory the invocation had in use |
+| `copied_bytes` | Bytes metered as `MemCpy` — the cost of cloning a `Vec`, `Map`, `Bytes` or value |
+| `cpu_insns`, `entries_written`, `entries_read` | The per-invocation resources `BudgetSnapshot::last_invocation` reads |
+
+Two derived numbers turn the reading into a judgement:
+
+- **Efficiency score** (`0–100`) is `peak_live_bytes / allocated_bytes`. Half of
+everything allocated was still live at the peak, so half of it was waste.
+An invocation that allocated nothing scores 100 — there was no waste to have.
+- **Churn ratio** is the reciprocal, `allocated_bytes / peak_live_bytes`. The
+report lists every case at or above `2.0x` as a hotspot, worst first, and
+`assert_no_hotspots(2.0)` fails with one `MEMORY case=… churn=…` line per
+breach so a suite finds all of its wasteful functions in one run.
+
+```rust
+let report = auditor.report();
+report.assert_no_hotspots(2.0);
+
+for hotspot in report.hotspots(2.0) {
+    println!("{} allocated {} to keep {} live", hotspot.case, hotspot.human_allocated(), hotspot.human_peak_live());
+}
+```
+
+`to_markdown()` renders the whole thing — a table row per case, the hotspot
+list, and a copy-pressure section that ranks the cases by `copied_bytes` — so a
+test can write it to a file, print it into a CI log, or paste it into a pull
+request when a refactor claims it made something cheaper.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">What the numbers are, and are not</span>
+  <p>The host does not expose its object store, so there is no public count of live object handles at exit. Every figure here is the metering the host charges: an allocation is a <code>MemAlloc</code> charge, a copy is a <code>MemCpy</code> charge, and the live figure is the host's own peak memory reading — the quantity it provisions against. A value freed before the call returned raised <code>allocated_bytes</code> without raising <code>peak_live_bytes</code>, which is exactly the waste a churn hotspot describes. As with <code>BudgetSnapshot</code>, treat the readings as a comparison between builds: a contract registered as a native test contract never runs through the VM, so the VM's own allocations are absent.</p>
+</div>
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">One profile per call</span>
+  <p><code>record()</code> is the half of <code>measure()</code> that does not run anything: reset the tracker, invoke, record. Reach for it when the call has to be made inside a closure the test already owns. <code>record()</code> reads the per-invocation resources the host keeps for the last top-level call, so it panics before the environment has run one.</p>
 </div>
 
 ## Error decoding
