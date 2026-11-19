@@ -29,6 +29,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
 | `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
+| `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
 
 ## Event matching
 
@@ -396,6 +397,70 @@ Breached tiers: persistent (found 12, expected max 10)
 | instance    | 1     | max 5          | PASS   | "cfg"                                      |
 | persistent  | 12    | max 10         | BREACH | "u_1", "u_2", "u_3", ... (total 12)        |
 | temporary   | 0     | exact 0        | PASS   | (none)                                     |
+```
+
+## Multi-party balance conservation
+
+Asserting balance conservation across multi-user operations (e.g., swaps, multi-hop routes, fee splits, or batch transfers) commonly leads to repetitive boilerplate when querying balances before and after calls. The `assert_balance_conserved!` macro captures pre-invocation balances, runs the operation, verifies that total tokens across all tracked participants plus reserves are conserved, and accounts for explicit external mints or burns:
+
+```rust
+use soroban_testkit_assert::assert_balance_conserved;
+
+// Standard 2-party transfer:
+assert_balance_conserved!(
+    accounts: [&alice, &bob],
+    balance: |addr| token_client.balance(addr),
+    call: {
+        token_client.transfer(&alice, &bob, &100);
+    }
+);
+
+// Multi-party swap with fees, liquidity pool reserve, and custom labels:
+assert_balance_conserved!(
+    accounts: [
+        (&alice, "Alice (Trader)"),
+        (&bob, "Bob (Recipient)"),
+        (&pool, "AMM Liquidity Pool"),
+        (&treasury, "Protocol Fee Vault")
+    ],
+    balance: |addr| token_client.balance(addr),
+    call: {
+        router.swap(&alice, &bob, &1000);
+    }
+);
+
+// Invocations involving external mints or burns:
+assert_balance_conserved!(
+    accounts: [&alice, &vault],
+    balance: |addr| token_client.balance(addr),
+    mint: 500,
+    burn: 100,
+    call: {
+        token_client.mint(&alice, &500);
+        token_client.burn(&vault, &100);
+    }
+);
+```
+
+When an invariant is violated (for example, if a fee calculation suffers from fractional token loss or round-off leakage), `assert_balance_conserved!` panics with a formatted debit/credit reconciliation table:
+
+```text
+Balance Conservation Breach: Discrepancy = -1 (LEAK DETECTED)
+Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
+
+------------------------------------------------------------------------------------------------------
+| Account / Reserve            |    Pre-Balance |   Post-Balance |     Delta (Debit/Credit) |
+------------------------------------------------------------------------------------------------------
+| Alice                        |           1000 |            900 |                     -100 |
+| Bob                          |              0 |             97 |                      +97 |
+| Fee Collector                |              0 |              2 |                       +2 |
+------------------------------------------------------------------------------------------------------
+| Total Tracked                |           1000 |            999 |                       -1 |
+| External Mints (+)           |                |                |                       +0 |
+| External Burns (-)           |                |                |                       -0 |
+------------------------------------------------------------------------------------------------------
+| Discrepancy                  |                |                |       -1 (LEAK DETECTED) |
+------------------------------------------------------------------------------------------------------
 ```
 
 <div class="tk-grid tk-grid--2">
