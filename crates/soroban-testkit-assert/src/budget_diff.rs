@@ -10,9 +10,9 @@
 //! assert relative savings targets, and format an informative side-by-side comparative
 //! diff table whenever an assertion fails.
 
-use std::fmt;
 use soroban_sdk::Env;
 use soroban_testkit_core::budget::BudgetSnapshot;
+use std::fmt;
 
 /// One rejection reason encountered during budget comparison.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,15 +40,9 @@ pub enum BudgetDiffViolation {
         target_percent: f64,
     },
     /// Optimized path failed to achieve the minimum absolute CPU instruction savings.
-    CpuAbsoluteSavingsUnmet {
-        achieved: i64,
-        required: u64,
-    },
+    CpuAbsoluteSavingsUnmet { achieved: i64, required: u64 },
     /// Optimized path failed to achieve the minimum absolute memory byte savings.
-    MemAbsoluteSavingsUnmet {
-        achieved: i64,
-        required: u64,
-    },
+    MemAbsoluteSavingsUnmet { achieved: i64, required: u64 },
     /// No savings were achieved across either CPU or memory.
     NoSavingsAchieved,
 }
@@ -112,7 +106,7 @@ pub fn format_commas(n: u64) -> String {
     let initial = if rem == 0 { 3 } else { rem };
 
     out.push_str(&s[..initial]);
-    for chunk in s[initial..].as_bytes().chunks(3) {
+    for chunk in s.as_bytes()[initial..].chunks(3) {
         out.push(',');
         out.push_str(std::str::from_utf8(chunk).unwrap_or(""));
     }
@@ -357,8 +351,12 @@ pub fn measure_invocation_budget<R>(
     };
 
     let budget_delta = BudgetSnapshot {
-        cpu_insns: after_budget.cpu_insns.saturating_sub(before_budget.cpu_insns),
-        mem_bytes: after_budget.mem_bytes.saturating_sub(before_budget.mem_bytes),
+        cpu_insns: after_budget
+            .cpu_insns
+            .saturating_sub(before_budget.cpu_insns),
+        mem_bytes: after_budget
+            .mem_bytes
+            .saturating_sub(before_budget.mem_bytes),
     };
 
     let consumed = if budget_delta.cpu_insns > 0 || budget_delta.mem_bytes > 0 {
@@ -448,8 +446,10 @@ impl BudgetDiffMatcher {
         let cpu_savings = baseline.cpu_insns as i64 - optimized.cpu_insns as i64;
         let mem_savings = baseline.mem_bytes as i64 - optimized.mem_bytes as i64;
 
-        let cpu_savings_percent = calculate_savings_percent(baseline.cpu_insns, optimized.cpu_insns);
-        let mem_savings_percent = calculate_savings_percent(baseline.mem_bytes, optimized.mem_bytes);
+        let cpu_savings_percent =
+            calculate_savings_percent(baseline.cpu_insns, optimized.cpu_insns);
+        let mem_savings_percent =
+            calculate_savings_percent(baseline.mem_bytes, optimized.mem_bytes);
 
         let mut violations = Vec::new();
         let mut cpu_passed = true;
@@ -812,6 +812,7 @@ mod tests {
     #[contractimpl]
     impl SearchContract {
         /// Baseline: O(N) linear scan over a vector of values.
+        #[allow(clippy::manual_find)]
         pub fn linear_search(_env: Env, items: Vec<u64>, target: u64) -> Option<u32> {
             for i in 0..items.len() {
                 if items.get(i).unwrap() == target {
