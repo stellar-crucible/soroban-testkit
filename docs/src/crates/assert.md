@@ -4,7 +4,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth · payload</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -27,6 +27,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `assert_event_payload_field!(env, { .. })` | One field of an event payload, addressed by a dot path, equals a value or satisfies a predicate |
 
 ## Event matching
 
@@ -210,6 +211,106 @@ panicked at 'Expected an event whose data matches, checked 1 event(s) with data 
 ```
 
 Scalars print their values, maps and vectors print their entries, an address prints as its strkey (abbreviated above, printed whole in a real message), and a shape too rare to spell out falls back to its XDR debug form, so the message never hides the value it rejected. When no event is in scope the message says so instead of claiming the data was wrong.
+
+## Nested payload fields
+
+A payload that carries a struct carries it as nested maps, so a leaf three levels
+down is three `field` hops. `assert_event_payload_field!` takes the path as one
+dot-separated string and converts the leaf to the type the expectation names:
+
+```rust
+use soroban_testkit_assert::assert_event_payload_field;
+
+client.place_order(&buyer, &42u64, &500i128);
+
+// The navigated leaf must equal this value, read as an i128.
+assert_event_payload_field!(&env, {
+    topic: "order",
+    path: "details.price",
+    equals: 500i128,
+});
+
+// Or satisfy a predicate over the converted leaf.
+assert_event_payload_field!(&env, {
+    topic: "order",
+    path: "details.royalty_bps",
+    matches: |bps: u32| bps <= 2_500,
+});
+```
+
+| Field | Meaning |
+|-------|---------|
+| `topic: "order"` | Only events carrying this topic symbol are searched |
+| `contract: &id` | Only events published by this contract are searched |
+| `path: "a.b.0"` | Map keys separated by dots; a numeric segment or `[0]` indexes a vector |
+| `equals: value` | The leaf must equal `value`, converted to its type |
+| `matches: closure` | The leaf must satisfy the closure, converted to the type its parameter names |
+
+`topic:` and `contract:` are optional and may appear in any order; `equals:` and
+`matches:` end the block. A path navigates maps — which is what a `contracttype`
+struct becomes when it is published — and vectors, to any depth:
+
+| Path | Navigates |
+|------|-----------|
+| `order_id` | a field at the payload root |
+| `details.price` | a field of a field |
+| `details.tiers.2.bps` | a struct inside a vector inside a struct |
+| `lots.1` or `lots[1]` | index 1 of a vector |
+| `lots[0].sku` | a field of a vector element |
+
+When the path does not resolve, the failure names the segment that stopped it,
+the keys that were available there, and prints the whole payload tree, so the
+shape the contract actually published is in the log:
+
+```text
+assert_event_payload_field! failed: no event payload satisfied "details.pricing" == 500
+checked 1 event(s) matching topic "order"
+
+  [0] topics [order]
+    stopped at segment 2 ("pricing"): "details" has no key "pricing"; available keys: price, royalty_bps
+    payload tree:
+      {
+        "order_id": 42,
+        "details": {
+          "price": 500,
+          "royalty_bps": 250
+        },
+        "lots": [
+          3,
+          7
+        ]
+      }
+```
+
+A leaf of the wrong type says so rather than comparing two values that were
+never the same shape:
+
+```text
+    path "details" holds {"price": 500, "royalty_bps": 250}, which does not convert to u32
+```
+
+The same assertions are available without the macro when the filters are built
+in steps:
+
+```rust
+use soroban_testkit_assert::payload::PayloadAssertion;
+
+PayloadAssertion::new(&env)
+    .from_contract(&contract_id)
+    .with_topic("order")
+    .path("details.price")
+    .assert_equals(500i128);
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">One matching event is enough</span>
+  <p>An assertion passes when <strong>any</strong> event in scope resolves the path and satisfies the expectation, which is what makes it usable over a topic that fires more than once per invocation. When none does, every event in scope is reported with its own payload tree, exactly as <code>assert_data_matches</code> reports every payload it rejected.</p>
+</div>
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">Absent fields and empty maps</span>
+  <p>The SDK publishes event maps sparse, so a field whose value is <code>None</code> is absent rather than void, and a path through it stops with "has no key". A <code>Vec</code> that was published as void reports "has 0 entries", which is why the message quotes the length it found.</p>
+</div>
 
 ## Authorization matching
 

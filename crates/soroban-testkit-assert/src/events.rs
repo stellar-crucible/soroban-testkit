@@ -37,7 +37,7 @@ impl<'a> EventMatcher<'a> {
 
     /// Applies the configured filters to the events in scope, whether that scope
     /// is the latest invocation or an [`EventLog`].
-    fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
+    pub(crate) fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
         let mut events = match self.events {
             Some(collected) => collected.to_vec(),
             None => self.env.events().all().events().to_vec(),
@@ -251,7 +251,7 @@ fn emitting_contract(address: &Address) -> Option<soroban_sdk::xdr::ContractId> 
 }
 
 /// The topic symbols of one event, as readable text.
-fn event_topics(event: &soroban_sdk::xdr::ContractEvent) -> Vec<String> {
+pub(crate) fn event_topics(event: &soroban_sdk::xdr::ContractEvent) -> Vec<String> {
     let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
     body.topics.iter().map(topic_label).collect()
 }
@@ -339,7 +339,7 @@ impl<'a> EventData<'a> {
 }
 
 /// The data payload of an event, unwrapped from its XDR body.
-fn event_data(event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::xdr::ScVal {
+pub(crate) fn event_data(event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::xdr::ScVal {
     let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
     body.data.clone()
 }

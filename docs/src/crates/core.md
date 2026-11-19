@@ -1,10 +1,10 @@
 # soroban-testkit-core
 
-Budget tracking, error decoding and storage inspection — the primitives the rest of Testkit is built on.
+Budget tracking, error decoding, storage inspection and rent optimization — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · optimizer</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -25,6 +25,12 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageEntry`, `StorageTier` | A live storage key, its rendered value, tier and expiry ledger |
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
+| `StorageOptimizationRecommender` | Reads and writes per storage key across a sequence, with tier migrations to match |
+| `KeyAccess`, `KeyClass` | How often one key was touched, and whether that pattern makes it `Hot`, `Cold` or `Ephemeral` |
+| `AccessThresholds` | Where the boundary between hot, cold and ephemeral sits |
+| `RentModel` | The per-byte, per-ledger rent parameters the estimates are computed with |
+| `TierRecommendation` | One suggested migration, its rationale, and its projected saving |
+| `OptimizationReport` | The access patterns, the recommendations and their totals, rendered as Markdown |
 
 ## Budget snapshots
 
@@ -247,6 +253,113 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
 <div class="tk-callout tk-callout--info">
   <span class="tk-callout__title">Scope</span>
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
+</div>
+
+## Storage tier optimization
+
+Which tier a key lives in decides what it costs. Temporary entries are billed for
+a shorter lifetime than persistent ones, and instance keys ride the single
+contract-instance entry, so a call pays no separate ledger entry read for them and
+the key carries no per-entry overhead. `StorageOptimizationRecommender` records
+how often each key was read and written over a test sequence, classifies the key
+from that pattern, and reports the migrations that would lower its rent:
+
+```rust
+use soroban_testkit_core::optimizer::StorageOptimizationRecommender;
+use soroban_testkit_core::storage::{StorageSnapshot, StorageTier};
+
+let mut recommender = StorageOptimizationRecommender::new();
+
+let before = StorageSnapshot::capture(&env, &contract);
+client.transfer(&from, &to, &100);
+let after = StorageSnapshot::capture(&env, &contract);
+
+// Writes come from the diff; reads are named by the test that knew them.
+recommender.record_writes_from(&before.diff(&after));
+recommender.record_read("balances", StorageTier::Persistent, 96);
+recommender.record_read("metadata", StorageTier::Persistent, 12);
+
+let report = recommender.report();
+
+for recommendation in report.recommendations() {
+    println!(
+        "{}: {} -> {} ({} stroops saved)",
+        recommendation.key,
+        recommendation.current.as_str(),
+        recommendation.recommended.as_str(),
+        recommendation.saving_stroops(),
+    );
+}
+
+println!("{}", report.to_markdown());
+```
+
+Reads are recorded explicitly because the SDK reports the state a call leaves
+behind, not the keys it read. `record_reads_from(&snapshot)` is the coarse form —
+every key the snapshot holds counts as read by that step — while `record_read(key,
+tier, bytes)` names one key when the test knows which ones the call depended on.
+`record_writes_from(&diff)` records a write for every key the diff reports as added
+or rewritten.
+
+| Method | Records |
+|--------|---------|
+| `record_read(key, tier, bytes)` | One read of a key |
+| `record_write(key, tier, bytes)` | One write of a key |
+| `record_reads_from(&snapshot)` | A read of every key the snapshot holds |
+| `record_writes_from(&diff)` | A write for every added or rewritten key |
+| `report()` / `to_markdown()` | The patterns, the migrations and their totals |
+
+The classification is a property of the sequence, not of one call:
+
+| Class | When | Recommendation |
+|-------|------|----------------|
+| `Hot` | `hot_reads` reads or `hot_accesses` accesses | To `instance` when the key is read more than it is written and fits in `singleton_max_bytes` |
+| `Ephemeral` | Written once and read at most `ephemeral_max_reads` times | To `temporary`, whose lifetime is shorter |
+| `Cold` | Anything else | None: its tier hardly changes its rent |
+
+`AccessThresholds` carries those four numbers with defaults of 3 reads, 4
+accesses, 1 read and 128 bytes, so a short sequence can be judged differently:
+
+```rust
+use soroban_testkit_core::optimizer::{AccessThresholds, StorageOptimizationRecommender};
+
+let recommender = StorageOptimizationRecommender::new()
+    .with_thresholds(AccessThresholds::new().hot_reads(2).hot_accesses(2));
+```
+
+The report is Markdown, with one table row per key, one section per migration, and
+the totals at the end:
+
+```text
+# Storage optimization report
+
+Analyzed **2** storage key(s) over **6** recorded operation(s), with tiers compared on the same rent model.
+
+## Access patterns
+
+| Key | Tier | Reads | Writes | Size (bytes) | Class |
+|-----|------|-------|--------|--------------|-------|
+| `config` | persistent | 4 | 1 | 12 | hot |
+| `pending` | persistent | 1 | 1 | 20 | ephemeral |
+
+## Recommended tier migrations
+
+| Key | From | To | Projected saving (stroops) | Saving |
+|-----|------|----|----------------------------|--------|
+| `pending` | persistent | temporary | 1,692,058 | 50.0% |
+| `config` | persistent | instance | 1,428,268 | 33.3% |
+
+**Projected rent: 6,410,436 → 3,290,110 stroops (3,120,326 saved, 48.7%).**
+```
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">The figures are a comparison, not a fee quote</span>
+  <p>Rent is <code>bytes × ledgers kept alive × the network's per-byte rate</code>, and every one of those is a network parameter. <code>RentModel</code> carries them as public fields — 16,000 micro-stroops per byte per ledger, TTLs of 3,110,400 ledgers for persistent and instance entries and 1,555,200 for temporary ones, 48 bytes of per-entry metadata — chosen so two tiers compare consistently. Read the numbers as the saving to confirm against the current settings, and override the model with the values you mean before quoting them as fees.</p>
+</div>
+
+<div class="tk-callout">
+  <span class="tk-callout__title">What the recommendation cannot see</span>
+  <p>A pattern says what the sequence did, not what the contract promises: an entry written once and read once may still be needed a year later, and moving it to temporary storage would delete it. Treat <code>Ephemeral</code> as a question about the data being consumed, and <code>Hot</code>-to-instance as a question about instance size — a large or growing instance is rejected by the host, which is why <code>singleton_max_bytes</code> is small.</p>
 </div>
 
 <hr class="tk-divider" />
