@@ -262,8 +262,19 @@ impl BudgetGuard {
     /// the call the closure made. A closure that makes several calls is judged
     /// on the last one — measure a sequence by wrapping each call in its own
     /// guard.
+    ///
+    /// If the guard has `cpu_max` or `mem_max` set, enforce those limits on
+    /// the invocation using the SDK's resource limit enforcement.
     pub fn run<T>(&self, env: &soroban_sdk::Env, invocation: impl FnOnce() -> T) -> T {
         let value = invocation();
+
+        // Enforce custom resource limits if set.
+        if self.cpu_ceiling.is_some() || self.mem_ceiling.is_some() {
+            let limit = soroban_env_host::InvocationResourceLimits::new()
+                .max_instructions(self.cpu_ceiling.unwrap_or(0))
+                .max_bytes(self.mem_ceiling.unwrap_or(0));
+            env.cost_estimate().enforce_resource_limits(limit);
+        }
 
         self.assert_within(&BudgetSnapshot::last_invocation(env));
         value
