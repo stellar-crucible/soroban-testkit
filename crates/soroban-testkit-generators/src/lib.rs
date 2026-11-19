@@ -1,3 +1,5 @@
+pub mod event_fuzz;
+
 #[cfg(feature = "proptest")]
 pub mod errors;
 #[cfg(feature = "proptest")]
