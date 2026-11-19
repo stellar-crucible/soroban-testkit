@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · differential · errors · tuples · ttl</span></div>
 </div>
 
 ## Available strategies
@@ -246,6 +246,8 @@ covers any other length.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking is per component</span>
   <p>A failing tuple shrinks one component at a time while the others stay put, and a failing byte array shrinks every byte towards <code>0x00</code> independently. A signature check that only trips on the last byte therefore minimises to sixty-three zeros and the one byte that matters, rather than to an arbitrary-looking blob.</p>
+</div>
+
 `EntryTtl` carries `current_ledger` and `live_until_ledger`, and answers the
 questions a rent test asks of them: `is_live()`, `ttl()` (`None` once expired),
 `ledgers_since_expiry()`, `expires_at()` (the first unreadable ledger) and
@@ -375,6 +377,34 @@ proptest! {
 ```
 
 `malleated_signature(valid_sig)` introduces single-bit or byte perturbations into valid signatures to verify that corrupted or tampered signatures fail verification cleanly.
+
+## Differential comparison
+
+A strategy generates inputs; `DifferentialHarness` generates them *and* runs a second implementation of the same rule, so the assertion is agreement rather than a property you had to think of. It runs its own `proptest` loop, so it belongs in an ordinary `#[test]` rather than inside a `proptest!` block.
+
+```rust
+use soroban_testkit_generators::differential::DifferentialHarness;
+use soroban_testkit_generators::strategies::token_amount;
+
+#[test]
+fn fee_router_matches_the_specified_fee() {
+    let env = Env::default();
+    let id = env.register(FeeRouter, ());
+    let client = FeeRouterClient::new(&env, &id);
+
+    DifferentialHarness::new()
+        .cases(64)
+        .tolerance(1)
+        .compare(token_amount(), |amount| client.calculate_fee(&amount), reference_fee);
+}
+```
+
+`compare` asserts and panics with the shrunk input; `diff` runs the same loop and returns a `DifferentialReport` you inspect instead. Both closures take the generated value by value and return anything convertible into a trace: a primitive, a `Vec<u8>`, an `Option`, or an `ExecutionTrace` that also names the storage keys the call left behind. `tolerance` is in absolute units and applies only where both sides are numeric, so a `Divergence` carries the `DivergenceKind` (`Return` or `State { key }`), both values, and their delta where one exists.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Model it, don't copy it</span>
+  <p>The reference closure has to come from the specification. A second copy of the contract's body agrees with it case for case, including on the case that is wrong, and the run proves nothing. <a href="../guides/property-testing.html">Property Testing</a> covers what shrinking does and does not promise about the payload it prints.</p>
+</div>
 
 ## Custom strategies
 
