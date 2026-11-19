@@ -1,4 +1,6 @@
 pub mod builder;
+pub mod event_indexer;
+pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 
@@ -8,6 +10,13 @@ pub use profiles::NetworkProfile;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
 use soroban_sdk::{Address, Env, TryFromVal as _};
+
+pub use event_indexer::{
+    EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
+};
+pub use gas_exhaustion::{
+    ExecutionBudget, ExecutionReport, ExecutionStatus, ExhaustedResource, GasExhaustionHarness,
+};
 
 pub struct TestContext {
     pub env: Env,

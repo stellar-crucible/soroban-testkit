@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -209,39 +209,169 @@ order.
   <p>A single contract call that panics is rolled back by the host, so a broken one-call migration reports <code>Failed</code> with storage untouched. A migration spread over several calls has no such transaction around it: if the second call fails, the first call's writes stay — and the runner reports that as <code>NotAtomic</code>, naming what was left behind.</p>
 </div>
 
-## Network Profiles
+## EventIndexerEmulator
 
-By default the test host is unmetered so local iteration stays fast. Use a
-network profile to emulate the resource ceilings and ledger parameters of a
-real network:
+`EventIndexerEmulator` is an in-memory index that belongs to a test scenario:
+keep one instance for as long as the test needs its history, and drop it when
+the scenario ends. SDK v28's `env.events().all()` exposes the events from the
+most recent invocation, not an automatic stream of all ledgers. Ingest the
+events after each invocation and provide the ledger sequence explicitly:
 
 ```rust
-use soroban_testkit_fixtures::builder::TestContextBuilder;
-use soroban_testkit_fixtures::NetworkProfile;
+use soroban_sdk::testutils::{Events as _, Ledger as _};
+use soroban_testkit_fixtures::EventIndexerEmulator;
 
-let ctx = TestContextBuilder::new()
-    .with_network_profile(NetworkProfile::Mainnet)
-    .build();
+let mut indexer = EventIndexerEmulator::new();
+let sequence = ctx.sequence();
+client.transfer(&from, &to, &100);
+indexer
+    .ingest_ledger(sequence, ctx.env.events().all().events())
+    .unwrap();
 
-// Panics if this invocation exceeds real Stellar Mainnet limits.
-client.heavy_computation();
+ctx.advance_ledger(1);
+let sequence = ctx.sequence();
+client.transfer(&from, &to, &200);
+indexer
+    .ingest_ledger(sequence, ctx.env.events().all().events())
+    .unwrap();
 ```
 
-| Profile | CPU instructions | Memory | Ledger fees |
-|---------|------------------|--------|-------------|
-| `Local` | Unlimited | Unlimited | Base reserve 0 |
-| `Testnet` | 100,000,000 | 40 MiB | 0.5 XLM base reserve |
-| `Mainnet` | 400,000,000 | 40 MiB | 0.5 XLM base reserve, rent-bearing TTLs |
+Ingestion copies the original `ContractEvent`, including only metadata the SDK
+actually exposes. The ledger sequence is fixture-level metadata supplied by
+the caller; it is not present in the event itself. Soroban also does not give
+these events a unique event id, so the fixture identity is the supplied ledger
+sequence plus a monotonically increasing ingestion ordinal. Re-ingesting the
+same XDR event records a second occurrence rather than guessing that it is a
+duplicate.
 
-The builder also installs the profile's base reserve, minimum temporary and
-persistent entry TTLs, and maximum entry TTL, so storage and rent assumptions
-are exercised in the same way as on-chain. When an invocation exceeds a metered
-profile's CPU, memory, or ledger-entry limits, the test panics with a message
-identifying the exceeded resource.
+The index has inverted indexes for symbol topics and emitting contract ids,
+plus an ordered ledger-sequence index. Results are ordered by ascending ledger
+sequence and then by ingestion order within a ledger, even if the test ingests
+ledgers out of order. A query combines topic, contract and ledger filters with
+AND; an event matching multiple of its own topics appears only once.
 
-`NetworkProfile` exposes the raw values via `cpu_instructions()`,
-`mem_bytes()`, `base_reserve()`, `rent_fee_per_kib()`, and
-`invocation_limits()` if you need to assert on them directly.
+### Topic, contract and ledger queries
+
+An exact topic pattern matches a `ScVal::Symbol` topic exactly. `*` matches
+zero or more bytes and can be used anywhere in the pattern: `"transfer"` is
+exact, `"trans*"` matches a prefix, `"*fer"` matches a suffix, and `"*"` matches
+any symbol topic. Non-symbol topic values are not interpreted as strings and
+do not match a topic query.
+
+`query_by_contract` accepts a Soroban contract `Address`; account addresses
+match no events. `query_by_contract_id` accepts an XDR `ContractId` directly.
+`query_range` treats both ledger endpoints as inclusive and returns an error
+when the start is greater than the end.
+
+```rust
+use soroban_testkit_fixtures::{EventIndexerEmulator, EventQuery};
+
+let transfers = indexer.query_by_topic("transfer");
+let matching_contract = indexer.query_by_contract(&contract_id);
+let ledgers = indexer.query_range(100, 110)?;
+
+let query = EventQuery::new()
+    .topic("trans*")
+    .contract_address(&contract_id)
+    .ledger_range(100, 110);
+let first_page = indexer.query(&query)?;
+```
+
+Each query returns an `EventPage`. Its `total` is the count before pagination,
+and `offset` identifies the first requested match. The default maximum page
+size is 100; configure a positive cap with `set_page_limit`. Explicit page
+requests use `query_by_topic_page`, `query_by_contract_page`,
+`query_range_page`, or `query_page`; a requested size above the cap is reduced
+to the configured maximum. Use `next_offset()` to fetch the next page:
+
+```rust
+indexer.set_page_limit(25)?;
+let first = indexer.query_by_topic("transfer");
+if let Some(offset) = first.next_offset() {
+    let next = indexer.query_by_topic_page("transfer", offset, 25)?;
+    // `next.events` continues in the same deterministic order.
+}
+```
+
+Empty queries return an empty page. Zero page sizes and reversed ledger ranges
+are reported as `EventIndexerError`, not silently accepted.
+
+## GasExhaustionHarness
+
+`GasExhaustionHarness` executes a real Soroban host invocation after applying
+the configured CPU and memory limits through SDK v28's test budget. It does
+not synthesize budget errors. Its default configuration is 250,000 CPU
+instructions and unlimited test-host memory; `cpu_50k()` and `cpu_100k()`
+provide the other common CPU ceilings. Use `with_limits(cpu, memory)` for a
+custom pair.
+
+The function name and arguments are passed to `Env::try_invoke_contract`, so
+arguments must be Soroban `Val`s. The report distinguishes successful results,
+contract errors, other host errors, invocation aborts, conversion failures and
+host-reported budget exhaustion:
+
+```rust
+use soroban_sdk::{Env, Val, Vec};
+use soroban_testkit_fixtures::{
+    ExecutionStatus, GasExhaustionHarness,
+};
+
+let env = Env::default();
+let contract_id = env.register(MyContract, ());
+let report = GasExhaustionHarness::cpu_250k().invoke(
+    &env,
+    &contract_id,
+    "process_batch",
+    Vec::<Val>::new(&env),
+);
+
+match &report.status {
+    ExecutionStatus::Succeeded(_) => {}
+    ExecutionStatus::BudgetExhausted { resource, .. } => {
+        eprintln!("execution exhausted {resource:?}");
+    }
+    other => panic!("unexpected invocation result: {other:?}"),
+}
+println!("{}", report.diagnostic());
+```
+
+The report includes the configured limits, actual CPU and memory costs, and
+diagnostic events returned by `env.logs().all()`. It classifies exhaustion by
+comparing the measured resource totals with those limits; if both dimensions
+cross the boundary or the counters do not identify one, the report says so
+instead of guessing. The harness resets the test budget to SDK defaults after
+recording the report, so later assertions and storage inspection can proceed.
+
+Failed invocations use the host's transactional semantics. To test rollback,
+capture state before the call, invoke a contract method that writes persistent
+state and then performs enough metered host work to exhaust its budget, and
+compare the state snapshot after the harness returns:
+
+```rust
+use soroban_testkit_core::storage::StorageSnapshot;
+use soroban_sdk::{Env, IntoVal, Val};
+use soroban_testkit_fixtures::{ExecutionStatus, GasExhaustionHarness};
+
+let before = StorageSnapshot::capture(&env, &contract_id);
+let report = GasExhaustionHarness::with_limits(100_000, u64::MAX).invoke(
+    &env,
+    &contract_id,
+    "write_then_process_large_batch",
+    soroban_sdk::vec![&env, 10_000u32.into_val(&env)],
+);
+assert!(matches!(
+    &report.status,
+    ExecutionStatus::BudgetExhausted { .. }
+));
+assert_eq!(StorageSnapshot::capture(&env, &contract_id), before);
+```
+
+For memory-specific tests, use a custom CPU limit with a deliberately tight
+memory limit. The host can report resource exhaustion and the metered totals,
+but it does not expose an exact Rust source statement or loop iteration.
+Native test contracts also omit VM instruction and Wasm execution costs, so
+their measurements are not representative of the deployed Wasm contract;
+register or upload Wasm when those costs are part of the test.
 
 ## Extending fixtures
 
