@@ -1133,7 +1133,10 @@ fn describe_invocation(env: &Env, invocation: &AuthorizedInvocation) -> String {
 
 /// One recorded authorization as the failure message spells it.
 fn describe_auth(env: &Env, invoker: &Address, invocation: &AuthorizedInvocation) -> String {
-    format!("invoker {invoker:?} {}", describe_invocation(env, invocation))
+    format!(
+        "invoker {invoker:?} {}",
+        describe_invocation(env, invocation)
+    )
 }
 
 #[cfg(test)]
@@ -1453,12 +1456,8 @@ mod tests {
     #[test]
     fn sub_tree_matches_intermediate_node_at_depth_one() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &500i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &500i128);
 
         // Matches Pool -> Vault without mentioning the top-level Aggregator hop.
         assert_auth_sub_tree_matches!(fx.env, {
@@ -1480,12 +1479,8 @@ mod tests {
     #[test]
     fn sub_tree_matches_leaf_node_at_depth_two() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &250i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &250i128);
 
         assert_auth_sub_tree_matches!(fx.env, {
             invoker: fx.user,
@@ -1499,12 +1494,8 @@ mod tests {
     #[test]
     fn sub_tree_matches_full_three_hop_chain_from_root() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &100i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &100i128);
 
         assert_auth_sub_tree_matches!(fx.env, {
             invoker: fx.user,
@@ -1578,12 +1569,8 @@ mod tests {
     #[test]
     fn sub_tree_matches_when_invoker_is_omitted_or_wildcarded() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &75i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &75i128);
 
         assert_auth_sub_tree_matches!(fx.env, {
             function: "deposit",
@@ -1632,12 +1619,8 @@ mod tests {
     #[should_panic(expected = "[MISSING]")]
     fn sub_tree_failure_highlights_missing_child_branch() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &300i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &300i128);
 
         // `swap` calls only `Vault::deposit`, never `FeeContract::collect`.
         assert_auth_sub_tree_matches!(fx.env, {
@@ -1661,12 +1644,8 @@ mod tests {
     #[should_panic(expected = "Expected sub-tree")]
     fn sub_tree_failure_formats_side_by_side_comparison() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &300i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &300i128);
 
         assert_auth_sub_tree_matches!(fx.env, {
             invoker: fx.user,
@@ -1679,12 +1658,8 @@ mod tests {
     #[should_panic(expected = "Recorded authorization tree(s)")]
     fn sub_tree_failure_includes_recorded_tree_column() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &300i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &300i128);
 
         assert_auth_sub_tree_matches!(fx.env, {
             invoker: fx.user,
@@ -1703,12 +1678,8 @@ mod tests {
     fn sub_tree_fails_when_invoker_does_not_match() {
         let fx = routing_fixture();
         let stranger = Address::generate(&fx.env);
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &100i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &100i128);
 
         assert_auth_sub_tree_matches!(fx.env, {
             invoker: stranger,
@@ -1720,12 +1691,8 @@ mod tests {
     #[should_panic(expected = "[MISMATCH]")]
     fn sub_tree_fails_when_leaf_expected_but_children_exist() {
         let fx = routing_fixture();
-        AggregatorContractClient::new(&fx.env, &fx.aggregator).swap(
-            &fx.user,
-            &fx.pool,
-            &fx.vault,
-            &100i128,
-        );
+        AggregatorContractClient::new(&fx.env, &fx.aggregator)
+            .swap(&fx.user, &fx.pool, &fx.vault, &100i128);
 
         assert_auth_sub_tree_matches!(fx.env, {
             invoker: fx.user,

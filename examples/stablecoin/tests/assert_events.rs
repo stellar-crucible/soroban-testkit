@@ -227,7 +227,8 @@ fn router_deposit_and_mint_validates_nested_sub_tree_authorizations() {
     let borrower = ctx.user(0).clone();
     let xlm = Symbol::new(&ctx.env, "XLM");
 
-    d.router.deposit_and_mint(&d.stable_id, &borrower, &xlm, &1_500, &1_000);
+    d.router
+        .deposit_and_mint(&d.stable_id, &borrower, &xlm, &1_500, &1_000);
 
     // Validate the full router -> [deposit_collateral, mint] authorization tree.
     assert_auth_sub_tree_matches!(ctx.env, {

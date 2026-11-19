@@ -773,7 +773,9 @@ impl StablecoinContract {
         let price = fetch_oracle_price(&env, &asset);
         let (next_base, fee_bps) = compute_redemption_fee(&env, amount);
 
-        let scaled = amount.checked_mul(PRICE_SCALE).expect("redemption overflow");
+        let scaled = amount
+            .checked_mul(PRICE_SCALE)
+            .expect("redemption overflow");
         let gross = scaled / price;
         let fee_scaled = gross.checked_mul(fee_bps).expect("fee overflow");
         let collateral_out = gross - fee_scaled / BPS_SCALE;
