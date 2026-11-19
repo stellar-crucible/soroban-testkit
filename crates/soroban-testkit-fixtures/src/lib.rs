@@ -2,6 +2,7 @@ pub mod builder;
 pub mod congestion;
 pub mod event_indexer;
 pub mod eviction;
+pub mod failure_injector;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
@@ -12,6 +13,8 @@ pub use congestion::{
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use profiles::NetworkProfile;
+
+pub use failure_injector::FailureInjector;
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
