@@ -2008,7 +2008,10 @@ dependencies = [
 name = "soroban-testkit-generators"
 version = "0.4.1"
 dependencies = [
+ "ed25519-dalek",
+ "k256",
  "proptest",
+ "sha2",
  "soroban-sdk",
 ]
 

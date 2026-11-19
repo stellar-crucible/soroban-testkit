@@ -1,4 +1,5 @@
 pub mod budget;
+pub mod compatibility;
 pub mod error;
 pub mod footprint;
 pub mod namespace_auditor;
@@ -7,6 +8,10 @@ pub mod storage;
 pub mod wasm;
 pub mod storage_fragmentation;
 
+pub use compatibility::{
+    CompatibilityAuditor, CompatibilityGrade, CompatibilityScorecard, DeprecationItem,
+    DeprecationSeverity, DEFAULT_TARGET_PROTOCOL,
+};
 pub use footprint::{FootprintSnapshot, StorageFootprint, StorageFootprintDiff};
 pub use namespace_auditor::{NamespaceAuditor, NamespaceReport};
 pub use storage::{assert_storage_tier, StorageTier};

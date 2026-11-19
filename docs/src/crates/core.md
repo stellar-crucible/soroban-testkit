@@ -33,6 +33,8 @@ Budget tracking, error decoding, storage inspection, WASM analysis and host exec
 | `WasmSectionAnalyzer`, `WasmAnalysis` | WASM section sizes, deployment limits and debug/bloat warnings |
 | `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
 | `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
+| `CompatibilityAuditor` | Evaluates contracts against upcoming SDK v29 / Protocol 22+ changes and flags deprecated host calls |
+| `CompatibilityScorecard` | Actionable readiness scorecard with grades, remediation advice, and Markdown output |
 
 ## Budget snapshots
 
@@ -449,6 +451,26 @@ println!("Projected Stroop savings: {} Stroops", report.total_projected_stroop_s
 
 // Render an optimization report as Markdown:
 let markdown = report.to_markdown();
+```
+
+## SDK v29 compatibility auditor
+
+As protocol standards move from Protocol 21/22 toward Protocol 23 and SDK v29, legacy host functions and untyped APIs are deprecated. `CompatibilityAuditor` monitors contract invocations, events, and host errors to identify deprecated calls early, outputting a compatibility scorecard with concrete remediation instructions:
+
+```rust
+use soroban_testkit_core::{CompatibilityAuditor, CompatibilityGrade};
+
+let mut auditor = CompatibilityAuditor::new()
+    .with_target_protocol(22); // Target Protocol 22 / SDK v29
+
+// Audit contract interactions:
+let scorecard = auditor.audit_contract(&env, &contract_id);
+
+println!("Readiness grade: {}", scorecard.grade.as_str());
+assert!(scorecard.is_ready_for_upgrade, "Contract contains critical obsolete calls!");
+
+// Render a CI-ready Markdown report:
+let markdown_report = scorecard.to_markdown();
 ```
 
 <hr class="tk-divider" />

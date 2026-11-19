@@ -29,6 +29,12 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `byte_array_32()` | `[u8; 32]` | any 32 bytes — hashes, keys, seeds |
 | `byte_array_64()` | `[u8; 64]` | any 64 bytes — ed25519 signatures |
 | `byte_array::<N>()` | `[u8; N]` | any `N` bytes |
+| `ed25519_signature_pair()` | `Ed25519SignaturePair` | valid ed25519 public key, message digest, and signature |
+| `secp256k1_signature_pair()` | `Secp256k1SignaturePair` | valid secp256k1 public key, hash, signature, and recovery id |
+| `malleated_signature(sig)` | `[u8; 64]` | corrupted signature payload guaranteed to differ |
+| `contract_executable_wasm_hash()` | `[u8; 32]` | any 32-byte WASM bytecode hash |
+| `contract_executable()` | `ContractExecutable` | `Wasm`, `StellarAsset`, or `ExternalRef` variants |
+| `deployer_salt()` | `[u8; 32]` | 32-byte salt for deterministic deployment |
 | `entry_ttl(current, min_threshold, max_ttl)` | `EntryTtl` | a live entry whose TTL is in `min_threshold..=max_ttl` |
 | `expired_ttl(current)` | `EntryTtl` | an entry that expired before `current` |
 | `ttl_extension_delta()` | `u32` | 1 to `MAINNET_MAX_ENTRY_TTL` (3,110,400) ledgers |
@@ -293,6 +299,82 @@ Supported mutation operators:
 a failure, mirroring proptest's shrinking so failures are reported with the
 smallest event that still reproduces the bug. `shrink_candidates` returns each
 intermediate step for debugging.
+
+## Contract executables and deployer salts
+
+Factory contracts and deployment utilities dynamically deploy child contracts using WASM hashes or contract executable descriptors. `contract_executable_wasm_hash()`, `contract_executable()`, and `deployer_salt()` test factory patterns and verify deterministic contract address calculation:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Address, BytesN, Env};
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn deterministic_factory_address(
+        salt in strategies::deployer_salt(),
+        wasm_hash in strategies::contract_executable_wasm_hash(),
+    ) {
+        let env = Env::default();
+        let deployer = Address::generate(&env);
+        let salt_n = BytesN::from_array(&env, &salt);
+
+        // Precompute deterministic deployment address
+        let predicted = env
+            .deployer()
+            .with_address(deployer.clone(), salt_n.clone())
+            .deployed_address();
+
+        // Repeated address calculations with identical inputs match
+        let predicted_repeat = env
+            .deployer()
+            .with_address(deployer, salt_n)
+            .deployed_address();
+
+        assert_eq!(predicted, predicted_repeat);
+    }
+}
+```
+
+`contract_executable()` generates variants across `ContractExecutable::Wasm`, `ContractExecutable::StellarAsset`, and `ContractExecutable::ExternalRef`, allowing comprehensive fuzzing of contract installation and factory routines.
+
+## Cryptographic signatures and malleation
+
+Contracts verifying external cryptographic signatures with `env.crypto().ed25519_verify` or `secp256k1_recover` require testing both valid signatures and corrupted variants.
+
+`ed25519_signature_pair()` generates cryptographically valid Ed25519 keypairs, message digests, and signatures. `secp256k1_signature_pair()` produces valid Secp256k1 SEC-1 uncompressed 65-byte public keys, message hashes, 64-byte compact ECDSA signatures, and recovery IDs:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Bytes, BytesN, Env};
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn verify_ed25519_signatures(pair in strategies::ed25519_signature_pair()) {
+        let env = Env::default();
+        let pk = BytesN::from_array(&env, pair.public_key());
+        let msg = Bytes::from_slice(&env, pair.message_digest());
+        let sig = BytesN::from_array(&env, pair.signature());
+
+        // Verifies cleanly without panic
+        env.crypto().ed25519_verify(&pk, &msg, &sig);
+    }
+
+    #[test]
+    fn recover_secp256k1_public_keys(pair in strategies::secp256k1_signature_pair()) {
+        let env = Env::default();
+        let hash_bytes = Bytes::from_slice(&env, pair.message_hash());
+        let hash = env.crypto().sha256(&hash_bytes);
+        let sig = BytesN::from_array(&env, pair.signature());
+
+        let recovered = env.crypto().secp256k1_recover(&hash, &sig, pair.recovery_id());
+        assert_eq!(recovered.to_array(), *pair.public_key());
+    }
+}
+```
+
+`malleated_signature(valid_sig)` introduces single-bit or byte perturbations into valid signatures to verify that corrupted or tampered signatures fail verification cleanly.
 
 ## Custom strategies
 
