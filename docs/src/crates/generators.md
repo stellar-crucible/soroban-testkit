@@ -19,6 +19,9 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
+| `fuzzed_scval_map(max_entries)` | `ScVal` | a map of at most `max_entries` entries, sorted or deliberately unsorted |
+| `fuzzed_scval_vec(max_entries)` | `ScVal` | a vector of at most `max_entries` elements, including null objects |
+| `malformed_object_payload()` | `Vec<u8>` | a real map or vector's XDR, truncated at a generated offset |
 
 ## Usage with proptest
 
@@ -85,6 +88,56 @@ proptest! {
 <div class="tk-callout">
   <span class="tk-callout__title">No duplicates by construction</span>
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
+</div>
+
+## XDR objects and malformed payloads
+
+A contract that decodes an object parameter is a parser, and parsers fail on
+shapes a hand-written test never tries: a map whose keys are not in ledger
+order, a map with duplicate keys, a vector longer than the host accepts, a null
+object where a map was expected, and a payload that simply stops in the middle
+of an entry. The three object strategies generate exactly those.
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies::{
+    fuzzed_scval_map, fuzzed_scval_vec, malformed_object_payload,
+};
+
+proptest! {
+    #[test]
+    fn a_parser_never_panics_on_a_map(map in fuzzed_scval_map(16)) {
+        // map: ScVal::Map(Some(..)), sorted or unsorted, at most 16 entries
+    }
+
+    #[test]
+    fn an_oversized_vector_is_refused_not_allocated(vector in fuzzed_scval_vec(4_096)) {
+        // vector: ScVal::Vec(Some(..)); pass a multiple of the host's element
+        // limit to exercise the refusal path
+    }
+
+    #[test]
+    fn a_truncated_payload_is_an_error_not_a_crash(payload in malformed_object_payload()) {
+        // payload: a real object's XDR with its tail cut off, 0..len bytes
+    }
+}
+```
+
+All three are built out of proptest collections rather than raw bytes, so
+shrinking is meaningful: a failure reports the smallest map, the shortest
+vector, or the shortest prefix that still fails, instead of the case the
+runner happened to draw. `DEFAULT_FUZZ_ENTRIES` is the budget the two object
+strategies are usually given when a suite has no opinion.
+
+| Strategy | What is generated | What it catches |
+|----------|-------------------|-----------------|
+| `fuzzed_scval_map(n)` | `ScVal::Map(Some(..))` with 0..=n entries; half sorted and key-unique, half in generation order | a parser that assumes ledger ordering or unique keys |
+| `fuzzed_scval_vec(n)` | `ScVal::Vec(Some(..))` with 0..=n elements, including `Vec(None)` and `Map(None)` values | a parser that unwraps `Option<ScVal>` arity or allocates before checking the length |
+| `malformed_object_payload()` | `Vec<u8>`: a real object's XDR cut at a generated offset, from an empty payload to one byte short of complete | a decoder that panics on a truncated tag or a length that promises more bytes than follow |
+
+<div class="tk-callout">
+  <span class="tk-callout__title">An unsorted map is the interesting half</span>
+  <p>The host validates a <code>ScMap</code> before a contract sees one, so a contract that reads ledger state is safe by construction. The strategy still generates unsorted maps because a parser can receive entries from a client, an oracle or a nested record that never went through that check — and because the test that proves the assumption fails is the one that documents the boundary.</p>
 </div>
 
 ## Custom strategies
