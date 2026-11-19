@@ -4,7 +4,7 @@ Budget tracking, error decoding, storage inspection, WASM analysis and host exec
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · wasm · profiler</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · footprint · wasm · profiler</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -25,6 +25,10 @@ Budget tracking, error decoding, storage inspection, WASM analysis and host exec
 | `StorageEntry`, `StorageTier` | A live storage key, its rendered value, tier and expiry ledger |
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
+| `FootprintSnapshot` | XDR byte size of every live storage key of one contract, by tier |
+| `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
+| `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
+| `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
 | `HostExecutionProfiler`, `HostExecutionSummary` | Repeated call latency and explicit host-operation measurements |
 | `WasmSectionAnalyzer`, `WasmAnalysis` | WASM section sizes, deployment limits and debug/bloat warnings |
 
@@ -302,6 +306,100 @@ The return value contains every timing sample plus mean map lookup, object
 creation and memory-copy totals. A percentile uses nearest-rank ordering, so
 small benchmark sets are deterministic. JSON exports use the same complete
 sample and summary shape for continuous benchmarking.
+
+## Storage footprint diffs in CI
+
+A refactor that widens a struct or adds a key silently grows what a contract
+keeps on the ledger, and with it state rent and every read/write fee. The
+`footprint` module measures that growth in the unit those fees are charged in —
+XDR-encoded bytes — and diffs it between two Git revisions.
+
+A test records the footprint of each contract into a JSON artifact that the
+repository commits:
+
+```rust
+use soroban_testkit_core::footprint::StorageFootprint;
+
+#[test]
+#[ignore = "run with --ignored to refresh storage-footprint.json"]
+fn record_storage_footprint() {
+    let (env, token) = deploy_and_exercise_token();
+    let (_, vault) = deploy_and_exercise_vault(&env);
+
+    let mut footprint = StorageFootprint::new();
+    footprint.capture("token", &env, &token);
+    footprint.capture("vault", &env, &vault);
+    footprint.save(std::path::Path::new("storage-footprint.json")).unwrap();
+}
+```
+
+```json
+{
+  "version": 1,
+  "contracts": {
+    "token": {
+      "entries": { "instance:admin": 84, "persistent:balances": 200 }
+    }
+  }
+}
+```
+
+Persistent and temporary keys are measured as their whole ledger entry; each
+key inside instance storage is measured as its key-plus-value map entry. Keys
+are `tier:key`, iterated in order, so the committed file diffs cleanly.
+
+`StorageFootprintDiff::compare(&base, &head)` lines two artifacts up key by
+key. `changed_keys()` lists every key whose size moved, largest growth first,
+`growing_keys()` only the new or larger ones, and `exceeding(pct)` the
+contracts whose *total* grew by more than `pct` percent. A contract that is new
+in the head artifact is reported but not counted against the threshold, since
+there is no base to grow from. `to_markdown(Some(pct))` renders the report:
+
+```markdown
+## Storage footprint
+
+**Fail** — storage grew by more than 10% in `token` (+35.21%).
+
+| Contract | Instance | Persistent | Temporary | Total | Change |
+|----------|---------:|-----------:|----------:|------:|-------:|
+| `token` | 84 | 200 → 260 | 0 → 40 | 284 → 384 | +35.21% |
+| `vault` | 0 | 100 | 0 | 100 | 0% |
+
+### Changed keys
+
+| Contract | Key | Base | Head | Change |
+|----------|-----|-----:|-----:|-------:|
+| `token` | `persistent:balances` | 200 | 260 | **+60 B** |
+| `token` | `temporary:nonce` | – | 40 | **+40 B** (new) |
+```
+
+### The `storage-footprint-diff` binary
+
+```sh
+storage-footprint-diff BASE.json HEAD.json [--threshold PCT] [--output FILE] [--allow-missing-base]
+```
+
+It prints the Markdown report, also writes it to `--output` for a comment
+step, and exits `0` within the threshold, `1` when a contract grew past it, and
+`2` on a usage or file error. `--allow-missing-base` treats an absent base file
+as empty, for the pull request that introduces the artifact. The binary reads
+files and never runs Git itself, so the base revision is whatever the job
+extracts:
+
+```yaml
+- run: cargo test --workspace -- --ignored record_storage_footprint
+- run: git show "origin/${BASE_REF}:storage-footprint.json" > base-footprint.json || true
+  env:
+    BASE_REF: ${{ github.base_ref }}
+- run: >
+    cargo run -p soroban-testkit-core --bin storage-footprint-diff --
+    base-footprint.json storage-footprint.json
+    --threshold 10 --output footprint.md --allow-missing-base
+```
+
+Post `footprint.md` as the pull-request comment the same way the `Budget
+baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
+as a function, for embedding it in an `xtask` without spawning a process.
 
 <hr class="tk-divider" />
 

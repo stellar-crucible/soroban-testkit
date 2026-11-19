@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl</span></div>
 </div>
 
 ## Available strategies
@@ -24,6 +24,15 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `host_error_type()` | `ScErrorType` | every host category |
 | `host_error_code()` | `ScErrorCode` | every host code |
 | `host_error_of_type(kind)` | `HostError` | the codes of one category |
+| `soroban_tuple_2(a, b)` | `(A, B)` | one component from each strategy |
+| `soroban_tuple_3(a, b, c)` | `(A, B, C)` | one component from each strategy |
+| `byte_array_32()` | `[u8; 32]` | any 32 bytes — hashes, keys, seeds |
+| `byte_array_64()` | `[u8; 64]` | any 64 bytes — ed25519 signatures |
+| `byte_array::<N>()` | `[u8; N]` | any `N` bytes |
+| `entry_ttl(current, min_threshold, max_ttl)` | `EntryTtl` | a live entry whose TTL is in `min_threshold..=max_ttl` |
+| `expired_ttl(current)` | `EntryTtl` | an entry that expired before `current` |
+| `ttl_extension_delta()` | `u32` | 1 to `MAINNET_MAX_ENTRY_TTL` (3,110,400) ledgers |
+| `ttl_extension_delta_up_to(max)` | `u32` | 1 to `max` ledgers |
 
 ## Usage with proptest
 
@@ -146,6 +155,105 @@ hundred in table order for a deterministic sweep.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
   <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
+</div>
+
+## Tuples and fixed-size arrays
+
+Contract functions often take a composite argument — an `(Address, i128)`
+allowance grant, a `BytesN<32>` hash, a `BytesN<64>` signature. The `tuples`
+module names those shapes so a test does not rebuild them by hand, and every
+strategy is re-exported from the crate root:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{BytesN, Env};
+use soroban_testkit_generators::strategies::{account_address, token_amount};
+use soroban_testkit_generators::{byte_array_32, byte_array_64, soroban_tuple_2};
+
+proptest! {
+    #[test]
+    fn test_allowance_pair(
+        (owner, spender) in soroban_tuple_2(account_address(), account_address()),
+        amount in token_amount(),
+    ) {
+        let env = Env::default();
+        let (owner, spender) = (owner.to_address(&env), spender.to_address(&env));
+        client.approve(&owner, &spender, &amount);
+    }
+
+    #[test]
+    fn verify_rejects_a_forged_signature(
+        digest in byte_array_32(),
+        signature in byte_array_64(),
+    ) {
+        let env = Env::default();
+        let digest = BytesN::from_array(&env, &digest);
+        let signature = BytesN::from_array(&env, &signature);
+## Entry TTLs and storage rent
+
+Every contract data entry has a *live-until* ledger — the last ledger it can
+be read on — and rent bugs sit at the edges of that interval. The `ttl` module
+generates the intervals themselves, in the SDK's units: an entry's TTL is
+`live_until_ledger - current_ledger`, the number `get_ttl(&key)` reports and
+`extend_ttl(&key, threshold, extend_to)` takes, so a TTL of `0` means
+"readable this ledger, gone the next".
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::testutils::Ledger as _;
+use soroban_testkit_generators::{entry_ttl, expired_ttl, ttl_extension_delta_up_to};
+
+const RENEW_THRESHOLD: u32 = 17_280; // ~1 day
+const RENEW_TO: u32 = 518_400;       // ~30 days
+
+proptest! {
+    #[test]
+    fn renewal_keeps_the_balance_alive(
+        entry in entry_ttl(1_000, 0, RENEW_TO),
+        gap in ttl_extension_delta_up_to(RENEW_THRESHOLD),
+    ) {
+        // Put the entry on the ledger with exactly entry.ttl() remaining,
+        // then call the contract's renewal function.
+        client.renew();
+        let ttl = env.as_contract(&id, || env.storage().persistent().get_ttl(&KEY));
+        prop_assert!(ttl >= RENEW_THRESHOLD);
+
+        env.ledger().set_sequence_number(env.ledger().sequence() + gap);
+        prop_assert!(client.has_balance());
+    }
+
+    #[test]
+    fn an_expired_entry_is_never_read(entry in expired_ttl(50_000)) {
+        prop_assert!(!entry.is_live());
+        // ...
+    }
+}
+```
+
+The values are plain Rust tuples and arrays, so once each component is a host
+type the whole value converts with `soroban_sdk::IntoVal` — `(Address, i128)`,
+`(Address, Address, i128)` and `BytesN<N>` all cross a contract boundary
+unchanged, which is what the module's own tests check against a live contract.
+`soroban_tuple_3(a, b, c)` is the three-component form, and `byte_array::<N>()`
+covers any other length.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking is per component</span>
+  <p>A failing tuple shrinks one component at a time while the others stay put, and a failing byte array shrinks every byte towards <code>0x00</code> independently. A signature check that only trips on the last byte therefore minimises to sixty-three zeros and the one byte that matters, rather than to an arbitrary-looking blob.</p>
+`EntryTtl` carries `current_ledger` and `live_until_ledger`, and answers the
+questions a rent test asks of them: `is_live()`, `ttl()` (`None` once expired),
+`ledgers_since_expiry()`, `expires_at()` (the first unreadable ledger) and
+`advanced_by(n)` for the same entry observed `n` ledgers later.
+
+`max_ttl` is the network ceiling — `MAINNET_MAX_ENTRY_TTL` on Mainnet, or the
+value a test passed to `env.ledger().set_max_entry_ttl(..)` — and an interval
+that would run past `u32::MAX` is clamped. `entry_ttl` refuses a
+`min_threshold` above `max_ttl`, and `expired_ttl` refuses ledger `0`, because
+neither has a value to generate.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the expiration boundary</span>
+  <p><code>entry_ttl</code> shrinks the TTL towards <code>min_threshold</code>, <code>expired_ttl</code> shrinks towards the entry that expired exactly one ledger ago, and <code>ttl_extension_delta</code> shrinks towards a single ledger. A renewal bug therefore minimises to the entry closest to dying, which is where off-by-one liveness checks fail. The module's own tests check these intervals against the host: what <code>entry_ttl</code> generates is what <code>get_ttl</code> reports, and a temporary entry is readable on <code>live_until_ledger</code> and gone on <code>expires_at()</code>.</p>
 </div>
 
 ## Custom strategies

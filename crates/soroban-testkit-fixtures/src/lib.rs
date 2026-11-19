@@ -1,5 +1,8 @@
 pub mod builder;
+pub mod migration;
 pub mod reentrancy;
+
+pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;

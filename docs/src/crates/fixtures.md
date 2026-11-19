@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -170,6 +170,65 @@ assert_eq!(client.balance(&vault, &ctx.users[0]), 0);
 restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
+
+## Testing schema migrations
+
+Contracts bump their storage schema — v1 to v2 to v3 — and migrate the data
+they already hold. `MigrationRunner` drives those migrations from a test and
+reads the schema version out of the contract's instance storage before and
+after every step:
+
+```rust
+use soroban_testkit_fixtures::{MigrationRunner, TestContext};
+
+let ctx = TestContext::new();
+let id = ctx.env.register(Vault, ());
+let mut runner = MigrationRunner::with_client(&ctx.env, &id, VaultClient::new(&ctx.env, &id));
+assert_eq!(runner.current_version(), 1);
+
+let step = runner.execute_migration(2, |client| client.migrate_v1_to_v2());
+step.assert_renamed("balance", "ledger");
+step.assert_schema_after(&["ledger", "version"]);
+assert_eq!(runner.current_version(), 2);
+
+runner.execute_migration(3, |client| client.migrate_v2_to_v3());
+runner.assert_schema(&["fee_bps", "ledger", "version"]);
+```
+
+`MigrationRunner::new(&env, &id)` is the same runner with the contract's
+`Address` passed to each closure instead of a client.
+
+The version lives under the instance-storage symbol `version` by default;
+`with_version_key(DataKey::Version)` points the runner at whatever key the
+contract uses, `stored_version()` reads it raw, and a contract that stores no
+version yet counts as v1 unless `assuming_unversioned_is(n)` says otherwise.
+The contract's migration writes the new version itself — the runner checks it,
+it never writes it.
+
+| A step is refused or fails when… | `MigrationError` |
+|----------------------------------|------------------|
+| it already ran through this runner | `AlreadyApplied` — names the step it ran as |
+| the target is at or below the current version | `NotForward` |
+| the target skips a version (`v1` → `v3`) | `SkipsVersion` |
+| it finished without recording the target version | `VersionNotRecorded` |
+| it panicked and storage is unchanged | `Failed` |
+| it panicked and left storage changed | `NotAtomic` — lists the leftover keys |
+
+The first three are checked before the closure runs, so a double migration
+never reaches the contract. `execute_migration` panics with the error's message;
+`try_execute_migration` returns it, which is what a test that *expects* a
+refusal wants.
+
+Each successful step returns a `MigrationRecord` holding the `StorageSnapshot`
+on either side of it. `diff()`, `assert_added`, `assert_removed`,
+`assert_renamed`, `assert_schema_before` and `assert_schema_after` are the
+before-and-after schema assertions, and `runner.history()` lists every step in
+order.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Atomic by construction, verified anyway</span>
+  <p>A single contract call that panics is rolled back by the host, so a broken one-call migration reports <code>Failed</code> with storage untouched. A migration spread over several calls has no such transaction around it: if the second call fails, the first call's writes stay — and the runner reports that as <code>NotAtomic</code>, naming what was left behind.</p>
+</div>
 
 ## Extending fixtures
 
