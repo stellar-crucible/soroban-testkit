@@ -12,6 +12,8 @@ members = [
     "examples/bounty_escrow",
     "examples/multisig_vault",
     "examples/flash_mint",
+    "examples/crowdfunding",
+    "examples/liquid_staking",
 ]
 
 [workspace.package]

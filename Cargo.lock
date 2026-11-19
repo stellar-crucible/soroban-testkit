@@ -1960,6 +1960,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-crowdfunding"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-domain-service"
 version = "0.4.1"
 dependencies = [
@@ -1984,7 +1996,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "soroban-testkit-example-subscription"
+name = "soroban-testkit-example-liquid-staking"
 version = "0.4.1"
 dependencies = [
  "proptest",
