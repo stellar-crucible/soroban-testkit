@@ -7,6 +7,8 @@ pub mod errors;
 #[cfg(feature = "proptest")]
 pub mod executables;
 #[cfg(feature = "proptest")]
+pub mod storage_tier;
+#[cfg(feature = "proptest")]
 pub mod strategies;
 #[cfg(feature = "proptest")]
 pub mod ttl;
@@ -22,6 +24,12 @@ pub use crypto::{
 pub use errors::{host_error_code_coverage, HostError};
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+#[cfg(feature = "proptest")]
+pub use storage_tier::{
+    mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
+    storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
+    MixedTierTtlAllocation, StorageTierWithTtl,
+};
 #[cfg(feature = "proptest")]
 pub use ttl::{
     entry_ttl, expired_ttl, ttl_extension_delta, ttl_extension_delta_up_to, EntryTtl,

@@ -2013,6 +2013,7 @@ dependencies = [
  "proptest",
  "sha2",
  "soroban-sdk",
+ "soroban-testkit-core",
 ]
 
 [[package]]

@@ -5,6 +5,11 @@ pub use crate::crypto::{
     Secp256k1SignaturePair,
 };
 pub use crate::executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+pub use crate::storage_tier::{
+    mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
+    storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
+    MixedTierTtlAllocation, StorageTierWithTtl,
+};
 
 use proptest::prelude::*;
 use soroban_sdk::xdr::{
