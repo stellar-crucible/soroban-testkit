@@ -30,6 +30,18 @@ pub struct AddressBytes {
 }
 
 impl AddressBytes {
+    /// Build an address from its format tag and bytes.
+    ///
+    /// Crate-internal: the public API generates addresses, and a hand-built one
+    /// is only useful to a test that needs a predictable value.
+    #[cfg(test)]
+    pub(crate) fn from_parts(address_type: AddressType, bytes: [u8; 32]) -> Self {
+        Self {
+            address_type,
+            bytes,
+        }
+    }
+
     /// The format this address was generated as.
     pub fn address_type(&self) -> AddressType {
         self.address_type

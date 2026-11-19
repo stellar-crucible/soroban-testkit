@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · multisig</span></div>
 </div>
 
 ## Available strategies
@@ -24,6 +24,12 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `host_error_type()` | `ScErrorType` | every host category |
 | `host_error_code()` | `ScErrorCode` | every host code |
 | `host_error_of_type(kind)` | `HostError` | the codes of one category |
+| `multisig_policy(min, max)` | `MultisigPolicy` | weighted signers and a reachable threshold |
+| `valid_signer_subset(policy)` | `Vec<AddressBytes>` | signers whose weight meets the threshold |
+| `insufficient_signer_subset(policy)` | `Vec<AddressBytes>` | signers whose weight stays below it |
+| `multisig_with_valid_subset(range)` | `(MultisigPolicy, Vec<AddressBytes>)` | a policy and an approving subset of it |
+| `multisig_with_insufficient_subset(range)` | `(MultisigPolicy, Vec<AddressBytes>)` | a policy and a failing subset of it |
+| `signer_weight()` | `u32` | 1 to 100 |
 
 ## Usage with proptest
 
@@ -146,6 +152,77 @@ hundred in table order for a deterministic sweep.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
   <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
+</div>
+
+## Multi-signature threshold policies
+
+A multi-sig wallet, a governance council and a threshold escrow share one
+shape: weighted signers and a threshold their combined approval must reach.
+Hand-building those cases is where threshold tests go wrong — a threshold above
+the total weight can never be met, and a "failing" subset that accidentally
+clears the threshold makes the negative branch a false positive.
+
+`multisig_policy(min, max)` draws a signer count in the range, a positive
+weight for each signer, and then a threshold between one and the total weight.
+The policy therefore always has a reachable threshold, the whole signer set
+always approves, and the empty set never does. Signers are distinct ed25519
+accounts from `account_address()`, so each policy is a set of real addresses a
+contract can authenticate.
+
+`valid_signer_subset` and `insufficient_signer_subset` take a policy and return
+a strategy over subsets of its signers. Both **repair** the subset they draw
+instead of filtering it: an approving subset is topped up until it reaches the
+threshold, and a failing one has signers removed until it drops below. That
+matters twice over — no case is rejected, so a run says something about every
+draw, and shrinking a failing case cannot break the invariant it exists to
+hold.
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::multisig::{
+    multisig_with_insufficient_subset, multisig_with_valid_subset,
+};
+
+proptest! {
+    #[test]
+    fn a_wallet_releases_only_at_the_threshold(
+        (policy, approving) in multisig_with_valid_subset(3..10),
+    ) {
+        assert!(policy.threshold() <= policy.subset_weight(&approving));
+        // wallet.verify_approval(&approving) is always true for this input
+    }
+
+    #[test]
+    fn a_wallet_refuses_a_short_subset(
+        (policy, short) in multisig_with_insufficient_subset(3..10),
+    ) {
+        assert!(policy.subset_weight(&short) < policy.threshold());
+    }
+}
+```
+
+A `MultisigPolicy` exposes `signers()`, `threshold()` and `total_weight()`,
+plus `subset_weight(&subset)`, `approves(&subset)` and `addresses()` for
+asserting on a subset directly. `Signer` carries `address()` and `weight()`. A
+repeated address counts once, so a duplicated signature cannot inflate a
+subset over the threshold — the property a real wallet's deduplication check
+exists to enforce.
+
+```rust
+use soroban_testkit_generators::multisig::{signer_weight, MultisigPolicy, Signer};
+
+// Build a policy by hand when the test names its signers.
+let policy = MultisigPolicy::new(
+    vec![Signer::new(alice, 2), Signer::new(bob, 1)],
+    2,
+);
+assert!(policy.approves(&[alice]));
+assert!(!policy.approves(&[bob]));
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking keeps the invariant</span>
+  <p>A subset does not come from a <code>prop_filter</code>, so proptest never throws a case away and shrinking cannot produce an invalid one. The approving strategy shrinks towards the smallest prefix that still reaches the threshold; the failing strategy shrinks towards the empty subset, which is below any positive threshold.</p>
 </div>
 
 ## Custom strategies
