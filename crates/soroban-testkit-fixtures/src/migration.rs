@@ -141,7 +141,7 @@ impl MigrationRecord {
 /// built with [`MigrationRunner::with_client`], or the contract's [`Address`]
 /// when built with [`MigrationRunner::new`].
 ///
-/// ```rust,ignore
+/// ```text
 /// let mut runner = MigrationRunner::with_client(&ctx.env, &id, VaultClient::new(&ctx.env, &id));
 /// assert_eq!(runner.current_version(), 1);
 ///
