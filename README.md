@@ -177,6 +177,8 @@ soroban-testkit/
 ├── examples/
 │   ├── counter/        # Contract + integration tests using every crate
 │   │                   # + budget.json: the costs CI holds them to
+│   ├── domain_service/ # Name registry, expiry on the ledger clock, one test
+│   │                   # file per crate
 │   └── token/          # ERC-20 style contract, one test file per crate
 ├── docs/                     # mdBook documentation source (theme/custom.css)
 ├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
@@ -187,7 +189,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 220 tests: all four crates + examples/counter + examples/token
+cargo test --workspace --locked      # 266 tests: all four crates + examples/counter + examples/domain_service + examples/token
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
@@ -213,6 +215,17 @@ fixtures, `tests/assert_events.rs` on assertions, `tests/budget_and_storage.rs`
 on core, `tests/property.rs` on generators — so each one reads as a page of the
 documentation that happens to run. [Worked Example: Token](https://stellar-crucible.github.io/soroban-testkit/guides/token-example.html)
 walks through them.
+
+[`examples/domain_service`](examples/domain_service) is a name registry, and it is
+the example for what depends on the ledger rather than on a value: a term is
+validated by `env.ledger().timestamp()` instead of a stored flag, a grace period
+keeps an expired name with its previous owner before anyone can claim it, and
+records only resolve while the term lasts. Its suite also carries the storage
+growth benchmark — every registration rewrites one `domains` map, so the test
+measures bytes per name rather than keys per name — and the property that every
+term length becomes claimable exactly one second past expiry plus grace.
+[Worked Example: Domain Service](https://stellar-crucible.github.io/soroban-testkit/guides/domain-service-example.html)
+walks through it.
 
 ## Community
 

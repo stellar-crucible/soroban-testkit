@@ -1936,7 +1936,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "soroban-testkit-example-stablecoin"
+name = "soroban-testkit-example-domain-service"
 version = "0.4.1"
 dependencies = [
  "proptest",
