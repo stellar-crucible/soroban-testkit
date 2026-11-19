@@ -172,7 +172,12 @@ impl BudgetGuard {
         self
     }
 
-    pub fn mem_ceiling(mut self, bytes: u64) -> Self {
+    pub fn cpu_max(mut self, instructions: u64) -> Self {
+        self.cpu_ceiling = Some(instructions);
+        self
+    }
+
+    pub fn mem_max(mut self, bytes: u64) -> Self {
         self.mem_ceiling = Some(bytes);
         self
     }
@@ -188,6 +193,17 @@ impl BudgetGuard {
     /// How much a metric may grow before the guard rejects it. Defaults to 0,
     /// which means "not one instruction more than the baseline".
     pub fn tolerance_percent(mut self, percent: u64) -> Self {
+        self.tolerance_percent = percent;
+        self
+    }
+
+    pub fn tolerance(mut self, percent: u64) -> Self {
+        self.tolerance_percent = percent;
+        self
+    }
+
+    /// Set the growth tolerance percent directly (alias for `tolerance_percent`).
+    pub fn growth_tolerance(mut self, percent: u64) -> Self {
         self.tolerance_percent = percent;
         self
     }
@@ -262,8 +278,19 @@ impl BudgetGuard {
     /// the call the closure made. A closure that makes several calls is judged
     /// on the last one — measure a sequence by wrapping each call in its own
     /// guard.
+    ///
+    /// If the guard has `cpu_max` or `mem_max` set, enforce those limits on
+    /// the invocation using the SDK's resource limit enforcement.
     pub fn run<T>(&self, env: &soroban_sdk::Env, invocation: impl FnOnce() -> T) -> T {
         let value = invocation();
+
+        // Enforce custom resource limits if set.
+        if self.cpu_ceiling.is_some() || self.mem_ceiling.is_some() {
+            let limit = soroban_env_host::InvocationResourceLimits::new()
+                .max_instructions(self.cpu_ceiling.unwrap_or(0))
+                .max_bytes(self.mem_ceiling.unwrap_or(0));
+            env.cost_estimate().enforce_resource_limits(limit);
+        }
 
         self.assert_within(&BudgetSnapshot::last_invocation(env));
         value
@@ -285,15 +312,18 @@ macro_rules! budget_guard {
 
     (@limit $guard:expr, {}) => { $guard };
     (@limit $guard:expr, { cpu_max: $limit:expr $(, $($rest:tt)*)? }) => {
-        $crate::budget_guard!(@limit $guard.cpu_ceiling($limit), { $($($rest)*)? })
+        $crate::budget_guard!(@limit $guard.cpu_max($limit), { $($($rest)*)? })
     };
     (@limit $guard:expr, { mem_max: $limit:expr $(, $($rest:tt)*)? }) => {
-        $crate::budget_guard!(@limit $guard.mem_ceiling($limit), { $($($rest)*)? })
+        $crate::budget_guard!(@limit $guard.mem_max($limit), { $($($rest)*)? })
     };
     (@limit $guard:expr, { baseline: $baseline:expr $(, $($rest:tt)*)? }) => {
         $crate::budget_guard!(@limit $guard.baseline($baseline), { $($($rest)*)? })
     };
     (@limit $guard:expr, { tolerance: $percent:expr $(, $($rest:tt)*)? }) => {
+        $crate::budget_guard!(@limit $guard.tolerance($percent), { $($($rest)*)? })
+    };
+    (@limit $guard:expr, { tolerance_percent: $percent:expr $(, $($rest:tt)*)? }) => {
         $crate::budget_guard!(@limit $guard.tolerance_percent($percent), { $($($rest)*)? })
     };
 }
