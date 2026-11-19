@@ -1,10 +1,14 @@
 pub mod auth;
 pub mod balance;
+pub mod budget_diff;
 pub mod events;
 pub mod storage;
 
 pub use balance::{
     assert_balance_conserved_internal, AccountBalanceEntry, BalanceConservationReport,
     IntoTrackedAccount, TrackedAccount,
+};
+pub use budget_diff::{
+    measure_invocation_budget, BudgetDiffMatcher, BudgetDiffReport, BudgetDiffViolation,
 };
 pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};
