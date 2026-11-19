@@ -19,6 +19,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
+| `fuzzed_invocation_args(env, typed, max_rogue)` | `Vec<Val>` | valid arguments mixed with integers, booleans, symbols, errors, and address objects |
 | `host_error_code_coverage()` | `HostError` | all 10 categories × all 10 codes |
 | `host_error()` | `HostError` | alias for `host_error_code_coverage()` |
 | `host_error_type()` | `ScErrorType` | every host category |
@@ -106,6 +107,29 @@ proptest! {
   <span class="tk-callout__title">No duplicates by construction</span>
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
 </div>
+
+## Fuzzing invocation argument types
+
+`fuzzed_invocation_args` takes the host environment, a vector of valid
+arguments for the target function, and a maximum number of rogue values. It
+returns actual host `Val`s, so object handles belong to the same environment
+as the contract client. Primitive values shrink toward zero and `false`, while
+the argument list shrinks toward the original typed arguments.
+
+```rust
+use soroban_sdk::{Env, IntoVal};
+use soroban_testkit_generators::fuzzed_invocation_args;
+
+let env = Env::default();
+let valid = vec![7u32.into_val(&env)];
+let args = fuzzed_invocation_args(&env, valid, 4);
+```
+
+Use the generated values with a contract entry point that accepts `Val` (or
+through the host's dynamic invocation API) to ensure dispatch and validation
+reject unexpected types before business logic runs. Generated rogue values
+cover signed/unsigned integers, booleans, symbols, contract errors, and
+address object handles.
 
 ## Host error discriminants
 
