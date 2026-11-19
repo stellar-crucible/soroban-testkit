@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -170,6 +170,29 @@ assert_eq!(client.balance(&vault, &ctx.users[0]), 0);
 restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
+
+## Persistent storage eviction
+
+`StateEvictionSimulator` creates a short-lived persistent entry, advances its
+ledger past the TTL, and exposes the archived read error before exercising
+restoration. It uses protocol 22 to observe the legacy `Storage` failure, then
+protocol 23 automatic restoration to model an invocation carrying the entry
+in its restore list. The restored value is read back and its TTL extended.
+
+```rust
+let env = Env::default();
+let contract = env.register(MyContract, ());
+let mut state = StateEvictionSimulator::new(&env, &contract, key.into_val(&env), value.into_val(&env));
+state.store();
+state.advance_past_ttl();
+assert!(state.try_read().unwrap_err().is_type(ScErrorType::Storage));
+state.restore(20_000);
+assert_eq!(state.read(), Some(state.original()));
+assert!(state.ttl() >= 20_000);
+```
+
+The simulator keeps archived state in the host so restoration must recover the
+original data; it does not substitute a new value during the test.
 
 ## Testing schema migrations
 

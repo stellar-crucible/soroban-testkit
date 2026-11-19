@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod congestion;
 pub mod event_indexer;
+pub mod eviction;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
@@ -20,6 +21,7 @@ use soroban_sdk::{Address, Env, TryFromVal as _};
 pub use event_indexer::{
     EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
 };
+pub use eviction::StateEvictionSimulator;
 pub use gas_exhaustion::{
     ExecutionBudget, ExecutionReport, ExecutionStatus, ExhaustedResource, GasExhaustionHarness,
 };
