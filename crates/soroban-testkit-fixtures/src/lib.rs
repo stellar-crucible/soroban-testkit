@@ -1,7 +1,9 @@
 pub mod builder;
 pub mod migration;
+pub mod profiles;
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
+pub use profiles::NetworkProfile;
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
@@ -17,6 +19,9 @@ pub struct TestContext {
     /// assumed policy: `new` and the builder record what they actually did,
     /// and `with_env` defaults to mocked.
     pub mock_auths: bool,
+    /// The network conditions the builder installed and [`TestContext::reset`]
+    /// re-applies to the fresh env.
+    pub network_profile: NetworkProfile,
 }
 
 impl Default for TestContext {
@@ -46,6 +51,7 @@ impl TestContext {
             admin,
             users: Vec::new(),
             mock_auths: true,
+            network_profile: NetworkProfile::Local,
         }
     }
 
@@ -139,6 +145,7 @@ impl TestContext {
         if self.mock_auths {
             env.mock_all_auths();
         }
+        self.network_profile.apply(&env);
         self.env = env;
 
         self.admin = migrated_to(&self.env, &carried[0]);

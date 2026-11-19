@@ -1,8 +1,11 @@
 use soroban_sdk::Env;
 
+use crate::profiles::NetworkProfile;
+
 pub struct TestContextBuilder {
     num_users: usize,
     mock_auths: bool,
+    network_profile: NetworkProfile,
 }
 
 impl Default for TestContextBuilder {
@@ -16,6 +19,7 @@ impl TestContextBuilder {
         Self {
             num_users: 0,
             mock_auths: true,
+            network_profile: NetworkProfile::Local,
         }
     }
 
@@ -26,6 +30,17 @@ impl TestContextBuilder {
 
     pub fn without_mock_auths(mut self) -> Self {
         self.mock_auths = false;
+        self
+    }
+
+    /// Apply a network environment profile to the built context.
+    ///
+    /// [`NetworkProfile::Local`] is the default: unmetered, so a test only
+    /// pays for the work it explicitly measures. `Testnet` and `Mainnet`
+    /// install that network's budget ceilings and ledger parameters, so a call
+    /// that would exceed them fails here instead of on a live network.
+    pub fn with_network_profile(mut self, profile: NetworkProfile) -> Self {
+        self.network_profile = profile;
         self
     }
 
@@ -40,6 +55,8 @@ impl TestContextBuilder {
         for _ in 0..self.num_users {
             ctx.add_user();
         }
+        self.network_profile.apply(&ctx.env);
+        ctx.network_profile = self.network_profile;
         ctx
     }
 }
@@ -47,6 +64,7 @@ impl TestContextBuilder {
 #[cfg(test)]
 mod tests {
     use super::TestContextBuilder;
+    use crate::profiles::{NetworkProfile, TESTNET_CPU_INSTRUCTIONS};
     use soroban_sdk::testutils::Events as _;
 
     #[test]
@@ -95,6 +113,23 @@ mod tests {
         assert!(
             ctx.env.events().all().events().is_empty(),
             "a fresh environment has no events to inspect"
+        );
+    }
+
+    #[test]
+    fn with_network_profile_installs_the_profile_budget() {
+        let ctx = TestContextBuilder::new()
+            .with_network_profile(NetworkProfile::Testnet)
+            .build();
+
+        assert_eq!(ctx.network_profile, NetworkProfile::Testnet);
+        assert_eq!(
+            ctx.env
+                .host()
+                .budget_cloned()
+                .get_cpu_insns_remaining()
+                .unwrap(),
+            TESTNET_CPU_INSTRUCTIONS as u64
         );
     }
 
