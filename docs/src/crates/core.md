@@ -31,6 +31,8 @@ Budget tracking, error decoding, storage inspection, WASM analysis and host exec
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
 | `HostExecutionProfiler`, `HostExecutionSummary` | Repeated call latency and explicit host-operation measurements |
 | `WasmSectionAnalyzer`, `WasmAnalysis` | WASM section sizes, deployment limits and debug/bloat warnings |
+| `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
+| `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
 
 ## Budget snapshots
 
@@ -427,6 +429,27 @@ extracts:
 Post `footprint.md` as the pull-request comment the same way the `Budget
 baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
 as a function, for embedding it in an `xtask` without spawning a process.
+
+## Storage fragmentation analyzer
+
+Storing data across dozens of small scalar entries inflates the ledger footprint due to repeated `LedgerKey` overhead and redundant key serialization. `StorageFragmentationAnalyzer` inspects contract storage across `instance`, `persistent`, and `temporary` tiers to measure key-to-value byte ratios, identify fragmented entries sharing common prefixes, and calculate projected byte and Stroop rent savings:
+
+```rust
+use soroban_testkit_core::{StorageFragmentationAnalyzer, StorageTier};
+
+let analyzer = StorageFragmentationAnalyzer::new()
+    .with_overhead_threshold(0.40)      // Flag entries where key bytes >= 40% of total
+    .with_stroop_rate_per_byte(100);    // Rent rate assumption for Stroop savings
+
+let report = analyzer.analyze(&env, &contract_id);
+
+println!("Overall overhead ratio: {:.1}%", report.overall_overhead_ratio * 100.0);
+println!("Potential byte savings: {} B", report.total_projected_byte_savings());
+println!("Projected Stroop savings: {} Stroops", report.total_projected_stroop_savings());
+
+// Render an optimization report as Markdown:
+let markdown = report.to_markdown();
+```
 
 <hr class="tk-divider" />
 

@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -393,6 +393,34 @@ but it does not expose an exact Rust source statement or loop iteration.
 Native test contracts also omit VM instruction and Wasm execution costs, so
 their measurements are not representative of the deployed Wasm contract;
 register or upload Wasm when those costs are part of the test.
+
+## Congestion and queue delay simulator
+
+Under network congestion on Stellar, transaction base fees fluctuate and transactions can be delayed across multiple ledgers in validator queues before execution. Contracts enforcing deadlines (such as slippage parameters or auction bidding windows) must reject delayed transactions gracefully. `CongestionSimulator` emulates variable base fees, surge spikes, and ledger delays:
+
+```rust
+use soroban_testkit_fixtures::CongestionSimulator;
+
+let mut sim = CongestionSimulator::new()
+    .with_base_fee(100)                     // Base fee in Stroops
+    .with_base_fee_range(100, 1_000)        // Fluctuation bounds
+    .with_surge_multiplier(5)               // Surge pricing multiplier
+    .with_delay_range(1, 10)                // Simulated ledger queue arrival delay
+    .with_seconds_per_ledger(5);
+
+// Check fee requirements under fluctuating conditions:
+let required_fee = sim.calculate_fee(1);
+assert!(sim.is_fee_sufficient(offered_fee, 1));
+
+// Advance ledger height and timestamp to simulate arrival queue latency:
+let report = sim.advance_delay(&env);
+println!("Delayed by {} ledgers ({}s)", report.ledgers_delayed, report.seconds_delayed);
+
+// Execute invocation closure with simulated congestion delay:
+let (report, result) = sim.execute_with_delay(&env, || {
+    client.try_swap(&100, &90, &deadline)
+});
+```
 
 ## Extending fixtures
 

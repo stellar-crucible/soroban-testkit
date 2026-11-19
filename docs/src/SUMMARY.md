@@ -19,6 +19,7 @@
 - [Worked Example: Token](./guides/token-example.md)
 - [Worked Example: Bounty Escrow](./guides/bounty-escrow-example.md)
 - [Worked Example: Multisig Vault](./guides/multisig-vault-example.md)
+- [Worked Example: Flash Mint](./guides/flash-mint-example.md)
 - [Worked Example: vAMM Perpetuals](./guides/vamm-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)

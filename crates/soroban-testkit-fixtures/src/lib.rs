@@ -1,9 +1,14 @@
 pub mod builder;
+pub mod congestion;
 pub mod event_indexer;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 pub mod reentrancy;
+
+pub use congestion::{
+    CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
+};
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use profiles::NetworkProfile;
