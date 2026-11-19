@@ -17,6 +17,7 @@
 - [Testing Patterns](./guides/testing-patterns.md)
 - [Worked Example: Counter](./guides/counter-example.md)
 - [Worked Example: Token](./guides/token-example.md)
+- [Worked Example: Bounty Escrow](./guides/bounty-escrow-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 

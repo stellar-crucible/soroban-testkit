@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Module</span><span class="tk-spec__value">strategies</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors</span></div>
 </div>
 
 ## Available strategies
@@ -19,6 +19,11 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
+| `host_error_code_coverage()` | `HostError` | all 10 categories × all 10 codes |
+| `host_error()` | `HostError` | alias for `host_error_code_coverage()` |
+| `host_error_type()` | `ScErrorType` | every host category |
+| `host_error_code()` | `ScErrorCode` | every host code |
+| `host_error_of_type(kind)` | `HostError` | the codes of one category |
 
 ## Usage with proptest
 
@@ -85,6 +90,62 @@ proptest! {
 <div class="tk-callout">
   <span class="tk-callout__title">No duplicates by construction</span>
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
+</div>
+
+## Host error discriminants
+
+Testkit also generates the failures themselves. Soroban reports a host error as
+a category ([`ScErrorType`](https://docs.rs/soroban-sdk/latest/soroban_sdk/xdr/enum.ScErrorType.html))
+paired with a code ([`ScErrorCode`](https://docs.rs/soroban-sdk/latest/soroban_sdk/xdr/enum.ScErrorCode.html)),
+ten of each, so the whole domain is one hundred pairs. `host_error_code_coverage()`
+draws from all of them, which is what lets a property test drive an
+error-recovery block with failures nobody typed by hand:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::xdr::ScErrorType;
+use soroban_testkit_generators::errors::host_error_code_coverage;
+
+enum Recovery {
+    Retry,
+    Stop,
+}
+
+fn recover(error: &soroban_sdk::Error) -> Recovery {
+    // A total classification: every category answers, none panics.
+    if error.is_type(ScErrorType::Budget) || error.is_type(ScErrorType::Storage) {
+        Recovery::Retry
+    } else {
+        Recovery::Stop
+    }
+}
+
+proptest! {
+    #[test]
+    fn recovery_handles_every_host_failure(error in host_error_code_coverage()) {
+        let decision = recover(&error.as_error());
+
+        if matches!(error.error_type(), ScErrorType::Budget | ScErrorType::Storage) {
+            assert!(matches!(decision, Recovery::Retry));
+        } else {
+            assert!(matches!(decision, Recovery::Stop));
+        }
+    }
+}
+```
+
+`HostError` carries the pair and answers what a test usually needs to name it:
+`error_type()` and `code()` return the discriminants, `category()` and
+`code_name()` return `"storage"` and `"MissingValue"`, `label()` renders
+`storage/3`, `is_contract_error()` separates an application code from a host
+failure, and `as_error()` produces the [`Error`](https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Error.html)
+a contract call returns. `host_error_of_type(kind)` narrows a run to one branch
+when a category needs its own treatment, and `all_host_errors()` is the full
+hundred in table order for a deterministic sweep.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
+  <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
 </div>
 
 ## Custom strategies

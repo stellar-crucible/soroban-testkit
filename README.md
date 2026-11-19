@@ -177,7 +177,8 @@ soroban-testkit/
 ├── examples/
 │   ├── counter/        # Contract + integration tests using every crate
 │   │                   # + budget.json: the costs CI holds them to
-│   └── token/          # ERC-20 style contract, one test file per crate
+│   ├── token/          # ERC-20 style contract, one test file per crate
+│   └── bounty_escrow/  # Bounty escrow with multi-signature release
 ├── docs/                     # mdBook documentation source (theme/custom.css)
 ├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
 ├── Cargo.toml                # Workspace root
@@ -187,7 +188,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 220 tests: all four crates + examples/counter + examples/token
+cargo test --workspace --locked      # 280 tests: all four crates + all three examples
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
