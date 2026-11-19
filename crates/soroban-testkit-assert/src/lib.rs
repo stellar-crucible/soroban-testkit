@@ -11,4 +11,5 @@ pub use balance::{
 pub use budget_diff::{
     measure_invocation_budget, BudgetDiffMatcher, BudgetDiffReport, BudgetDiffViolation,
 };
+pub use events::{EventCountBound, EventSource};
 pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};

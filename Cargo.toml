@@ -11,6 +11,7 @@ members = [
     "examples/bounty_escrow",
     "examples/multisig_vault",
     "examples/flash_mint",
+    "examples/cdp",
 ]
 
 [workspace.package]
