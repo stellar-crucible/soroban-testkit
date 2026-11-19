@@ -395,7 +395,7 @@ fn names(entries: &[StorageEntry]) -> Vec<String> {
     entries.iter().map(StorageEntry::qualified).collect()
 }
 
-fn contract_hash(address: &ScAddress) -> Option<[u8; 32]> {
+pub(crate) fn contract_hash(address: &ScAddress) -> Option<[u8; 32]> {
     let ScAddress::Contract(id) = address else {
         return None;
     };
@@ -403,7 +403,7 @@ fn contract_hash(address: &ScAddress) -> Option<[u8; 32]> {
 }
 
 /// The 32-byte id of a contract address, `None` for any other address type.
-fn contract_hash_of(env: &Env, address: &Address) -> Option<[u8; 32]> {
+pub(crate) fn contract_hash_of(env: &Env, address: &Address) -> Option<[u8; 32]> {
     let ScVal::Address(sc_address) =
         soroban_sdk::TryFromVal::try_from_val(env, &address.to_val()).ok()?
     else {
@@ -413,7 +413,7 @@ fn contract_hash_of(env: &Env, address: &Address) -> Option<[u8; 32]> {
 }
 
 /// Render an XDR value as a stable, readable string.
-fn render(value: &ScVal) -> String {
+pub(crate) fn render(value: &ScVal) -> String {
     match value {
         ScVal::LedgerKeyContractInstance => "instance".to_string(),
         ScVal::Void => "void".to_string(),
