@@ -43,6 +43,21 @@ log.matcher().with_topic("Transfer").assert_count(1);
 log.matcher().with_topic("Refund").assert_not_emitted();
 ```
 
+### Relative Gas Savings Comparison
+
+Compare baseline and optimized algorithm implementations and assert relative gas savings:
+
+```rust
+use soroban_testkit_assert::assert_budget_diff_within;
+
+assert_budget_diff_within!(
+    &env,
+    baseline: { client.linear_search(&items, &target) },
+    optimized: { client.binary_search(&items, &target) },
+    min_cpu_savings_percent: 20.0,
+);
+```
+
 - Documentation: <https://stellar-crucible.github.io/soroban-testkit/crates/assert.html>
 - Source: [crates/soroban-testkit-assert](https://github.com/stellar-crucible/soroban-testkit/tree/main/crates/soroban-testkit-assert)
 - Licence: Apache-2.0
