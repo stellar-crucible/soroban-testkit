@@ -2,6 +2,7 @@ pub mod auth;
 pub mod balance;
 pub mod budget_diff;
 pub mod events;
+pub mod invocation;
 pub mod storage;
 
 pub use balance::{

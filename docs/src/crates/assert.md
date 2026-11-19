@@ -4,7 +4,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth · balance · storage · budget_diff</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -25,6 +25,9 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
+| `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
+| `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
+| `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
@@ -284,6 +287,55 @@ panicked at 'Expected an event whose data matches, checked 1 event(s) with data 
 ```
 
 Scalars print their values, maps and vectors print their entries, an address prints as its strkey (abbreviated above, printed whole in a real message), and a shape too rare to spell out falls back to its XDR debug form, so the message never hides the value it rejected. When no event is in scope the message says so instead of claiming the data was wrong.
+
+### Checking an event payload schema
+
+`assert_event_data_schema!` validates the complete map payload of every event
+matching the topic. It reports missing or mistyped fields individually and
+rejects extra keys, which helps catch accidental indexer schema changes:
+
+```rust
+use soroban_testkit_assert::assert_event_data_schema;
+use soroban_sdk::Address;
+
+client.transfer(&from, &to, &100);
+
+assert_event_data_schema!(&env, "transfer", {
+    amount: i128,
+    from: Address,
+    to: Address,
+});
+```
+
+Types are checked by Soroban value deserialization, including `i128`, `u64`,
+`Address`, `Symbol`, and `bool`. A failure names each offending field and shows
+the expected type and observed type/value. The assertion requires at least one
+event matching the topic.
+
+## Successful contract calls
+
+Use the generated client's `try_*` call with these macros instead of a bare
+`unwrap()`. A host failure is decoded into its category, code, and known name
+(for example `storage/3: MissingValue`); contract-specific errors retain their
+code and are identified as unregistered unless decoded separately:
+
+```rust
+use soroban_testkit_assert::{
+    assert_call_success_with_value, assert_no_contract_error,
+};
+
+// Assert success and keep the returned value for further checks.
+let balance = assert_no_contract_error!(client.try_balance(&account));
+assert!(balance > 0);
+
+// Assert that a successful invocation returned exactly the expected value.
+assert_call_success_with_value!(client.try_transfer(&from, &to, &100), ());
+```
+
+Both macros evaluate the call once and distinguish a returned contract/host
+error from an invocation failure. `assert_no_contract_error!` returns the
+successful value; `assert_call_success_with_value!` compares it with the
+expected value.
 
 ## Authorization matching
 

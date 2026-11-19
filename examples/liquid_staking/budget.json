@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "cases": {
+    "exchange_rate": {
+      "cpu_insns": 100000,
+      "mem_bytes": 20000
+    }
+  }
+}
