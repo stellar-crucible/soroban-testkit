@@ -253,6 +253,33 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
 
+## Storage Namespace Auditing
+
+When contracts compose multiple modules or traits, bare symbol keys such as
+`"admin"` can collide and silently overwrite another module's state.
+`NamespaceAuditor` records keys per module and reports collisions and
+un-namespaced keys.
+
+```rust
+use soroban_testkit_core::namespace_auditor::NamespaceAuditor;
+
+let mut auditor = NamespaceAuditor::new(&env, &contract);
+auditor
+    .record("ownable", "ownable::admin")
+    .record("pausable", "pausable::paused");
+
+let report = auditor.audit();
+assert!(!report.has_collisions(), "Storage collision: {:?}", report.collisions());
+println!("{report}");
+```
+
+Keys are considered namespaced when they contain a namespace separator
+(`::`, `:`, `.`, `/`) such as `DataKey::Admin` or `ownable:admin`. Bare keys
+like `admin` are flagged as collision risks. A collision is reported when the
+same key is written by two independent modules. `report.modules()` returns the
+full key map, while `NamespaceAuditor::from_entries` infers module ownership
+from a `StorageEntry` snapshot.
+
 ## Storage footprint diffs in CI
 
 A refactor that widens a struct or adds a key silently grows what a contract

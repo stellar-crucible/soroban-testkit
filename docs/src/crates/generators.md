@@ -256,6 +256,44 @@ neither has a value to generate.
   <p><code>entry_ttl</code> shrinks the TTL towards <code>min_threshold</code>, <code>expired_ttl</code> shrinks towards the entry that expired exactly one ledger ago, and <code>ttl_extension_delta</code> shrinks towards a single ledger. A renewal bug therefore minimises to the entry closest to dying, which is where off-by-one liveness checks fail. The module's own tests check these intervals against the host: what <code>entry_ttl</code> generates is what <code>get_ttl</code> reports, and a temporary entry is readable on <code>live_until_ledger</code> and gone on <code>expires_at()</code>.</p>
 </div>
 
+## Event Fuzzing
+
+`EventFuzzHarness` produces valid SDK v28 `ContractEvent` values and mutates
+them to verify that event parsers reject malformed payloads cleanly.
+
+```rust
+use soroban_testkit_generators::event_fuzz::{
+    fuzzed_event, valid_transfer_event, EventFuzzHarness, MutationOperator,
+};
+
+// Start from a well-formed event and apply a single mutation.
+let harness = EventFuzzHarness::new(valid_transfer_event());
+let malformed = harness.mutate(MutationOperator::DropField, 42);
+
+// Or drive a property test across every mutation operator.
+proptest! {
+    #[test]
+    fn parser_never_panics(event in fuzzed_event(valid_transfer_event())) {
+        // Downstream decoding must return an error, never panic.
+        let _ = TransferEvent::try_from_event(&event);
+    }
+}
+```
+
+Supported mutation operators:
+
+| Operator | Effect |
+|----------|--------|
+| `DropField` | Removes a topic, or clears the data when no topics remain |
+| `TypeShift` | Replaces a value with a different `ScVal` variant |
+| `ByteTruncate` | Halves the length of bytes, strings, symbols, or vectors |
+| `SignFlip` | Flips the sign of a number or toggles a boolean |
+
+`EventFuzzHarness::shrink` deterministically reduces a malformed payload after
+a failure, mirroring proptest's shrinking so failures are reported with the
+smallest event that still reproduces the bug. `shrink_candidates` returns each
+intermediate step for debugging.
+
 ## Custom strategies
 
 Compose the built-ins with proptest combinators:
