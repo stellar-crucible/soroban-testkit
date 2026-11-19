@@ -4,7 +4,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth · balance · storage · budget_diff</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -30,6 +30,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
 | `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
 | `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
+| `assert_budget_diff_within!(..)` | Asserts relative gas savings between baseline and optimized closures with side-by-side failure diff table |
 
 ## Event matching
 
@@ -461,6 +462,78 @@ Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
 ------------------------------------------------------------------------------------------------------
 | Discrepancy                  |                |                |       -1 (LEAK DETECTED) |
 ------------------------------------------------------------------------------------------------------
+```
+
+## Comparative budget differential and relative gas savings
+
+When refactoring code paths or evaluating alternative algorithm implementations (such as linear scan vs binary search, or unindexed vs indexed storage queries), smart contract engineers need to assert that an optimized branch achieves relative gas savings without regressing on CPU instruction or memory consumption.
+
+The `assert_budget_diff_within!` macro executes baseline and optimized closures, measures the differential CPU instructions and memory bytes consumed, and asserts that relative savings targets are met.
+
+### Basic comparison
+
+In default mode, the optimized branch must consume strictly fewer instructions or memory bytes than baseline and cannot regress in either dimension:
+
+```rust
+use soroban_testkit_assert::assert_budget_diff_within;
+
+assert_budget_diff_within!(
+    &env,
+    baseline: {
+        client.linear_search(&items, &target);
+    },
+    optimized: {
+        client.binary_search(&items, &target);
+    },
+);
+```
+
+### Enforcing relative and absolute savings
+
+Specify target percentage reductions (`min_cpu_savings_percent`, `min_mem_savings_percent`, `min_savings_percent`) or absolute thresholds (`min_cpu_savings`, `min_mem_savings`):
+
+```rust
+assert_budget_diff_within!(
+    env: &env,
+    baseline: || client.unindexed_scan(&key),
+    optimized: || client.indexed_lookup(&key),
+    min_cpu_savings_percent: 25.0, // At least 25% CPU instruction reduction
+    min_mem_savings_percent: 10.0, // At least 10% memory byte reduction
+);
+```
+
+### Space-time tradeoffs and dual environments
+
+For operations that modify contract state or trade slight memory increases for massive CPU reductions:
+
+```rust
+// Separate environments ensure identical initial state:
+assert_budget_diff_within!(
+    baseline: (&env1, { client1.bubble_sort(&data) }),
+    optimized: (&env2, { client2.radix_sort(&data) }),
+    min_cpu_savings_percent: 50.0,
+    allow_mem_regression: true, // Permit memory increase for large CPU reduction
+);
+```
+
+### Side-by-side consumption table on failure
+
+When an optimized branch regresses or fails to reach the required savings target, `assert_budget_diff_within!` panics with a formatted side-by-side consumption table:
+
+```text
+Budget Differential Assertion Failed!
+Optimized branch failed to achieve required gas savings or exceeded baseline limits.
+
+======================================================================================================================================
+| Metric             |         Baseline |        Optimized |   Delta (Opt-Base) |          Savings (%) | Target           |  Status  |
+======================================================================================================================================
+| CPU Instructions   |          100,000 |           85,000 |            -15,000 |      +15.00% savings | >= 25.00%        |   FAIL   |
+--------------------------------------------------------------------------------------------------------------------------------------
+| Memory (Bytes)     |            4,096 |            3,840 |               -256 |       +6.25% savings | <= baseline      |   PASS   |
+======================================================================================================================================
+
+Failure Summary:
+  • Failed to achieve target CPU savings: achieved 15.00%, expected at least 25.00%
 ```
 
 <div class="tk-grid tk-grid--2">
