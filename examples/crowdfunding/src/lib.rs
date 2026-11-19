@@ -90,7 +90,7 @@ impl Crowdfunding {
         campaign.raised += amount;
         token::Client::new(&env, &campaign.token).transfer(
             &backer,
-            &env.current_contract_address(),
+            env.current_contract_address(),
             &amount,
         );
         save(&env, id, &campaign);

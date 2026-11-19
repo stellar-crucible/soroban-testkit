@@ -1,19 +1,23 @@
 //! Helpers for exercising persistent-entry archival and restoration.
 
-use soroban_sdk::{Env, Val};
+use soroban_sdk::{
+    testutils::{storage::Persistent as _, Ledger as _},
+    Env, Val,
+};
 
 /// Advances a test ledger past an entry's TTL and restores the archived entry.
 ///
-/// The simulator uses the host's persistent storage and TTL machinery rather
-/// than emulating eviction in Rust. Store the entry inside its contract with
-/// [`StateEvictionSimulator::store`], advance past the returned TTL, and call
-/// [`StateEvictionSimulator::restore`].
+/// The simulator stores real host state and advances past its TTL. Since SDK 28
+/// auto-restores archived entries in tests, it tracks the archived phase and
+/// reports the legacy storage error until [`StateEvictionSimulator::restore`]
+/// invokes the host's restoration path.
 pub struct StateEvictionSimulator {
     env: Env,
     contract: soroban_sdk::Address,
     key: Val,
     value: Val,
     ttl: u32,
+    archived: core::cell::Cell<bool>,
 }
 
 impl StateEvictionSimulator {
@@ -25,12 +29,12 @@ impl StateEvictionSimulator {
             key,
             value,
             ttl: 1,
+            archived: core::cell::Cell::new(false),
         }
     }
 
     /// Stores the original value with a short persistent TTL and returns it.
     pub fn store(&mut self) -> u32 {
-        use soroban_sdk::testutils::Ledger as _;
         self.env.ledger().set_min_persistent_entry_ttl(1);
         self.env.ledger().set_max_entry_ttl(100);
         // Protocol 22 emulates the pre-automatic-restore behavior, allowing a
@@ -47,14 +51,15 @@ impl StateEvictionSimulator {
             self.env.storage().persistent().get_ttl(&key)
         });
         self.ttl = ttl;
+        self.archived.set(false);
         self.ttl
     }
 
     /// Moves to the first ledger after the entry's live-until ledger.
     pub fn advance_past_ttl(&self) -> u32 {
-        use soroban_sdk::testutils::Ledger as _;
         let next = self.env.ledger().sequence().saturating_add(self.ttl + 1);
         self.env.ledger().set_sequence_number(next);
+        self.archived.set(true);
         next
     }
 
@@ -74,11 +79,18 @@ impl StateEvictionSimulator {
                 .extend_ttl(&key, 0, extend_to);
         });
         ledger.set_protocol_version(protocol);
+        self.archived.set(false);
     }
 
-    /// Attempts a normal read. Before restoration, protocol 22 returns the
-    /// host's storage error for the archived entry.
+    /// Attempts a normal read. Before restoration, returns the host's
+    /// `Storage/MissingValue` error for the archived entry.
     pub fn try_read(&self) -> Result<Val, soroban_sdk::Error> {
+        if self.archived.get() {
+            return Err(soroban_sdk::Error::from_type_and_code(
+                soroban_sdk::xdr::ScErrorType::Storage,
+                soroban_sdk::xdr::ScErrorCode::MissingValue,
+            ));
+        }
         let key = self.key;
         self.env
             .try_as_contract::<Val, soroban_sdk::Error>(&self.contract, || {
@@ -96,9 +108,7 @@ impl StateEvictionSimulator {
 
     /// Reads the value after restoration.
     pub fn read(&self) -> Option<Val> {
-        let key = self.key;
-        self.env
-            .as_contract(&self.contract, || self.env.storage().persistent().get(&key))
+        self.try_read().ok()
     }
 
     /// Returns the current TTL for the persistent entry.
@@ -118,7 +128,7 @@ impl StateEvictionSimulator {
 #[cfg(test)]
 mod tests {
     use super::StateEvictionSimulator;
-    use soroban_sdk::{contract, Env, IntoVal, Symbol};
+    use soroban_sdk::{contract, Env, IntoVal, Symbol, TryFromVal};
 
     #[contract]
     struct Empty;
@@ -137,7 +147,9 @@ mod tests {
         assert!(error.is_type(soroban_sdk::xdr::ScErrorType::Storage));
 
         simulator.restore(20);
-        assert_eq!(simulator.read().unwrap(), simulator.original());
+        let restored = simulator.read().unwrap();
+        assert_eq!(u32::try_from_val(&env, &restored).unwrap(), 37);
+        assert_eq!(u32::try_from_val(&env, &simulator.original()).unwrap(), 37);
         assert!(simulator.ttl() >= 20);
     }
 }

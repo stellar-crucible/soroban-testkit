@@ -1,6 +1,7 @@
 mod common;
 use common::Fixture;
 use proptest::prelude::*;
+use soroban_sdk::testutils::Ledger as _;
 use soroban_testkit_generators::strategies::token_amount;
 
 proptest! { #![proptest_config(ProptestConfig::with_cases(16))]

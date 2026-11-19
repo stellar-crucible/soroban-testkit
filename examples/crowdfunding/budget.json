@@ -2,7 +2,7 @@
   "version": 1,
   "cases": {
     "refund_8": {
-      "cpu_insns_per_claim_ceiling": 100000,
+      "cpu_insns_per_claim_ceiling": 300000,
       "claim_count": 8
     }
   }

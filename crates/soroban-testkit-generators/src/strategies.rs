@@ -11,7 +11,7 @@ use soroban_sdk::xdr::{
     AccountId, ContractId, Hash, Limits, PublicKey, ScAddress, ScMap, ScMapEntry, ScVal, ScVec,
     Uint256, VecM, WriteXdr as _,
 };
-use soroban_sdk::{Address, Env, IntoVal, Symbol, TryFromVal as _, Val};
+use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol, TryFromVal as _, Val};
 
 /// Generate arbitrary Soroban invocation arguments, including values whose
 /// object handles are owned by `env`. `typed` contains valid arguments for a
@@ -27,13 +27,17 @@ pub fn fuzzed_invocation_args(
     max_rogue: u32,
 ) -> impl Strategy<Value = Vec<Val>> {
     let env = env.clone();
+    let int_env = env.clone();
+    let bool_env = env.clone();
+    let uint_env = env.clone();
+    let address_env = env.clone();
     let rogue = prop_oneof![
-        4 => any::<i32>().prop_map(|value| value.into_val(&env)),
-        4 => any::<bool>().prop_map(|value| value.into_val(&env)),
-        2 => (0u32..=u32::MAX).prop_map(|value| value.into_val(&env)),
+        4 => any::<i32>().prop_map(move |value| value.into_val(&int_env)),
+        4 => any::<bool>().prop_map(move |value| value.into_val(&bool_env)),
+        2 => any::<u32>().prop_map(move |value| value.into_val(&uint_env)),
         2 => Just(Symbol::new(&env, "rogue_symbol").into_val(&env)),
         1 => Just(soroban_sdk::Error::from_contract_error(1).into_val(&env)),
-        1 => Just(Address::generate(&env).into_val(&env)),
+        1 => any::<u8>().prop_map(move |_| Address::generate(&address_env).into_val(&address_env)),
     ];
     (
         prop::collection::vec(rogue, 0..=max_rogue as usize),

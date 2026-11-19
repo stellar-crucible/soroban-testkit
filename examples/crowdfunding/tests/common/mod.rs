@@ -8,6 +8,7 @@ pub struct Fixture {
     pub creator: Address,
     pub backer: Address,
 }
+#[allow(dead_code)]
 impl Fixture {
     pub fn new(funding: i128) -> Self {
         let env = Env::default();

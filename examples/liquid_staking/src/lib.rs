@@ -66,7 +66,7 @@ impl LiquidStaking {
         assert!(shares > 0, "deposit too small");
         token::Client::new(&env, &pool.asset).transfer(
             &owner,
-            &env.current_contract_address(),
+            env.current_contract_address(),
             &amount,
         );
         pool.total_assets += amount;
@@ -85,7 +85,7 @@ impl LiquidStaking {
         assert!(amount >= 0, "yield cannot be negative");
         token::Client::new(&env, &pool.asset).transfer(
             &admin,
-            &env.current_contract_address(),
+            env.current_contract_address(),
             &amount,
         );
         pool.total_assets += amount;

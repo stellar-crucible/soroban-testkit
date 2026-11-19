@@ -1,6 +1,7 @@
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
 use soroban_testkit_example_liquid_staking::{LiquidStaking, LiquidStakingClient};
 
+#[allow(dead_code)]
 pub struct Fixture {
     pub env: Env,
     pub id: Address,
@@ -8,6 +9,7 @@ pub struct Fixture {
     pub admin: Address,
     pub user: Address,
 }
+#[allow(dead_code)]
 impl Fixture {
     pub fn new(funding: i128) -> Self {
         let env = Env::default();
