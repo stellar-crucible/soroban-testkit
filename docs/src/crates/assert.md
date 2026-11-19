@@ -1,10 +1,10 @@
 # soroban-testkit-assert
 
-Fluent matchers for contract events and authorizations, so assertions read like the behaviour you expect.
+Fluent matchers for contract events, authorizations and storage, so assertions read like the behaviour you expect.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth · storage</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -27,6 +27,10 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `assert_storage_key_deleted!(env, contract, key)` | A key is gone from instance, persistent and temporary storage |
+| `assert_storage_key_deleted!(env, contract, key, tier)` | A key is gone from one named tier |
+| `assert_storage_empty!(env, contract)` | No live storage entry survives in any tier |
+| `assert_storage_empty!(env, contract, tier)` | A named tier holds no live entry |
 
 ## Event matching
 
@@ -356,6 +360,49 @@ contract Contract(C…BBBB) function "route"                   | contract Contra
 ├── contract Contract(C…CCCC) function "deposit"             | └── contract Contract(C…BBBB) function "route" args [...]
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
 ```
+
+## Storage assertions
+
+Closing an account, burning a balance or cancelling an escrow should leave no storage behind. `assert_storage_key_deleted!` and `assert_storage_empty!` prove entries are gone from the ledger rather than merely rewritten:
+
+```rust
+use soroban_testkit_assert::{assert_storage_empty, assert_storage_key_deleted};
+use soroban_testkit_assert::storage::StorageTier;
+
+// The key no longer exists in any tier.
+assert_storage_key_deleted!(&env, &token, "balance");
+
+// Only the named tier is inspected; another tier may still hold the key.
+assert_storage_key_deleted!(&env, &token, "allowance", StorageTier::Persistent);
+
+// The contract's whole storage is empty, or one tier of it is.
+assert_storage_empty!(&env, &token);
+assert_storage_empty!(&env, &token, StorageTier::Temporary);
+```
+
+Both assertions inspect instance, persistent and temporary storage through [`StorageSnapshot`](core.html), with instance storage unfolded per key exactly as `assert_storage_tier!` reports it. The key is the snapshot's rendered form: a symbol's text for the usual case, but also `[a, b]` for a vector or `{k: v}` for a map, so composite keys can be named too.
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">Deleted is not the same as empty</span>
+  <p>These assertions are about the <strong>entry</strong>, not its value. A key rewritten to <code>0</code>, set to <code>Option::None</code> (stored as <code>void</code>), or holding an empty map is still a live ledger entry and fails both assertions. Delete the key with <code>storage().remove(&amp;key)</code>; overwriting it with a tombstone is not enough.</p>
+</div>
+
+A failure lists every surviving entry with the tier it lives in, its rendered value, and the XDR bytes the ledger holds:
+
+```text
+panicked at 'Expected contract storage to be empty, but 2 entries survived:
+  persistent:balance = 0 [8 bytes: 0000000300000000]
+  temporary:allowance = void [4 bytes: 00000000]'
+```
+
+Naming a key narrows the message to that key's survivors:
+
+```text
+panicked at 'Expected storage key "balance" to be deleted from all tiers, but it still exists:
+  persistent:balance = 0 [8 bytes: 0000000300000000]'
+```
+
+A contract that never wrote storage passes `assert_storage_empty!`, and an address that is not a contract owns no contract data, so it passes too.
 
 ## Failure messages
 
