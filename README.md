@@ -179,6 +179,7 @@ soroban-testkit/
 │   │                   # + budget.json: the costs CI holds them to
 │   ├── token/          # ERC-20 style contract, one test file per crate
 │   ├── bounty_escrow/  # Bounty escrow with multi-signature release
+│   ├── subscription/   # Recurring billing drawn from a token allowance
 │   └── multisig_vault/ # Timelocked M-of-N treasury, one test file per crate
 ├── docs/                     # mdBook documentation source (theme/custom.css)
 ├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
@@ -215,6 +216,15 @@ fixtures, `tests/assert_events.rs` on assertions, `tests/budget_and_storage.rs`
 on core, `tests/property.rs` on generators — so each one reads as a page of the
 documentation that happens to run. [Worked Example: Token](https://stellar-crucible.github.io/soroban-testkit/guides/token-example.html)
 walks through them.
+
+[`examples/subscription`](examples/subscription) is recurring billing, and it is
+the example for what depends on both the ledger clock and a token allowance: a
+subscriber fixes a fee and an interval, approves the contract as a spender, and
+the merchant can draw exactly that fee once per period. Its suite advances the
+clock with `advance_time`, measures each cycle against a budget ceiling, and
+proves with a property test that repeated or premature calls cannot withdraw
+more than the authorized fee. [Worked Example: Subscription](https://stellar-crucible.github.io/soroban-testkit/guides/subscription-example.html)
+walks through it.
 
 [`examples/domain_service`](examples/domain_service) is a name registry, and it is
 the example for what depends on the ledger rather than on a value: a term is
