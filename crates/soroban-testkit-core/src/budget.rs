@@ -192,6 +192,17 @@ impl BudgetGuard {
         self
     }
 
+    pub fn tolerance(mut self, percent: u64) -> Self {
+        self.tolerance_percent = percent;
+        self
+    }
+
+    /// Set the growth tolerance percent directly (alias for `tolerance_percent`).
+    pub fn growth_tolerance(mut self, percent: u64) -> Self {
+        self.tolerance_percent = percent;
+        self
+    }
+
     /// Every limit this cost breaks, ceilings first then growth, CPU first.
     pub fn violations(&self, cost: &BudgetSnapshot) -> Vec<BudgetViolation> {
         let mut found = Vec::new();
@@ -305,6 +316,9 @@ macro_rules! budget_guard {
         $crate::budget_guard!(@limit $guard.baseline($baseline), { $($($rest)*)? })
     };
     (@limit $guard:expr, { tolerance: $percent:expr $(, $($rest:tt)*)? }) => {
+        $crate::budget_guard!(@limit $guard.tolerance($percent), { $($($rest)*)? })
+    };
+    (@limit $guard:expr, { tolerance_percent: $percent:expr $(, $($rest:tt)*)? }) => {
         $crate::budget_guard!(@limit $guard.tolerance_percent($percent), { $($($rest)*)? })
     };
 }
