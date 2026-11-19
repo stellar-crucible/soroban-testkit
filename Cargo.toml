@@ -8,6 +8,7 @@ members = [
     "examples/counter",
     "examples/domain_service",
     "examples/token",
+    "examples/bounty_escrow",
 ]
 
 [workspace.package]

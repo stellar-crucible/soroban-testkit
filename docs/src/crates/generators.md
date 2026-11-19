@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Module</span><span class="tk-spec__value">strategies</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors</span></div>
 </div>
 
 ## Available strategies
@@ -19,9 +19,11 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
-| `fuzzed_scval_map(max_entries)` | `ScVal` | a map of at most `max_entries` entries, sorted or deliberately unsorted |
-| `fuzzed_scval_vec(max_entries)` | `ScVal` | a vector of at most `max_entries` elements, including null objects |
-| `malformed_object_payload()` | `Vec<u8>` | a real map or vector's XDR, truncated at a generated offset |
+| `host_error_code_coverage()` | `HostError` | all 10 categories × all 10 codes |
+| `host_error()` | `HostError` | alias for `host_error_code_coverage()` |
+| `host_error_type()` | `ScErrorType` | every host category |
+| `host_error_code()` | `ScErrorCode` | every host code |
+| `host_error_of_type(kind)` | `HostError` | the codes of one category |
 
 ## Usage with proptest
 
@@ -90,54 +92,60 @@ proptest! {
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
 </div>
 
-## XDR objects and malformed payloads
+## Host error discriminants
 
-A contract that decodes an object parameter is a parser, and parsers fail on
-shapes a hand-written test never tries: a map whose keys are not in ledger
-order, a map with duplicate keys, a vector longer than the host accepts, a null
-object where a map was expected, and a payload that simply stops in the middle
-of an entry. The three object strategies generate exactly those.
+Testkit also generates the failures themselves. Soroban reports a host error as
+a category ([`ScErrorType`](https://docs.rs/soroban-sdk/latest/soroban_sdk/xdr/enum.ScErrorType.html))
+paired with a code ([`ScErrorCode`](https://docs.rs/soroban-sdk/latest/soroban_sdk/xdr/enum.ScErrorCode.html)),
+ten of each, so the whole domain is one hundred pairs. `host_error_code_coverage()`
+draws from all of them, which is what lets a property test drive an
+error-recovery block with failures nobody typed by hand:
 
 ```rust
 use proptest::prelude::*;
-use soroban_testkit_generators::strategies::{
-    fuzzed_scval_map, fuzzed_scval_vec, malformed_object_payload,
-};
+use soroban_sdk::xdr::ScErrorType;
+use soroban_testkit_generators::errors::host_error_code_coverage;
+
+enum Recovery {
+    Retry,
+    Stop,
+}
+
+fn recover(error: &soroban_sdk::Error) -> Recovery {
+    // A total classification: every category answers, none panics.
+    if error.is_type(ScErrorType::Budget) || error.is_type(ScErrorType::Storage) {
+        Recovery::Retry
+    } else {
+        Recovery::Stop
+    }
+}
 
 proptest! {
     #[test]
-    fn a_parser_never_panics_on_a_map(map in fuzzed_scval_map(16)) {
-        // map: ScVal::Map(Some(..)), sorted or unsorted, at most 16 entries
-    }
+    fn recovery_handles_every_host_failure(error in host_error_code_coverage()) {
+        let decision = recover(&error.as_error());
 
-    #[test]
-    fn an_oversized_vector_is_refused_not_allocated(vector in fuzzed_scval_vec(4_096)) {
-        // vector: ScVal::Vec(Some(..)); pass a multiple of the host's element
-        // limit to exercise the refusal path
-    }
-
-    #[test]
-    fn a_truncated_payload_is_an_error_not_a_crash(payload in malformed_object_payload()) {
-        // payload: a real object's XDR with its tail cut off, 0..len bytes
+        if matches!(error.error_type(), ScErrorType::Budget | ScErrorType::Storage) {
+            assert!(matches!(decision, Recovery::Retry));
+        } else {
+            assert!(matches!(decision, Recovery::Stop));
+        }
     }
 }
 ```
 
-All three are built out of proptest collections rather than raw bytes, so
-shrinking is meaningful: a failure reports the smallest map, the shortest
-vector, or the shortest prefix that still fails, instead of the case the
-runner happened to draw. `DEFAULT_FUZZ_ENTRIES` is the budget the two object
-strategies are usually given when a suite has no opinion.
-
-| Strategy | What is generated | What it catches |
-|----------|-------------------|-----------------|
-| `fuzzed_scval_map(n)` | `ScVal::Map(Some(..))` with 0..=n entries; half sorted and key-unique, half in generation order | a parser that assumes ledger ordering or unique keys |
-| `fuzzed_scval_vec(n)` | `ScVal::Vec(Some(..))` with 0..=n elements, including `Vec(None)` and `Map(None)` values | a parser that unwraps `Option<ScVal>` arity or allocates before checking the length |
-| `malformed_object_payload()` | `Vec<u8>`: a real object's XDR cut at a generated offset, from an empty payload to one byte short of complete | a decoder that panics on a truncated tag or a length that promises more bytes than follow |
+`HostError` carries the pair and answers what a test usually needs to name it:
+`error_type()` and `code()` return the discriminants, `category()` and
+`code_name()` return `"storage"` and `"MissingValue"`, `label()` renders
+`storage/3`, `is_contract_error()` separates an application code from a host
+failure, and `as_error()` produces the [`Error`](https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Error.html)
+a contract call returns. `host_error_of_type(kind)` narrows a run to one branch
+when a category needs its own treatment, and `all_host_errors()` is the full
+hundred in table order for a deterministic sweep.
 
 <div class="tk-callout">
-  <span class="tk-callout__title">An unsorted map is the interesting half</span>
-  <p>The host validates a <code>ScMap</code> before a contract sees one, so a contract that reads ledger state is safe by construction. The strategy still generates unsorted maps because a parser can receive entries from a client, an oracle or a nested record that never went through that check — and because the test that proves the assumption fails is the one that documents the boundary.</p>
+  <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
+  <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
 </div>
 
 ## Custom strategies
