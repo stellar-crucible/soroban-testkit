@@ -11,7 +11,46 @@ use soroban_sdk::xdr::{
     AccountId, ContractId, Hash, Limits, PublicKey, ScAddress, ScMap, ScMapEntry, ScVal, ScVec,
     Uint256, VecM, WriteXdr as _,
 };
-use soroban_sdk::{Address, Env, TryFromVal as _};
+use soroban_sdk::{Address, Env, IntoVal, Symbol, TryFromVal as _, Val};
+
+/// Generate arbitrary Soroban invocation arguments, including values whose
+/// object handles are owned by `env`. `typed` contains valid arguments for a
+/// particular contract method; the strategy inserts zero or more rogue values
+/// at arbitrary positions so the same client call exercises type validation.
+///
+/// The primitive branches shrink to zero, `false`, and the empty symbol. Host
+/// objects and errors are included as type mismatches and disappear as the
+/// list shrinks.
+pub fn fuzzed_invocation_args(
+    env: &Env,
+    typed: Vec<Val>,
+    max_rogue: u32,
+) -> impl Strategy<Value = Vec<Val>> {
+    let env = env.clone();
+    let rogue = prop_oneof![
+        4 => any::<i32>().prop_map(|value| value.into_val(&env)),
+        4 => any::<bool>().prop_map(|value| value.into_val(&env)),
+        2 => (0u32..=u32::MAX).prop_map(|value| value.into_val(&env)),
+        2 => Just(Symbol::new(&env, "rogue_symbol").into_val(&env)),
+        1 => Just(soroban_sdk::Error::from_contract_error(1).into_val(&env)),
+        1 => Just(Address::generate(&env).into_val(&env)),
+    ];
+    (prop::collection::vec(rogue, 0..=max_rogue as usize), any::<Vec<usize>>())
+        .prop_map(move |(mut rogue, order)| {
+            let mut args = typed.clone();
+            // Interleave rogue values at deterministic positions derived from
+            // the order vector. This keeps the strategy shrinkable.
+            for (index, value) in rogue.drain(..).enumerate() {
+                let position = order
+                    .get(index)
+                    .copied()
+                    .unwrap_or(index)
+                    .min(args.len());
+                args.insert(position, value);
+            }
+            args
+        })
+}
 
 /// The two address formats Soroban accepts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

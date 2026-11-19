@@ -28,6 +28,8 @@ pub use ttl::{
     MAINNET_MAX_ENTRY_TTL,
 };
 #[cfg(feature = "proptest")]
+pub use strategies::fuzzed_invocation_args;
+#[cfg(feature = "proptest")]
 pub use tuples::{
     byte_array, byte_array_32, byte_array_64, soroban_tuple_2, soroban_tuple_3, ByteArrayStrategy,
 };
