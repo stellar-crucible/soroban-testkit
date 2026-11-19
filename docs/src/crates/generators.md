@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples</span></div>
 </div>
 
 ## Available strategies
@@ -24,6 +24,11 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `host_error_type()` | `ScErrorType` | every host category |
 | `host_error_code()` | `ScErrorCode` | every host code |
 | `host_error_of_type(kind)` | `HostError` | the codes of one category |
+| `soroban_tuple_2(a, b)` | `(A, B)` | one component from each strategy |
+| `soroban_tuple_3(a, b, c)` | `(A, B, C)` | one component from each strategy |
+| `byte_array_32()` | `[u8; 32]` | any 32 bytes — hashes, keys, seeds |
+| `byte_array_64()` | `[u8; 64]` | any 64 bytes — ed25519 signatures |
+| `byte_array::<N>()` | `[u8; N]` | any `N` bytes |
 
 ## Usage with proptest
 
@@ -146,6 +151,55 @@ hundred in table order for a deterministic sweep.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
   <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
+</div>
+
+## Tuples and fixed-size arrays
+
+Contract functions often take a composite argument — an `(Address, i128)`
+allowance grant, a `BytesN<32>` hash, a `BytesN<64>` signature. The `tuples`
+module names those shapes so a test does not rebuild them by hand, and every
+strategy is re-exported from the crate root:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{BytesN, Env};
+use soroban_testkit_generators::strategies::{account_address, token_amount};
+use soroban_testkit_generators::{byte_array_32, byte_array_64, soroban_tuple_2};
+
+proptest! {
+    #[test]
+    fn test_allowance_pair(
+        (owner, spender) in soroban_tuple_2(account_address(), account_address()),
+        amount in token_amount(),
+    ) {
+        let env = Env::default();
+        let (owner, spender) = (owner.to_address(&env), spender.to_address(&env));
+        client.approve(&owner, &spender, &amount);
+    }
+
+    #[test]
+    fn verify_rejects_a_forged_signature(
+        digest in byte_array_32(),
+        signature in byte_array_64(),
+    ) {
+        let env = Env::default();
+        let digest = BytesN::from_array(&env, &digest);
+        let signature = BytesN::from_array(&env, &signature);
+        // ...
+    }
+}
+```
+
+The values are plain Rust tuples and arrays, so once each component is a host
+type the whole value converts with `soroban_sdk::IntoVal` — `(Address, i128)`,
+`(Address, Address, i128)` and `BytesN<N>` all cross a contract boundary
+unchanged, which is what the module's own tests check against a live contract.
+`soroban_tuple_3(a, b, c)` is the three-component form, and `byte_array::<N>()`
+covers any other length.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking is per component</span>
+  <p>A failing tuple shrinks one component at a time while the others stay put, and a failing byte array shrinks every byte towards <code>0x00</code> independently. A signature check that only trips on the last byte therefore minimises to sixty-three zeros and the one byte that matters, rather than to an arbitrary-looking blob.</p>
 </div>
 
 ## Custom strategies
