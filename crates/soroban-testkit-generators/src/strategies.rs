@@ -35,17 +35,16 @@ pub fn fuzzed_invocation_args(
         1 => Just(soroban_sdk::Error::from_contract_error(1).into_val(&env)),
         1 => Just(Address::generate(&env).into_val(&env)),
     ];
-    (prop::collection::vec(rogue, 0..=max_rogue as usize), any::<Vec<usize>>())
+    (
+        prop::collection::vec(rogue, 0..=max_rogue as usize),
+        any::<Vec<usize>>(),
+    )
         .prop_map(move |(mut rogue, order)| {
             let mut args = typed.clone();
             // Interleave rogue values at deterministic positions derived from
             // the order vector. This keeps the strategy shrinkable.
             for (index, value) in rogue.drain(..).enumerate() {
-                let position = order
-                    .get(index)
-                    .copied()
-                    .unwrap_or(index)
-                    .min(args.len());
+                let position = order.get(index).copied().unwrap_or(index).min(args.len());
                 args.insert(position, value);
             }
             args

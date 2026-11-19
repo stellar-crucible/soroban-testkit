@@ -40,7 +40,10 @@ impl StateEvictionSimulator {
         let value = self.value;
         let ttl = self.env.as_contract(&self.contract, || {
             self.env.storage().persistent().set(&key, &value);
-            self.env.storage().persistent().extend_ttl(&key, 0, self.ttl);
+            self.env
+                .storage()
+                .persistent()
+                .extend_ttl(&key, 0, self.ttl);
             self.env.storage().persistent().get_ttl(&key)
         });
         self.ttl = ttl;
@@ -65,7 +68,10 @@ impl StateEvictionSimulator {
         ledger.set_protocol_version(23);
         self.env.as_contract(&self.contract, || {
             let _: Val = self.env.storage().persistent().get(&key).unwrap();
-            self.env.storage().persistent().extend_ttl(&key, 0, extend_to);
+            self.env
+                .storage()
+                .persistent()
+                .extend_ttl(&key, 0, extend_to);
         });
         ledger.set_protocol_version(protocol);
     }
@@ -76,7 +82,11 @@ impl StateEvictionSimulator {
         let key = self.key;
         self.env
             .try_as_contract::<Val, soroban_sdk::Error>(&self.contract, || {
-                self.env.storage().persistent().get::<Val, Val>(&key).unwrap()
+                self.env
+                    .storage()
+                    .persistent()
+                    .get::<Val, Val>(&key)
+                    .unwrap()
             })
             .map_err(|error| match error {
                 Ok(error) => error,
@@ -94,8 +104,9 @@ impl StateEvictionSimulator {
     /// Returns the current TTL for the persistent entry.
     pub fn ttl(&self) -> u32 {
         let key = self.key;
-        self.env
-            .as_contract(&self.contract, || self.env.storage().persistent().get_ttl(&key))
+        self.env.as_contract(&self.contract, || {
+            self.env.storage().persistent().get_ttl(&key)
+        })
     }
 
     /// Returns the original value retained by the simulator.
