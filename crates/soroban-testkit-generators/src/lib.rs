@@ -30,6 +30,7 @@ pub use storage_tier::{
     storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
     MixedTierTtlAllocation, StorageTierWithTtl,
 };
+pub use strategies::fuzzed_invocation_args;
 #[cfg(feature = "proptest")]
 pub use ttl::{
     entry_ttl, expired_ttl, ttl_extension_delta, ttl_extension_delta_up_to, EntryTtl,

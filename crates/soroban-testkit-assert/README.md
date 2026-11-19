@@ -26,6 +26,16 @@ EventMatcher::new(&env)
             .and_then(|value| value.deserialize::<u32>())
             == Some(12)
     });
+
+// Validate the full shape of a contractevent payload:
+soroban_testkit_assert::assert_event_data_schema!(&env, "transfer", {
+    amount: i128,
+    from: soroban_sdk::Address,
+    to: soroban_sdk::Address,
+});
+
+// Decode failed try_* calls instead of using an opaque unwrap():
+let value = soroban_testkit_assert::assert_no_contract_error!(client.try_get());
 ```
 
 A matcher reads the invocation that just ran — what Soroban SDK v28 exposes through `env.events().all()`. Gather several calls to assert over them as one set:
