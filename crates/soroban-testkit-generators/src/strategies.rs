@@ -1,5 +1,9 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
+pub use crate::crypto::{
+    ed25519_signature_pair, malleated_signature, secp256k1_signature_pair, Ed25519SignaturePair,
+    Secp256k1SignaturePair,
+};
 pub use crate::executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 
 use proptest::prelude::*;
