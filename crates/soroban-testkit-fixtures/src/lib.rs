@@ -1,4 +1,5 @@
 pub mod builder;
+pub mod reentrancy;
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;

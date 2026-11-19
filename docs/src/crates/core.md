@@ -1,10 +1,10 @@
 # soroban-testkit-core
 
-Budget tracking, error decoding and storage inspection — the primitives the rest of Testkit is built on.
+Budget tracking, error decoding, storage inspection, WASM analysis and host execution profiling — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · wasm · profiler</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -25,6 +25,8 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageEntry`, `StorageTier` | A live storage key, its rendered value, tier and expiry ledger |
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
+| `HostExecutionProfiler`, `HostExecutionSummary` | Repeated call latency and explicit host-operation measurements |
+| `WasmSectionAnalyzer`, `WasmAnalysis` | WASM section sizes, deployment limits and debug/bloat warnings |
 
 ## Budget snapshots
 
@@ -248,6 +250,58 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
   <span class="tk-callout__title">Scope</span>
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
+
+## WASM section analysis
+
+`WasmSectionAnalyzer` validates the WebAssembly 1.0 header, walks standard
+binary sections and reports each section's payload size:
+
+```rust
+use soroban_testkit_core::wasm::WasmSectionAnalyzer;
+
+let wasm = std::fs::read("target/wasm32v1-none/release/contract.wasm")?;
+let report = WasmSectionAnalyzer::new(64 * 1024).analyze(&wasm)?;
+
+println!("{}", report.to_markdown());
+for warning in &report.warnings {
+    eprintln!("warning: {warning}");
+}
+```
+
+The report includes Code, Type, Function, Table, Memory, Data and Custom
+sections. It warns when the binary reaches 90% of the configured deployment
+limit, exceeds it, contains a debug/name custom section, or has oversized string
+or data sections.
+
+Use `to_json()` when section footprints feed a continuous performance artifact;
+the JSON shape is stable and contains the configured limit, total bytecode size,
+section list and warnings.
+
+## Host execution profiling
+
+`HostExecutionProfiler` repeatedly times an invocation and summarizes mean,
+p50, p95 and p99 wall-clock latency. Because stable Soroban host APIs do not
+expose per-call map/object counters, explicit counters are recorded in the
+invocation closure:
+
+```rust
+use soroban_testkit_core::profiler::HostExecutionProfiler;
+
+let summary = HostExecutionProfiler::new(100).run(|metrics| {
+    contract_client.increment(&caller, &1);
+    metrics.record_map_lookup();
+    metrics.record_object_created();
+    metrics.record_memory_copy(4_096);
+})?;
+
+println!("{}", summary.to_markdown());
+std::fs::write("host-profile.json", summary.to_json()?)?;
+```
+
+The return value contains every timing sample plus mean map lookup, object
+creation and memory-copy totals. A percentile uses nearest-rank ordering, so
+small benchmark sets are deterministic. JSON exports use the same complete
+sample and summary shape for continuous benchmarking.
 
 <hr class="tk-divider" />
 

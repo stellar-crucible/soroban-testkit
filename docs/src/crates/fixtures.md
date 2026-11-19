@@ -95,6 +95,27 @@ assert_eq!(unlocked_at, 1_702_592_000);
     <h3 class="tk-card__title">Advance only what you assert</h3>
     <p class="tk-card__body"><code>advance_time</code> leaves the sequence alone and <code>advance_ledger</code> leaves the clock alone. A real ledger close moves both, so a test that wants the full picture calls each — and a test that only cares about TTL expiry does not silently move the clock.</p>
   </div>
+
+  ## Reentrancy guard verification
+
+  `ReentrancyGuardHarness` deploys a target contract and a malicious receiver,
+  then executes a cross-contract callback back into the target:
+
+  ```rust
+  use soroban_testkit_fixtures::reentrancy::ReentrancyGuardHarness;
+
+  let harness = ReentrancyGuardHarness::new();
+
+  assert!(harness.execute(false));
+  assert!(!harness.lock_is_set());
+
+  assert!(!harness.execute(true)); // receiver panics after the callback
+  assert!(!harness.lock_is_set()); // caught panic rolls the lock back
+  ```
+
+  The harness proves that a second invocation is rejected while the guard is
+  held, and that both successful calls and caught receiver panics leave the target
+  lock in its restored unlocked state.
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">A fresh env opens at zero</span>
     <h3 class="tk-card__title">Set before you advance</h3>
