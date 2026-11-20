@@ -107,7 +107,10 @@ fn initialize_twice_is_rejected() {
         &DEFAULT_VOLATILITY_FACTOR,
         &DEFAULT_TWAP_WINDOW,
     );
-    assert_eq!(err.unwrap_err().unwrap(), DynamicAmmError::AlreadyInitialized);
+    assert_eq!(
+        err.unwrap_err().unwrap(),
+        DynamicAmmError::AlreadyInitialized
+    );
 }
 
 #[test]
@@ -315,7 +318,8 @@ fn dynamic_fee_cools_down_when_price_stabilizes() {
 
     // Time advances past twap window without new disruptive trades
     let current_time = fx.ctx.env.ledger().timestamp();
-    fx.ctx.env
+    fx.ctx
+        .env
         .ledger()
         .set_timestamp(current_time + DEFAULT_TWAP_WINDOW + 50);
     client.sync_twap();
