@@ -9,6 +9,8 @@ pub mod executables;
 #[cfg(feature = "proptest")]
 pub mod strategies;
 #[cfg(feature = "proptest")]
+pub mod temporal;
+#[cfg(feature = "proptest")]
 pub mod ttl;
 #[cfg(feature = "proptest")]
 pub mod tuples;
@@ -24,6 +26,10 @@ pub use errors::{host_error_code_coverage, HostError};
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 #[cfg(feature = "proptest")]
 pub use strategies::fuzzed_invocation_args;
+#[cfg(feature = "proptest")]
+pub use temporal::{
+    ledger_sequence_interval, soroban_duration, soroban_timepoint, MAX_LEDGER_SEQUENCE,
+};
 #[cfg(feature = "proptest")]
 pub use ttl::{
     entry_ttl, expired_ttl, ttl_extension_delta, ttl_extension_delta_up_to, EntryTtl,
