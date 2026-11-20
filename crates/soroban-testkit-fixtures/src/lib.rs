@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod congestion;
+pub mod consensus;
 pub mod event_indexer;
 pub mod eviction;
 pub mod gas_exhaustion;
@@ -8,6 +9,11 @@ pub mod profiles;
 
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
+};
+pub use consensus::{
+    ConsensusRound, ConsensusSimulator, LedgerClose, DEFAULT_JITTER_STD_MS,
+    DEFAULT_MAX_CLOSE_INTERVAL_MS, DEFAULT_MIN_CLOSE_INTERVAL_MS, DEFAULT_QUORUM,
+    DEFAULT_SEED, DEFAULT_VALIDATORS, QUORUM_ACCEPTANCE_SIGMA,
 };
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
