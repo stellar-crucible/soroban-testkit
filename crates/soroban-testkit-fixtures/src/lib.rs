@@ -1,4 +1,7 @@
 pub mod builder;
+pub mod scenario;
+
+pub use scenario::{ScenarioBuilder, ScenarioFailure, StepOutcome, TimelineEntry};
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
