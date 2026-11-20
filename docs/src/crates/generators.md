@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl</span></div>
 </div>
 
 ## Available strategies
@@ -19,11 +19,27 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
+| `fuzzed_invocation_args(env, typed, max_rogue)` | `Vec<Val>` | valid arguments mixed with integers, booleans, symbols, errors, and address objects |
 | `host_error_code_coverage()` | `HostError` | all 10 categories × all 10 codes |
 | `host_error()` | `HostError` | alias for `host_error_code_coverage()` |
 | `host_error_type()` | `ScErrorType` | every host category |
 | `host_error_code()` | `ScErrorCode` | every host code |
 | `host_error_of_type(kind)` | `HostError` | the codes of one category |
+| `soroban_tuple_2(a, b)` | `(A, B)` | one component from each strategy |
+| `soroban_tuple_3(a, b, c)` | `(A, B, C)` | one component from each strategy |
+| `byte_array_32()` | `[u8; 32]` | any 32 bytes — hashes, keys, seeds |
+| `byte_array_64()` | `[u8; 64]` | any 64 bytes — ed25519 signatures |
+| `byte_array::<N>()` | `[u8; N]` | any `N` bytes |
+| `ed25519_signature_pair()` | `Ed25519SignaturePair` | valid ed25519 public key, message digest, and signature |
+| `secp256k1_signature_pair()` | `Secp256k1SignaturePair` | valid secp256k1 public key, hash, signature, and recovery id |
+| `malleated_signature(sig)` | `[u8; 64]` | corrupted signature payload guaranteed to differ |
+| `contract_executable_wasm_hash()` | `[u8; 32]` | any 32-byte WASM bytecode hash |
+| `contract_executable()` | `ContractExecutable` | `Wasm`, `StellarAsset`, or `ExternalRef` variants |
+| `deployer_salt()` | `[u8; 32]` | 32-byte salt for deterministic deployment |
+| `entry_ttl(current, min_threshold, max_ttl)` | `EntryTtl` | a live entry whose TTL is in `min_threshold..=max_ttl` |
+| `expired_ttl(current)` | `EntryTtl` | an entry that expired before `current` |
+| `ttl_extension_delta()` | `u32` | 1 to `MAINNET_MAX_ENTRY_TTL` (3,110,400) ledgers |
+| `ttl_extension_delta_up_to(max)` | `u32` | 1 to `max` ledgers |
 
 ## Usage with proptest
 
@@ -92,6 +108,29 @@ proptest! {
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
 </div>
 
+## Fuzzing invocation argument types
+
+`fuzzed_invocation_args` takes the host environment, a vector of valid
+arguments for the target function, and a maximum number of rogue values. It
+returns actual host `Val`s, so object handles belong to the same environment
+as the contract client. Primitive values shrink toward zero and `false`, while
+the argument list shrinks toward the original typed arguments.
+
+```rust
+use soroban_sdk::{Env, IntoVal};
+use soroban_testkit_generators::fuzzed_invocation_args;
+
+let env = Env::default();
+let valid = vec![7u32.into_val(&env)];
+let args = fuzzed_invocation_args(&env, valid, 4);
+```
+
+Use the generated values with a contract entry point that accepts `Val` (or
+through the host's dynamic invocation API) to ensure dispatch and validation
+reject unexpected types before business logic runs. Generated rogue values
+cover signed/unsigned integers, booleans, symbols, contract errors, and
+address object handles.
+
 ## Host error discriminants
 
 Testkit also generates the failures themselves. Soroban reports a host error as
@@ -147,6 +186,219 @@ hundred in table order for a deterministic sweep.
   <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
   <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
 </div>
+
+## Tuples and fixed-size arrays
+
+Contract functions often take a composite argument — an `(Address, i128)`
+allowance grant, a `BytesN<32>` hash, a `BytesN<64>` signature. The `tuples`
+module names those shapes so a test does not rebuild them by hand, and every
+strategy is re-exported from the crate root:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{BytesN, Env};
+use soroban_testkit_generators::strategies::{account_address, token_amount};
+use soroban_testkit_generators::{byte_array_32, byte_array_64, soroban_tuple_2};
+
+proptest! {
+    #[test]
+    fn test_allowance_pair(
+        (owner, spender) in soroban_tuple_2(account_address(), account_address()),
+        amount in token_amount(),
+    ) {
+        let env = Env::default();
+        let (owner, spender) = (owner.to_address(&env), spender.to_address(&env));
+        client.approve(&owner, &spender, &amount);
+    }
+
+    #[test]
+    fn verify_rejects_a_forged_signature(
+        digest in byte_array_32(),
+        signature in byte_array_64(),
+    ) {
+        let env = Env::default();
+        let digest = BytesN::from_array(&env, &digest);
+        let signature = BytesN::from_array(&env, &signature);
+## Entry TTLs and storage rent
+
+Every contract data entry has a *live-until* ledger — the last ledger it can
+be read on — and rent bugs sit at the edges of that interval. The `ttl` module
+generates the intervals themselves, in the SDK's units: an entry's TTL is
+`live_until_ledger - current_ledger`, the number `get_ttl(&key)` reports and
+`extend_ttl(&key, threshold, extend_to)` takes, so a TTL of `0` means
+"readable this ledger, gone the next".
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::testutils::Ledger as _;
+use soroban_testkit_generators::{entry_ttl, expired_ttl, ttl_extension_delta_up_to};
+
+const RENEW_THRESHOLD: u32 = 17_280; // ~1 day
+const RENEW_TO: u32 = 518_400;       // ~30 days
+
+proptest! {
+    #[test]
+    fn renewal_keeps_the_balance_alive(
+        entry in entry_ttl(1_000, 0, RENEW_TO),
+        gap in ttl_extension_delta_up_to(RENEW_THRESHOLD),
+    ) {
+        // Put the entry on the ledger with exactly entry.ttl() remaining,
+        // then call the contract's renewal function.
+        client.renew();
+        let ttl = env.as_contract(&id, || env.storage().persistent().get_ttl(&KEY));
+        prop_assert!(ttl >= RENEW_THRESHOLD);
+
+        env.ledger().set_sequence_number(env.ledger().sequence() + gap);
+        prop_assert!(client.has_balance());
+    }
+
+    #[test]
+    fn an_expired_entry_is_never_read(entry in expired_ttl(50_000)) {
+        prop_assert!(!entry.is_live());
+        // ...
+    }
+}
+```
+
+The values are plain Rust tuples and arrays, so once each component is a host
+type the whole value converts with `soroban_sdk::IntoVal` — `(Address, i128)`,
+`(Address, Address, i128)` and `BytesN<N>` all cross a contract boundary
+unchanged, which is what the module's own tests check against a live contract.
+`soroban_tuple_3(a, b, c)` is the three-component form, and `byte_array::<N>()`
+covers any other length.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking is per component</span>
+  <p>A failing tuple shrinks one component at a time while the others stay put, and a failing byte array shrinks every byte towards <code>0x00</code> independently. A signature check that only trips on the last byte therefore minimises to sixty-three zeros and the one byte that matters, rather than to an arbitrary-looking blob.</p>
+`EntryTtl` carries `current_ledger` and `live_until_ledger`, and answers the
+questions a rent test asks of them: `is_live()`, `ttl()` (`None` once expired),
+`ledgers_since_expiry()`, `expires_at()` (the first unreadable ledger) and
+`advanced_by(n)` for the same entry observed `n` ledgers later.
+
+`max_ttl` is the network ceiling — `MAINNET_MAX_ENTRY_TTL` on Mainnet, or the
+value a test passed to `env.ledger().set_max_entry_ttl(..)` — and an interval
+that would run past `u32::MAX` is clamped. `entry_ttl` refuses a
+`min_threshold` above `max_ttl`, and `expired_ttl` refuses ledger `0`, because
+neither has a value to generate.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the expiration boundary</span>
+  <p><code>entry_ttl</code> shrinks the TTL towards <code>min_threshold</code>, <code>expired_ttl</code> shrinks towards the entry that expired exactly one ledger ago, and <code>ttl_extension_delta</code> shrinks towards a single ledger. A renewal bug therefore minimises to the entry closest to dying, which is where off-by-one liveness checks fail. The module's own tests check these intervals against the host: what <code>entry_ttl</code> generates is what <code>get_ttl</code> reports, and a temporary entry is readable on <code>live_until_ledger</code> and gone on <code>expires_at()</code>.</p>
+</div>
+
+## Event Fuzzing
+
+`EventFuzzHarness` produces valid SDK v28 `ContractEvent` values and mutates
+them to verify that event parsers reject malformed payloads cleanly.
+
+```rust
+use soroban_testkit_generators::event_fuzz::{
+    fuzzed_event, valid_transfer_event, EventFuzzHarness, MutationOperator,
+};
+
+// Start from a well-formed event and apply a single mutation.
+let harness = EventFuzzHarness::new(valid_transfer_event());
+let malformed = harness.mutate(MutationOperator::DropField, 42);
+
+// Or drive a property test across every mutation operator.
+proptest! {
+    #[test]
+    fn parser_never_panics(event in fuzzed_event(valid_transfer_event())) {
+        // Downstream decoding must return an error, never panic.
+        let _ = TransferEvent::try_from_event(&event);
+    }
+}
+```
+
+Supported mutation operators:
+
+| Operator | Effect |
+|----------|--------|
+| `DropField` | Removes a topic, or clears the data when no topics remain |
+| `TypeShift` | Replaces a value with a different `ScVal` variant |
+| `ByteTruncate` | Halves the length of bytes, strings, symbols, or vectors |
+| `SignFlip` | Flips the sign of a number or toggles a boolean |
+
+`EventFuzzHarness::shrink` deterministically reduces a malformed payload after
+a failure, mirroring proptest's shrinking so failures are reported with the
+smallest event that still reproduces the bug. `shrink_candidates` returns each
+intermediate step for debugging.
+
+## Contract executables and deployer salts
+
+Factory contracts and deployment utilities dynamically deploy child contracts using WASM hashes or contract executable descriptors. `contract_executable_wasm_hash()`, `contract_executable()`, and `deployer_salt()` test factory patterns and verify deterministic contract address calculation:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Address, BytesN, Env};
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn deterministic_factory_address(
+        salt in strategies::deployer_salt(),
+        wasm_hash in strategies::contract_executable_wasm_hash(),
+    ) {
+        let env = Env::default();
+        let deployer = Address::generate(&env);
+        let salt_n = BytesN::from_array(&env, &salt);
+
+        // Precompute deterministic deployment address
+        let predicted = env
+            .deployer()
+            .with_address(deployer.clone(), salt_n.clone())
+            .deployed_address();
+
+        // Repeated address calculations with identical inputs match
+        let predicted_repeat = env
+            .deployer()
+            .with_address(deployer, salt_n)
+            .deployed_address();
+
+        assert_eq!(predicted, predicted_repeat);
+    }
+}
+```
+
+`contract_executable()` generates variants across `ContractExecutable::Wasm`, `ContractExecutable::StellarAsset`, and `ContractExecutable::ExternalRef`, allowing comprehensive fuzzing of contract installation and factory routines.
+
+## Cryptographic signatures and malleation
+
+Contracts verifying external cryptographic signatures with `env.crypto().ed25519_verify` or `secp256k1_recover` require testing both valid signatures and corrupted variants.
+
+`ed25519_signature_pair()` generates cryptographically valid Ed25519 keypairs, message digests, and signatures. `secp256k1_signature_pair()` produces valid Secp256k1 SEC-1 uncompressed 65-byte public keys, message hashes, 64-byte compact ECDSA signatures, and recovery IDs:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Bytes, BytesN, Env};
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn verify_ed25519_signatures(pair in strategies::ed25519_signature_pair()) {
+        let env = Env::default();
+        let pk = BytesN::from_array(&env, pair.public_key());
+        let msg = Bytes::from_slice(&env, pair.message_digest());
+        let sig = BytesN::from_array(&env, pair.signature());
+
+        // Verifies cleanly without panic
+        env.crypto().ed25519_verify(&pk, &msg, &sig);
+    }
+
+    #[test]
+    fn recover_secp256k1_public_keys(pair in strategies::secp256k1_signature_pair()) {
+        let env = Env::default();
+        let hash_bytes = Bytes::from_slice(&env, pair.message_hash());
+        let hash = env.crypto().sha256(&hash_bytes);
+        let sig = BytesN::from_array(&env, pair.signature());
+
+        let recovered = env.crypto().secp256k1_recover(&hash, &sig, pair.recovery_id());
+        assert_eq!(recovered.to_array(), *pair.public_key());
+    }
+}
+```
+
+`malleated_signature(valid_sig)` introduces single-bit or byte perturbations into valid signatures to verify that corrupted or tampered signatures fail verification cleanly.
 
 ## Custom strategies
 

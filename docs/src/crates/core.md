@@ -4,7 +4,7 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · footprint</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -25,6 +25,14 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageEntry`, `StorageTier` | A live storage key, its rendered value, tier and expiry ledger |
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
+| `FootprintSnapshot` | XDR byte size of every live storage key of one contract, by tier |
+| `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
+| `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
+| `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
+| `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
+| `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
+| `CompatibilityAuditor` | Evaluates contracts against upcoming SDK v29 / Protocol 22+ changes and flags deprecated host calls |
+| `CompatibilityScorecard` | Actionable readiness scorecard with grades, remediation advice, and Markdown output |
 
 ## Budget snapshots
 
@@ -248,6 +256,168 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
   <span class="tk-callout__title">Scope</span>
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
+
+## Storage Namespace Auditing
+
+When contracts compose multiple modules or traits, bare symbol keys such as
+`"admin"` can collide and silently overwrite another module's state.
+`NamespaceAuditor` records keys per module and reports collisions and
+un-namespaced keys.
+
+```rust
+use soroban_testkit_core::namespace_auditor::NamespaceAuditor;
+
+let mut auditor = NamespaceAuditor::new(&env, &contract);
+auditor
+    .record("ownable", "ownable::admin")
+    .record("pausable", "pausable::paused");
+
+let report = auditor.audit();
+assert!(!report.has_collisions(), "Storage collision: {:?}", report.collisions());
+println!("{report}");
+```
+
+Keys are considered namespaced when they contain a namespace separator
+(`::`, `:`, `.`, `/`) such as `DataKey::Admin` or `ownable:admin`. Bare keys
+like `admin` are flagged as collision risks. A collision is reported when the
+same key is written by two independent modules. `report.modules()` returns the
+full key map, while `NamespaceAuditor::from_entries` infers module ownership
+from a `StorageEntry` snapshot.
+
+## Storage footprint diffs in CI
+
+A refactor that widens a struct or adds a key silently grows what a contract
+keeps on the ledger, and with it state rent and every read/write fee. The
+`footprint` module measures that growth in the unit those fees are charged in —
+XDR-encoded bytes — and diffs it between two Git revisions.
+
+A test records the footprint of each contract into a JSON artifact that the
+repository commits:
+
+```rust
+use soroban_testkit_core::footprint::StorageFootprint;
+
+#[test]
+#[ignore = "run with --ignored to refresh storage-footprint.json"]
+fn record_storage_footprint() {
+    let (env, token) = deploy_and_exercise_token();
+    let (_, vault) = deploy_and_exercise_vault(&env);
+
+    let mut footprint = StorageFootprint::new();
+    footprint.capture("token", &env, &token);
+    footprint.capture("vault", &env, &vault);
+    footprint.save(std::path::Path::new("storage-footprint.json")).unwrap();
+}
+```
+
+```json
+{
+  "version": 1,
+  "contracts": {
+    "token": {
+      "entries": { "instance:admin": 84, "persistent:balances": 200 }
+    }
+  }
+}
+```
+
+Persistent and temporary keys are measured as their whole ledger entry; each
+key inside instance storage is measured as its key-plus-value map entry. Keys
+are `tier:key`, iterated in order, so the committed file diffs cleanly.
+
+`StorageFootprintDiff::compare(&base, &head)` lines two artifacts up key by
+key. `changed_keys()` lists every key whose size moved, largest growth first,
+`growing_keys()` only the new or larger ones, and `exceeding(pct)` the
+contracts whose *total* grew by more than `pct` percent. A contract that is new
+in the head artifact is reported but not counted against the threshold, since
+there is no base to grow from. `to_markdown(Some(pct))` renders the report:
+
+```markdown
+## Storage footprint
+
+**Fail** — storage grew by more than 10% in `token` (+35.21%).
+
+| Contract | Instance | Persistent | Temporary | Total | Change |
+|----------|---------:|-----------:|----------:|------:|-------:|
+| `token` | 84 | 200 → 260 | 0 → 40 | 284 → 384 | +35.21% |
+| `vault` | 0 | 100 | 0 | 100 | 0% |
+
+### Changed keys
+
+| Contract | Key | Base | Head | Change |
+|----------|-----|-----:|-----:|-------:|
+| `token` | `persistent:balances` | 200 | 260 | **+60 B** |
+| `token` | `temporary:nonce` | – | 40 | **+40 B** (new) |
+```
+
+### The `storage-footprint-diff` binary
+
+```sh
+storage-footprint-diff BASE.json HEAD.json [--threshold PCT] [--output FILE] [--allow-missing-base]
+```
+
+It prints the Markdown report, also writes it to `--output` for a comment
+step, and exits `0` within the threshold, `1` when a contract grew past it, and
+`2` on a usage or file error. `--allow-missing-base` treats an absent base file
+as empty, for the pull request that introduces the artifact. The binary reads
+files and never runs Git itself, so the base revision is whatever the job
+extracts:
+
+```yaml
+- run: cargo test --workspace -- --ignored record_storage_footprint
+- run: git show "origin/${BASE_REF}:storage-footprint.json" > base-footprint.json || true
+  env:
+    BASE_REF: ${{ github.base_ref }}
+- run: >
+    cargo run -p soroban-testkit-core --bin storage-footprint-diff --
+    base-footprint.json storage-footprint.json
+    --threshold 10 --output footprint.md --allow-missing-base
+```
+
+Post `footprint.md` as the pull-request comment the same way the `Budget
+baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
+as a function, for embedding it in an `xtask` without spawning a process.
+
+## Storage fragmentation analyzer
+
+Storing data across dozens of small scalar entries inflates the ledger footprint due to repeated `LedgerKey` overhead and redundant key serialization. `StorageFragmentationAnalyzer` inspects contract storage across `instance`, `persistent`, and `temporary` tiers to measure key-to-value byte ratios, identify fragmented entries sharing common prefixes, and calculate projected byte and Stroop rent savings:
+
+```rust
+use soroban_testkit_core::{StorageFragmentationAnalyzer, StorageTier};
+
+let analyzer = StorageFragmentationAnalyzer::new()
+    .with_overhead_threshold(0.40)      // Flag entries where key bytes >= 40% of total
+    .with_stroop_rate_per_byte(100);    // Rent rate assumption for Stroop savings
+
+let report = analyzer.analyze(&env, &contract_id);
+
+println!("Overall overhead ratio: {:.1}%", report.overall_overhead_ratio * 100.0);
+println!("Potential byte savings: {} B", report.total_projected_byte_savings());
+println!("Projected Stroop savings: {} Stroops", report.total_projected_stroop_savings());
+
+// Render an optimization report as Markdown:
+let markdown = report.to_markdown();
+```
+
+## SDK v29 compatibility auditor
+
+As protocol standards move from Protocol 21/22 toward Protocol 23 and SDK v29, legacy host functions and untyped APIs are deprecated. `CompatibilityAuditor` monitors contract invocations, events, and host errors to identify deprecated calls early, outputting a compatibility scorecard with concrete remediation instructions:
+
+```rust
+use soroban_testkit_core::{CompatibilityAuditor, CompatibilityGrade};
+
+let mut auditor = CompatibilityAuditor::new()
+    .with_target_protocol(22); // Target Protocol 22 / SDK v29
+
+// Audit contract interactions:
+let scorecard = auditor.audit_contract(&env, &contract_id);
+
+println!("Readiness grade: {}", scorecard.grade.as_str());
+assert!(scorecard.is_ready_for_upgrade, "Contract contains critical obsolete calls!");
+
+// Render a CI-ready Markdown report:
+let markdown_report = scorecard.to_markdown();
+```
 
 <hr class="tk-divider" />
 
