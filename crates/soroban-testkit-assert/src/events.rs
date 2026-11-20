@@ -317,9 +317,7 @@ pub fn assert_event_emitted_check(
         for &expected_topic in topics {
             let bytes = expected_topic.as_bytes();
             let matches_topic = body.topics.iter().any(|t| match t {
-                soroban_sdk::xdr::ScVal::Symbol(sym) => {
-                    AsRef::<[u8]>::as_ref(sym) == bytes
-                }
+                soroban_sdk::xdr::ScVal::Symbol(sym) => AsRef::<[u8]>::as_ref(sym) == bytes,
                 other => topic_label(other) == expected_topic,
             });
             if !matches_topic {
