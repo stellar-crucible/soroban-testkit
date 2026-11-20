@@ -1,10 +1,10 @@
 # soroban-testkit-core
 
-Budget tracking, error decoding and storage inspection — the primitives the rest of Testkit is built on.
+Budget tracking, error decoding, storage inspection and contract dependency graphs — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · footprint</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -26,11 +26,18 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
 | `FootprintSnapshot` | XDR byte size of every live storage key of one contract, by tier |
+| `RentParameters`, `RentEstimate` | Protocol fee parameters and the Stroop cost of keeping a footprint alive for N ledgers |
 | `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
 | `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
+| `DependencyGraph` | Directed graph of inter-contract calls, built from an invocation's `fn_call` diagnostics |
+| `DependencyEdge` | One caller → callee edge with its call count and functions |
+| `DependencyCycle` | A closed call chain such as `A -> B -> C -> A`, with self-recursion as `A -> A` |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
 | `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
 | `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
+| `StackDepthAuditor` | Reconstructs a contract call chain from host diagnostic events and checks it against a depth cap |
+| `CallFrame` | One invocation in that chain: depth, contract id, function |
+| `StackDepthBreach` | A trace deeper than its cap, rendered with every frame |
 | `CompatibilityAuditor` | Evaluates contracts against upcoming SDK v29 / Protocol 22+ changes and flags deprecated host calls |
 | `CompatibilityScorecard` | Actionable readiness scorecard with grades, remediation advice, and Markdown output |
 
@@ -436,6 +443,91 @@ Post `footprint.md` as the pull-request comment the same way the `Budget
 baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
 as a function, for embedding it in an `xtask` without spawning a process.
 
+## Rent projection and the summary table
+
+Byte counts answer "how much state is there". The question a deployer actually
+asks is "what does keeping it cost", and the two differ by the entry writes and
+the rent term the network charges per TTL bump. `FootprintSnapshot` projects
+forward, and renders itself as a table.
+
+`StorageFootprint::measure` captures one contract without going through an
+artifact, which is what you want inside a test that just deployed something:
+
+```rust
+use soroban_testkit_core::{DEFAULT_PROJECTION_LEDGERS, StorageFootprint};
+
+let snapshot = StorageFootprint::measure(&ctx.env, &contract_id);
+
+// Bytes, and the Stroops to hold them for another 518,400 ledgers.
+let bytes = snapshot.total_bytes();
+let stroops = snapshot.projected_rent(DEFAULT_PROJECTION_LEDGERS);
+```
+
+The arithmetic is the network's own: each entry is priced through
+`soroban_env_host::fees::compute_rent_fee`, the function core calls, so a
+projection agrees with what the protocol charges rather than with a restatement
+of the formula here. A projection is the cost of one TTL bump from zero, which
+means it is rent *plus* the per-entry write *plus* the 48-byte `TtlEntry` the
+bump itself writes. Doubling the horizon therefore adds rent without adding a
+second entry write.
+
+`rent_estimate` breaks the same number up per tier, and `RentParameters` is
+where you override the fee set:
+
+```rust
+use soroban_testkit_core::{RentParameters, StorageFootprint};
+
+let params = RentParameters::default()
+    // Re-price rent per KB for a network holding more state than the target,
+    // following core's own curve instead of the floor.
+    .with_soroban_state_size(6_000_000_000);
+let estimate = StorageFootprint::measure(&ctx.env, &contract_id)
+    .rent_estimate(&params, 518_400);
+
+let persistent = estimate.persistent_stroops;
+assert!(estimate.total_stroops() >= persistent);
+```
+
+`to_markdown` renders the entries and the projection as one table, for a PR
+comment or a docs page:
+
+```rust
+print!("{}", snapshot.to_markdown());
+```
+
+```markdown
+### Entries
+
+| Key | Bytes |
+|-----|--------:|
+| `instance:admin` | 24 |
+| `instance:paused` | 24 |
+| `persistent:count` | 80 |
+| `persistent:owner` | 80 |
+| `temporary:nonce` | 80 |
+
+| Tier | Entries | Bytes | Rent for 518400 ledgers |
+|------|--------:|------:|----------------------:|
+| instance | 2 | 48 | 40047 |
+| persistent | 2 | 160 | 106762 |
+| temporary | 1 | 80 | 36714 |
+| **Total** | **5** | **288** | **183523** |
+
+<sub>Sizes are XDR-encoded bytes. Rent is priced by `soroban-env-host`'s
+`compute_rent_fee` at the protocol 23 fee parameters, entry write and
+`TtlEntry` included.</sub>
+```
+
+Two things about those numbers are worth reading carefully. The tier rows are
+not three copies of the same arithmetic: persistent and temporary keys are each
+their own ledger entry, so each pays its own entry write, while every key in
+instance storage lives inside one `ContractData` entry and is priced as that
+single map. That is why two 24-byte instance keys rent for less than one 80-byte
+persistent key. And because the snapshot records the key-plus-value map entries
+of instance storage rather than the envelope around them, the instance column is
+a floor. `StorageFootprint::to_markdown` does the same for every contract in the
+artifact, one section each, under a `## \`label\`` heading.
+
 ## Storage fragmentation analyzer
 
 Storing data across dozens of small scalar entries inflates the ledger footprint due to repeated `LedgerKey` overhead and redundant key serialization. `StorageFragmentationAnalyzer` inspects contract storage across `instance`, `persistent`, and `temporary` tiers to measure key-to-value byte ratios, identify fragmented entries sharing common prefixes, and calculate projected byte and Stroop rent savings:
@@ -456,6 +548,98 @@ println!("Projected Stroop savings: {} Stroops", report.total_projected_stroop_s
 // Render an optimization report as Markdown:
 let markdown = report.to_markdown();
 ```
+
+## Call-stack depth auditing
+
+Deep contract composition has a hard ceiling: the host refuses one more nested
+call once the stack is full. `StackDepthAuditor` reconstructs the chain that
+ran, reports its high-water depth, and checks it against a cap a test controls.
+
+```rust
+use soroban_testkit_core::StackDepthAuditor;
+
+client.deposit(&user, &1_000); // proxy -> vault -> token
+
+let auditor = StackDepthAuditor::from_env(&env);
+println!("{}", auditor.trace());
+// call trace: 3 frame(s), max depth 3, cap 100, warning threshold 90
+//   depth=1 contract=CDEPOSIT... function=deposit
+//   depth=2 contract=CVAULT... function=transfer_in
+//   depth=3 contract=CTOKEN... function=transfer
+
+assert_eq!(auditor.max_depth(), 3);
+assert!(!auditor.warning_triggered());
+auditor.assert_within(); // panics with the full trace if the cap was passed
+```
+
+### Where the depth comes from
+
+The pinned host does not expose a public per-frame hook. `Host::set_trace_hook`
+is crate-private, and the public `Host::set_invocation_hook` fires only when a
+top-level invocation starts and finishes, not for each nested call. What the
+host does expose is its diagnostic event stream: `fn_call` is emitted before a
+frame opens and carries the called contract id and function name, and
+`fn_return` is emitted when that call returns. `StackDepthAuditor` reads those
+events through `Env::host().get_diagnostic_events()` and nests them in order,
+which makes the reconstruction exact for successful cross-contract chains.
+
+For a harness or an instrumented test contract, `enter(contract, function)`
+and `exit()` record the same frames by hand:
+
+```rust
+use soroban_testkit_core::StackDepthAuditor;
+
+let mut auditor = StackDepthAuditor::new();
+auditor.enter("CPROXY", "forward").enter("CIMPL", "credit");
+assert_eq!(auditor.max_depth(), 2);
+auditor.exit();
+```
+
+### The host limit
+
+The cap defaults to the host's own limit, not a number Testkit guessed.
+`soroban-env-host` 28.0.2 defines `DEFAULT_HOST_DEPTH_LIMIT = 100` in
+`src/budget/limits.rs`, and `Host::with_frame` in `src/host/frame.rs` returns
+`Context/ExceededLimit` when the context stack has already reached it. A test
+environment's top-level client call starts with an empty context stack, so
+contract frames 1 through 100 are accepted and the 101st nested call is the one
+that fails. An entry point reached through `Host::invoke_function` pushes a
+host-function frame first, which leaves room for 99 contract frames. The
+constant is re-exported as `HOST_CALL_STACK_LIMIT`.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">A warning is not a failure</span>
+  <p><code>warning_triggered()</code> and <code>warnings()</code> report frames at or beyond the warning threshold — 90% of the cap by default, set with <code>with_warning_threshold</code>. Only <code>breach()</code> and <code>assert_within()</code> treat a depth as a failure.</p>
+</div>
+
+### Lowering the cap to test recovery
+
+Running 100 nested calls to reach the real limit is slow and awkward. A test
+can check the same contract against a shallower ceiling instead:
+
+```rust
+use soroban_testkit_core::StackDepthAuditor;
+
+let auditor = StackDepthAuditor::from_env(&env).with_lowered_cap(4);
+if auditor.breach().is_some() {
+    // The contract's fallback path: split the call, or return a partial result.
+}
+
+// Or check a recorded trace against a hypothetical cap without changing it.
+let would_breach = auditor.simulate_lowered_cap(2);
+assert!(would_breach.is_some());
+```
+
+`with_lowered_cap` reduces the auditor's cap and `simulate_lowered_cap`
+answers what a different cap would have said about the same trace; neither
+changes the host. `StackDepthBreach` carries `max_depth`, `cap` and the
+rendered trace, so a panic message lists every frame rather than only the
+number that was too large.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">What the trace cannot show</span>
+  <p><code>Env::default()</code> enables diagnostics, which is what makes the reconstruction possible. A call that traps emits no <code>fn_return</code>, so its frame is recorded but never paired with a return; the high-water depth is still correct. The host also refuses contract re-entry before it emits a nested <code>fn_call</code>, so a refused recursive call leaves no extra frame. Where diagnostics are unavailable, use <code>enter</code>/<code>exit</code> from an instrumented harness.</p>
+</div>
 
 ## SDK v29 compatibility auditor
 

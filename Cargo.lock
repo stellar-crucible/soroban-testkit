@@ -1950,6 +1950,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-cdp"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-counter"
 version = "0.4.1"
 dependencies = [
@@ -2037,6 +2049,7 @@ dependencies = [
  "proptest",
  "sha2",
  "soroban-sdk",
+ "soroban-testkit-core",
 ]
 
 [[package]]
