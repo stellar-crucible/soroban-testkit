@@ -11,6 +11,8 @@ pub mod errors;
 #[cfg(feature = "proptest")]
 pub mod executables;
 #[cfg(feature = "proptest")]
+pub mod multisig;
+#[cfg(feature = "proptest")]
 pub mod storage_tier;
 #[cfg(feature = "proptest")]
 pub mod strategies;
@@ -41,6 +43,8 @@ pub use differential::{
 pub use errors::{host_error_code_coverage, HostError};
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+#[cfg(feature = "proptest")]
+pub use multisig::{multisig_policy, MultisigPolicy, Signer};
 #[cfg(feature = "proptest")]
 pub use storage_tier::{
     mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
