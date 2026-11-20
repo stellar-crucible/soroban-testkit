@@ -44,6 +44,10 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `LockState` | `Uninitialized`, `Locked`, or `Unlocked` reentrancy guard states |
 | `ReentrancyReport` | Comprehensive violation diagnostics and visual ASCII state access ordering timelines |
 | `ReentrancyViolation` | Flagged uninitialized, unlocked, premature release, dangling, or indirect reentrant calls |
+| `CoverageAuditor` | Detects uninvoked functions and dead code across contract WASM, spec XDR, and client definitions |
+| `CoverageReport` | Aggregates execution metrics, coverage percentages, Markdown tables, and plaintext summaries |
+| `ClientDefinition` | Typed representation of contract client entry points for coverage auditing |
+| `client_definition!` | Macro for concise client entry point declaration |
 
 ## Budget snapshots
 
@@ -752,6 +756,134 @@ if report.has_violations() {
     println!("{}", report.render_timeline());
 }
 # }
+```
+
+## Contract function coverage auditing (`CoverageAuditor`)
+
+Integration test suites can pass with 100% green checks while failing to invoke critical administrative, recovery, or emergency functions defined in contract bytecode, leaving potential vulnerabilities unexercised.
+
+[`CoverageAuditor`] extracts all public function entry points from contract WASM bytecode, contract spec XDR, or client definitions, tracks invocations observed via Soroban host diagnostic events across test executions, and produces comprehensive coverage reports in both Markdown and text formats.
+
+### Extracting entry points
+
+You can extract functions from contract WASM bytecode, spec XDR, or typed client definitions:
+
+```rust
+use soroban_testkit_core::{CoverageAuditor, client_definition};
+# use soroban_sdk::{contract, contractimpl, Env, Address};
+# #[contract] pub struct Vault;
+# #[contractimpl] impl Vault {
+#     pub fn initialize(_e: Env) {}
+#     pub fn deposit(_e: Env) {}
+#     pub fn withdraw(_e: Env) {}
+#     pub fn emergency_stop(_e: Env) {}
+#     pub fn admin_recover(_e: Env) {}
+# }
+# fn example(env: &Env, contract_id: &Address) -> Result<(), soroban_testkit_core::CoverageError> {
+# let client = VaultClient::new(env, contract_id);
+
+let mut auditor = CoverageAuditor::new();
+
+// 1. From client definitions:
+auditor.register_client_definition(
+    &client.address,
+    &client_definition!("Vault", [initialize, deposit, withdraw, emergency_stop, admin_recover]),
+);
+
+// 2. Or directly from function names:
+auditor.register_contract(&client.address, ["initialize", "deposit", "withdraw"]);
+
+// 3. Or from WASM bytecode / Spec XDR:
+# let wasm_bytes = b"\0asm\x01\0\0\0";
+// auditor.register_contract_wasm(&contract_id, wasm_bytes)?;
+# Ok(())
+# }
+```
+
+### Configurable ignore lists
+
+One-time setup functions (like `init` or `initialize`) or internal callbacks (like `__check_auth`) can be intentionally excluded from required coverage calculations:
+
+```rust
+# use soroban_testkit_core::CoverageAuditor;
+# use soroban_sdk::Address;
+# fn example(auditor: &mut CoverageAuditor, contract_id: &Address) {
+// Ignore per-contract:
+auditor.ignore_function(contract_id, "initialize");
+
+// Ignore common setup defaults ("init", "initialize", "__check_auth"):
+auditor.ignore_default_setup_functions(contract_id);
+
+// Ignore globally across all monitored contracts:
+auditor.ignore_globally("initialize");
+# }
+```
+
+### Observing invocations and generating reports
+
+Call `auditor.observe(&env)` during or after test execution to ingest host diagnostic events. The auditor automatically aggregates invocations and computes coverage percentages:
+
+```rust
+# use soroban_testkit_core::{CoverageAuditor, client_definition};
+# use soroban_sdk::{contract, contractimpl, Env, Address};
+# #[contract] pub struct Vault;
+# #[contractimpl] impl Vault {
+#     pub fn initialize(_e: Env) {}
+#     pub fn deposit(_e: Env) {}
+#     pub fn withdraw(_e: Env) {}
+#     pub fn emergency_stop(_e: Env) {}
+# }
+# fn test_flow(env: &Env, contract_id: &Address) {
+# let client = VaultClient::new(env, contract_id);
+# let mut auditor = CoverageAuditor::new();
+# auditor.register_client_definition(&client.address, &client_definition!("Vault", [initialize, deposit, withdraw, emergency_stop]));
+# auditor.ignore_function(&client.address, "initialize");
+client.deposit();
+client.withdraw();
+
+// Ingest diagnostic events from the host:
+auditor.observe(env);
+
+let report = auditor.report();
+
+// Print Markdown report for PR comments or CI artifacts:
+println!("{}", report.to_markdown());
+
+// Print concise plaintext table:
+println!("{}", report.to_text());
+
+// Assert full coverage of all non-ignored public functions:
+// report.assert_full_coverage();
+
+// Or enforce a minimum threshold:
+report.assert_min_coverage(50.0);
+# }
+```
+
+### Report outputs
+
+When uninvoked functions are detected, `report.to_markdown()` renders detailed status tables and alerts:
+
+```markdown
+# Contract Function Coverage Report
+
+| Contract | Total Functions | Invoked | Uninvoked | Ignored | Coverage |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `Vault` (`CAAA...`) | 5 | 2 | 2 | 1 | 50.0% |
+| **Total** | **5** | **2** | **2** | **1** | **50.0%** |
+
+## Contract: `Vault` (`CAAA...`)
+
+| Function | Status | Invocations | Notes |
+| :--- | :--- | :---: | :--- |
+| `initialize` | ⊘ Ignored | 1 | Configured ignore list (setup/initialization) |
+| `deposit` | ✓ Invoked | 1 | - |
+| `withdraw` | ✓ Invoked | 1 | - |
+| `emergency_stop` | ✗ **Uninvoked** | 0 | **Dead code or unexercised entry point** |
+| `admin_recover` | ✗ **Uninvoked** | 0 | **Dead code or unexercised entry point** |
+
+> [!WARNING]
+> **2 uninvoked contract entry point(s) detected.** Unexercised administrative, emergency, or recovery functions leave critical code paths untested.
 ```
 
 <hr class="tk-divider" />
