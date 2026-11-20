@@ -4,6 +4,7 @@ pub mod congestion;
 pub mod consensus;
 pub mod event_indexer;
 pub mod eviction;
+pub mod failure_injector;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
@@ -25,6 +26,8 @@ pub use protocol_registry::{
     ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
     ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
 };
+
+pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;

@@ -1,5 +1,6 @@
 pub mod budget;
 pub mod compatibility;
+pub mod conservation;
 pub mod coverage;
 pub mod error;
 pub mod footprint;
@@ -13,6 +14,7 @@ pub use compatibility::{
     CompatibilityAuditor, CompatibilityGrade, CompatibilityScorecard, DeprecationItem,
     DeprecationSeverity, DEFAULT_TARGET_PROTOCOL,
 };
+pub use conservation::{ConservationReport, ConservationVerifier, ReconciliationRow};
 pub use coverage::{
     ClientDefinition, ContractCoverageReport, CoverageAuditor, CoverageError, CoverageReport,
     FunctionCoverageRecord, FunctionCoverageStatus,
