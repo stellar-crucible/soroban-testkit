@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -750,3 +750,45 @@ flowchart TD
   C_0 -. resolves .-> ORACLE
   C_0 -. resolves .-> VAULT
 ```
+
+## Failure injection for mock dependencies (`FailureInjector`)
+
+A resilient contract has to survive a dependency that fails: an oracle out of budget, a vault whose storage expired, a token that traps. `FailureInjector` decides, per contract and per function, when a mock dependency fails and with which error, without writing a separate crashing contract for each case.
+
+The injection point is one call at the top of each mock function:
+
+```rust
+use soroban_testkit_fixtures::{failure_point, FailureInjector, InjectedFailure};
+
+#[contractimpl]
+impl MockOracle {
+    pub fn get_price(env: Env) -> i128 {
+        failure_point(&env, "get_price");
+        100
+    }
+}
+
+let injector = FailureInjector::attach(&env);
+
+injector.fail_function(&oracle_id, "get_price", InjectedFailure::BudgetExceeded); // permanent crash
+assert_eq!(dex.try_quote(&oracle_id, &2), Err(Ok(DexError::OracleUnavailable)));
+
+injector.fail_times(&oracle_id, "get_price", InjectedFailure::StorageNotFound, 2); // temporary outage
+injector.fail_on_call(&oracle_id, "get_price", InjectedFailure::InternalError, 3); // only call 3 fails
+
+injector.clear(); // normal execution again (also happens on drop)
+```
+
+| Failure | Raised as |
+| --- | --- |
+| `OutOfMemory` | `Error(WasmVm, ExceededLimit)` |
+| `BudgetExceeded` | `Error(Budget, ExceededLimit)` (the out-of-gas case) |
+| `StorageNotFound` | a genuine host trap: a TTL extension on a missing entry, as an archived or never-written entry would cause |
+| `InternalError` | `Error(Context, InternalError)` |
+| `Contract(code)` | a contract error with that code |
+
+**What the caller sees.** A `Contract(code)` failure reaches a `try_*` caller unchanged. Every host-level failure reaches it as `Error(Context, InvalidAction)`, because the host never forwards a callee's host error verbatim. That is also exactly what a caller sees when a real dependency traps. Without a `try_*` call, the failure aborts the caller.
+
+**One difference from a live network.** On a network, exhausting the CPU or memory budget aborts the *whole transaction* and no caller can catch it. The injected `BudgetExceeded` and `OutOfMemory` fail only the dependency's invocation, modelling a dependency that runs out and reports it, so the caller's fallback path is testable. To test transaction-wide exhaustion, run the call under real limits (`NetworkProfile`, or `env.cost_estimate().budget().reset_limits`).
+
+Rules are scoped to the test thread and to the injector that installed them, so one test cannot leak a failure into the next. `injector.calls(&id, "fn")` reports how many calls the injection point has seen.
