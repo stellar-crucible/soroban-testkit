@@ -62,8 +62,7 @@ fn a_filed_claim_names_the_policy_and_the_loss() {
         .from_contract(&insurance.pool_id)
         .with_topic("claim")
         .assert_data_matches(move |data| {
-            data.deserialize::<(u64, u64, i128)>()
-                == Some((claim.id, policy.id, 8_000 * ONE))
+            data.deserialize::<(u64, u64, i128)>() == Some((claim.id, policy.id, 8_000 * ONE))
         });
 }
 
@@ -139,44 +138,41 @@ fn every_mutation_requires_its_actor() {
     assert_auth_matches!(env, {
         invoker: insurance.provider,
         function: "deposit",
-        args: [insurance.provider, 1_000 * ONE],
+        args: [insurance.provider.clone(), 1_000 * ONE],
     });
 
     let policy = insurance.buy(&insurance.holder, 10_000 * ONE, YEAR);
     assert_auth_matches!(env, {
         invoker: insurance.holder,
         function: "buy_policy",
-        args: [insurance.holder, 10_000 * ONE, YEAR],
+        args: [insurance.holder.clone(), 10_000 * ONE, YEAR],
     });
 
     let claim = insurance.file(&insurance.holder, policy.id, 8_000 * ONE);
     assert_auth_matches!(env, {
         invoker: insurance.holder,
         function: "file_claim",
-        args: [insurance.holder, policy.id, 8_000 * ONE],
+        args: [insurance.holder.clone(), policy.id, 8_000 * ONE],
     });
 
     insurance.cast(&insurance.assessors[0], claim.id, true);
     assert_auth_matches!(env, {
         invoker: insurance.assessors[0],
         function: "vote",
-        args: [insurance.assessors[0], claim.id, true],
+        args: [insurance.assessors[0].clone(), claim.id, true],
     });
 
-    insurance
-        .pool()
-        .withdraw(&insurance.provider, &(500 * ONE));
+    insurance.pool().withdraw(&insurance.provider, &(500 * ONE));
     assert_auth_matches!(env, {
         invoker: insurance.provider,
         function: "withdraw",
-        args: [insurance.provider, 500 * ONE],
+        args: [insurance.provider.clone(), 500 * ONE],
     });
 }
 
 #[test]
 fn a_settlement_conserves_the_capital_token() {
     let insurance = Insurance::new();
-    let env = &insurance.ctx.env;
     insurance.deposit(&insurance.provider, 1_000_000 * ONE);
     let (_, claim) = insurance.open_claim(&insurance.holder, 10_000 * ONE, 8_000 * ONE);
     insurance.approve(claim.id);
@@ -199,7 +195,6 @@ fn a_settlement_conserves_the_capital_token() {
 #[test]
 fn a_deposit_moves_capital_without_minting_any() {
     let insurance = Insurance::new();
-    let env = &insurance.ctx.env;
 
     assert_balance_conserved!(
         accounts: [

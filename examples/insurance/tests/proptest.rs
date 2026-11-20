@@ -132,10 +132,14 @@ proptest! {
         let premium = premium_for(units, rate_bps, duration).unwrap();
         let denominator = BPS_DENOMINATOR * SECONDS_PER_YEAR as i128;
 
-        prop_assert_eq!(
-            premium,
-            (units * rate_bps as i128 * duration as i128).div_ceil(denominator)
-        );
+        let numerator = units * rate_bps as i128 * duration as i128;
+        // Ceiling division in stable Rust (`i128::div_ceil` is unstable).
+        let expected = if numerator == 0 {
+            0
+        } else {
+            (numerator + denominator - 1) / denominator
+        };
+        prop_assert_eq!(premium, expected);
         prop_assert!(premium >= 0);
         prop_assert!(premium >= premium_for(units, rate_bps, duration / 2).unwrap());
         prop_assert!(

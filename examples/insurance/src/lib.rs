@@ -156,7 +156,9 @@ pub fn premium_for(coverage: i128, rate_bps: u32, duration: u64) -> Option<i128>
         .checked_mul(rate_bps as i128)?
         .checked_mul(duration as i128)?;
     let denominator = BPS_DENOMINATOR.checked_mul(SECONDS_PER_YEAR as i128)?;
-    Some(numerator.div_ceil(denominator))
+    // Ceiling division written out: `i128::div_ceil` is still unstable
+    // (`int_roundings`), and contracts here build on stable.
+    Some(numerator.checked_add(denominator - 1)? / denominator)
 }
 
 /// Shares minted for a `deposit` into a pool holding `reserves` behind
@@ -238,8 +240,8 @@ impl InsurancePool {
 
         let total_shares = total_shares(&env);
         let reserves = reserves(&env);
-        let shares = shares_for_deposit(amount, total_shares, reserves)
-            .ok_or(InsuranceError::Overflow)?;
+        let shares =
+            shares_for_deposit(amount, total_shares, reserves).ok_or(InsuranceError::Overflow)?;
         if shares <= 0 {
             // The amount is below one share's worth of reserves; accepting it
             // would take capital the provider could never withdraw.
@@ -252,7 +254,9 @@ impl InsurancePool {
             &amount,
         );
 
-        let held = shares_of(&env, &provider).checked_add(shares).ok_or(InsuranceError::Overflow)?;
+        let held = shares_of(&env, &provider)
+            .checked_add(shares)
+            .ok_or(InsuranceError::Overflow)?;
         set_shares(&env, &provider, held);
         env.storage().instance().set(
             &InsuranceKey::TotalShares,
@@ -262,7 +266,9 @@ impl InsurancePool {
         );
         env.storage().instance().set(
             &InsuranceKey::Reserves,
-            &reserves.checked_add(amount).ok_or(InsuranceError::Overflow)?,
+            &reserves
+                .checked_add(amount)
+                .ok_or(InsuranceError::Overflow)?,
         );
         adjust(&env, InsuranceKey::Deposited, amount)?;
 
@@ -347,7 +353,9 @@ impl InsurancePool {
             let reserves = reserves(&env);
             env.storage().instance().set(
                 &InsuranceKey::Reserves,
-                &reserves.checked_add(premium).ok_or(InsuranceError::Overflow)?,
+                &reserves
+                    .checked_add(premium)
+                    .ok_or(InsuranceError::Overflow)?,
             );
             adjust(&env, InsuranceKey::Premiums, premium)?;
         }
@@ -518,7 +526,9 @@ impl InsurancePool {
             .set(&InsuranceKey::Claim(claim_id), &claim);
         env.storage().instance().set(
             &InsuranceKey::Reserves,
-            &reserves.checked_sub(payout).ok_or(InsuranceError::Overflow)?,
+            &reserves
+                .checked_sub(payout)
+                .ok_or(InsuranceError::Overflow)?,
         );
         adjust(&env, InsuranceKey::Payouts, payout)?;
         token::Client::new(&env, &config.capital_token).transfer(
@@ -527,8 +537,10 @@ impl InsurancePool {
             &payout,
         );
 
-        env.events()
-            .publish((symbol_short!("settle"), claim.holder.clone()), (claim_id, payout));
+        env.events().publish(
+            (symbol_short!("settle"), claim.holder.clone()),
+            (claim_id, payout),
+        );
         Ok(claim)
     }
 

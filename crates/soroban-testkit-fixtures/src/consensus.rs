@@ -15,6 +15,7 @@
 //! be replayed exactly.
 //!
 //! ```rust
+//! use soroban_sdk::testutils::Ledger;
 //! use soroban_sdk::Env;
 //! use soroban_testkit_fixtures::ConsensusSimulator;
 //!
@@ -419,10 +420,7 @@ mod tests {
         assert_eq!(sim.quorum(), DEFAULT_QUORUM);
         assert_eq!(
             sim.close_interval_range(),
-            (
-                DEFAULT_MIN_CLOSE_INTERVAL_MS,
-                DEFAULT_MAX_CLOSE_INTERVAL_MS
-            )
+            (DEFAULT_MIN_CLOSE_INTERVAL_MS, DEFAULT_MAX_CLOSE_INTERVAL_MS)
         );
         assert_eq!(sim.jitter_std_ms(), DEFAULT_JITTER_STD_MS);
         assert_eq!(sim.mean_close_interval_ms(), 5_500);
@@ -513,7 +511,6 @@ mod tests {
 
     #[test]
     fn the_same_seed_replays_the_same_closes_and_different_seeds_diverge() {
-        let env = env();
         let mut first = ConsensusSimulator::new().with_seed(7);
         let mut replay = ConsensusSimulator::new().with_seed(7);
         let mut other = ConsensusSimulator::new().with_seed(8);
@@ -529,7 +526,9 @@ mod tests {
         // their votes too.
         let mut a = ConsensusSimulator::new().with_seed(11);
         let mut b = ConsensusSimulator::new().with_seed(11);
-        assert_eq!(a.run_round(&env), b.run_round(&env));
+        // Separate ledgers, since a round advances the env it is given.
+        let (env_a, env_b) = (env(), env());
+        assert_eq!(a.run_round(&env_a), b.run_round(&env_b));
     }
 
     #[test]
@@ -653,9 +652,7 @@ mod tests {
         let client = feed(&env);
         let mut sim = ConsensusSimulator::new();
 
-        let (round, height) = sim.execute_with_consensus(&env, || {
-            env.ledger().sequence()
-        });
+        let (round, height) = sim.execute_with_consensus(&env, || env.ledger().sequence());
 
         assert_eq!(height, round.close.sequence);
         assert_eq!(env.ledger().sequence(), round.close.sequence);

@@ -27,12 +27,15 @@ fn every_user_facing_call_fits_its_budget() {
             .mem_ceiling(MEM_CEILING)
     };
 
-    let shares = guard("deposit")
-        .run(&env, || insurance.deposit(&insurance.provider, 1_000_000 * ONE));
-    let policy = guard("buy_policy")
-        .run(&env, || insurance.buy(&insurance.holder, 10_000 * ONE, YEAR));
-    let claim = guard("file_claim")
-        .run(&env, || insurance.file(&insurance.holder, policy.id, 8_000 * ONE));
+    let shares = guard("deposit").run(&env, || {
+        insurance.deposit(&insurance.provider, 1_000_000 * ONE)
+    });
+    let policy = guard("buy_policy").run(&env, || {
+        insurance.buy(&insurance.holder, 10_000 * ONE, YEAR)
+    });
+    let claim = guard("file_claim").run(&env, || {
+        insurance.file(&insurance.holder, policy.id, 8_000 * ONE)
+    });
     guard("vote").run(&env, || {
         insurance.cast(&insurance.assessors[0], claim.id, true)
     });
@@ -41,7 +44,9 @@ fn every_user_facing_call_fits_its_budget() {
     });
     guard("settle").run(&env, || insurance.settle(claim.id));
     guard("withdraw").run(&env, || {
-        insurance.pool().withdraw(&insurance.provider, &(shares / 2))
+        insurance
+            .pool()
+            .withdraw(&insurance.provider, &(shares / 2))
     });
 }
 
@@ -60,7 +65,9 @@ fn a_premium_and_a_settlement_each_fit_their_budget() {
     let premium = BudgetGuard::new("buy_policy")
         .cpu_ceiling(CPU_CEILING)
         .mem_ceiling(MEM_CEILING)
-        .run(&env, || insurance.buy(&insurance.holder2, 10_000 * ONE, YEAR));
+        .run(&env, || {
+            insurance.buy(&insurance.holder2, 10_000 * ONE, YEAR)
+        });
     let settlement = BudgetGuard::new("settle")
         .cpu_ceiling(CPU_CEILING)
         .mem_ceiling(MEM_CEILING)

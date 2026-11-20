@@ -31,7 +31,10 @@ fn initialize_twice_is_rejected() {
     let err = insurance
         .pool()
         .try_initialize(&insurance.config(RATE_BPS, QUORUM, MAX_COVERAGE));
-    assert_eq!(err.unwrap_err().unwrap(), InsuranceError::AlreadyInitialized);
+    assert_eq!(
+        err.unwrap_err().unwrap(),
+        InsuranceError::AlreadyInitialized
+    );
 }
 
 #[test]
@@ -65,7 +68,9 @@ fn initialize_rejects_a_panel_or_a_parameter_it_cannot_run_with() {
 fn an_uninitialized_pool_rejects_deposits() {
     let insurance = Insurance::deployed();
 
-    let err = insurance.pool().try_deposit(&insurance.provider, &(1_000 * ONE));
+    let err = insurance
+        .pool()
+        .try_deposit(&insurance.provider, &(1_000 * ONE));
     assert_eq!(err.unwrap_err().unwrap(), InsuranceError::NotInitialized);
 }
 
@@ -90,7 +95,10 @@ fn deposit_mints_shares_one_for_one_and_moves_the_capital() {
     assert_eq!(insurance.pool().total_shares(), shares);
     assert_eq!(insurance.pool().reserves(), 1_000_000 * ONE);
     assert_eq!(insurance.pool().total_deposited(), 1_000_000 * ONE);
-    assert_eq!(insurance.token().balance(&insurance.pool_id), 1_000_000 * ONE);
+    assert_eq!(
+        insurance.token().balance(&insurance.pool_id),
+        1_000_000 * ONE
+    );
     assert_eq!(
         insurance.token().balance(&insurance.provider),
         FUNDING - 1_000_000 * ONE
@@ -125,7 +133,10 @@ fn withdrawing_every_share_returns_the_reserves() {
     let amount = insurance.pool().withdraw(&insurance.provider, &shares);
 
     assert_eq!(amount, 1_000_000 * ONE);
-    assert_eq!(insurance.token().balance(&insurance.provider), before + amount);
+    assert_eq!(
+        insurance.token().balance(&insurance.provider),
+        before + amount
+    );
     assert_eq!(insurance.pool().shares_of(&insurance.provider), 0);
     assert_eq!(insurance.pool().total_shares(), 0);
     assert_eq!(insurance.pool().reserves(), 0);
@@ -140,7 +151,10 @@ fn withdrawing_more_shares_than_held_is_rejected() {
     let err = insurance
         .pool()
         .try_withdraw(&insurance.provider, &(shares + 1));
-    assert_eq!(err.unwrap_err().unwrap(), InsuranceError::InsufficientShares);
+    assert_eq!(
+        err.unwrap_err().unwrap(),
+        InsuranceError::InsufficientShares
+    );
     assert_eq!(insurance.pool().shares_of(&insurance.provider), shares);
 }
 
@@ -174,7 +188,10 @@ fn half_a_year_of_coverage_costs_half_the_annual_rate() {
     let policy = insurance.buy(&insurance.holder, 10_000 * ONE, YEAR / 2);
 
     assert_eq!(policy.premium_paid, 250 * ONE);
-    assert_eq!(policy.premium_paid, insurance.premium(10_000 * ONE, YEAR / 2));
+    assert_eq!(
+        policy.premium_paid,
+        insurance.premium(10_000 * ONE, YEAR / 2)
+    );
 }
 
 #[test]
@@ -237,10 +254,7 @@ fn a_second_claim_on_the_same_policy_is_rejected() {
     let err = insurance
         .pool()
         .try_file_claim(&insurance.holder, &policy.id, &(2_000 * ONE));
-    assert_eq!(
-        err.unwrap_err().unwrap(),
-        InsuranceError::ClaimAlreadyFiled
-    );
+    assert_eq!(err.unwrap_err().unwrap(), InsuranceError::ClaimAlreadyFiled);
 }
 
 #[test]
@@ -296,7 +310,9 @@ fn only_the_panel_votes_and_only_once_each() {
     let insurance = Insurance::new();
     let (_, claim) = insurance.open_claim(&insurance.holder, 10_000 * ONE, 8_000 * ONE);
 
-    let err = insurance.pool().try_vote(&insurance.outsider, &claim.id, &true);
+    let err = insurance
+        .pool()
+        .try_vote(&insurance.outsider, &claim.id, &true);
     assert_eq!(err.unwrap_err().unwrap(), InsuranceError::NotAssessor);
 
     insurance.cast(&insurance.assessors[0], claim.id, true);
@@ -304,8 +320,12 @@ fn only_the_panel_votes_and_only_once_each() {
         .pool()
         .try_vote(&insurance.assessors[0], &claim.id, &false);
     assert_eq!(err.unwrap_err().unwrap(), InsuranceError::AlreadyVoted);
-    assert!(insurance.pool().has_voted(&claim.id, insurance.assessors[0].clone()));
-    assert!(!insurance.pool().has_voted(&claim.id, insurance.assessors[1].clone()));
+    assert!(insurance
+        .pool()
+        .has_voted(&claim.id, &insurance.assessors[0]));
+    assert!(!insurance
+        .pool()
+        .has_voted(&claim.id, &insurance.assessors[1]));
 }
 
 #[test]
@@ -337,7 +357,10 @@ fn settling_an_approved_claim_pays_the_loss() {
     assert_eq!(settled.payout, 8_000 * ONE);
     assert_eq!(settled.loss, 8_000 * ONE);
     assert_eq!(settled.policy_id, policy.id);
-    assert_eq!(insurance.token().balance(&insurance.holder), holder_before + 8_000 * ONE);
+    assert_eq!(
+        insurance.token().balance(&insurance.holder),
+        holder_before + 8_000 * ONE
+    );
     assert_eq!(insurance.pool().reserves(), reserves_before - 8_000 * ONE);
     assert_eq!(insurance.pool().total_payouts(), 8_000 * ONE);
     assert_eq!(
