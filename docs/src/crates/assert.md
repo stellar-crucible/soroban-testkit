@@ -16,6 +16,10 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventMatcher::assert_not_emitted()` | No matching event exists |
 | `EventMatcher::assert_none_match(pred)` | No matching event satisfies a predicate |
 | `EventMatcher::assert_count(n)` | Exactly `n` events were emitted |
+| `EventMatcher::assert_count_within(bound)` | The number of matching events falls within a range (or equals a count) |
+| `EventMatcher::assert_topic_count(topic, bound)` | The number of events carrying `topic` falls within a range (or equals a count) |
+| `assert_event_count_range!(env, 3..=5)` | Macro form of `assert_count_within`, over an `Env` or an `EventLog` |
+| `assert_event_topic_count!(env, "Transfer", 2)` | Macro form of `assert_topic_count`, over an `Env` or an `EventLog` |
 | `EventMatcher::assert_data_matches(pred)` | One event's payload satisfies a predicate |
 | `EventMatcher::from_contract(addr)` | Restricts matches to one contract address |
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
@@ -154,6 +158,72 @@ panicked at 'Expected no events to be emitted, found 1 — unexpected event: top
   <span class="tk-callout__title">A negative assertion reads its matcher's scope</span>
   <p><code>EventMatcher::new(&amp;env).assert_not_emitted()</code> proves the <strong>most recent invocation</strong> published nothing matching. Proving a topic never appeared across a test is the <a href="#asserting-across-several-invocations"><code>EventLog</code></a> case: collect each call, then <code>log.matcher().with_topic("Refund").assert_not_emitted()</code>.</p>
 </div>
+
+## Event count ranges and topic frequencies
+
+An exact `assert_count(n)` breaks the day a batch call starts emitting one extra fee or audit event, even though the behaviour under test did not change. Two macros state what the test actually depends on instead: that the total falls in a range, and that a given topic appeared a given number of times.
+
+```rust
+use soroban_testkit_assert::{assert_event_count_range, assert_event_topic_count};
+
+client.batch_transfer(&from, &recipients); // 2 transfers + auxiliary events
+
+// Total events within a range: any standard range works.
+assert_event_count_range!(env, 3..=5);
+assert_event_count_range!(env, 2..);
+assert_event_count_range!(env, ..=10);
+
+// An exact topic frequency, or a range of them.
+assert_event_topic_count!(env, "transfer", 2);
+assert_event_topic_count!(env, "fee", 0..=1);
+assert_event_topic_count!(env, "refund", 0);
+
+// Restrict either one to the events of one contract.
+assert_event_count_range!(env, from = token_id, 3..);
+assert_event_topic_count!(env, from = token_id, "transfer", 2);
+```
+
+The bound is an exact count (`2`) or any range over integers: `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`. Integer literals need no suffix. A topic counts the same way `with_topic` matches: an event counts once when **any** of its topics is that symbol, and symbols are case sensitive.
+
+The first argument is anything that implements `EventSource`: an `Env` (the most recent invocation) or an [`EventLog`](#asserting-across-several-invocations) (every call it collected), by value or by reference. That makes the macros the natural way to bound a whole multi-step test:
+
+```rust
+let mut log = EventLog::new(&env);
+for batch in batches {
+    client.batch_transfer(&from, &batch);
+    log.collect();
+}
+assert_event_count_range!(log, 6..=12);
+assert_event_topic_count!(log, "transfer", 6);
+```
+
+Both checks also exist as matcher methods, which compose with the existing filters:
+
+```rust
+EventMatcher::new(&env)
+    .from_contract(&token_id)
+    .with_topic("transfer")
+    .assert_count_within(2..=3);
+
+EventMatcher::new(&env).assert_topic_count("fee", 1);
+```
+
+### Failure diagnostics
+
+A failure prints the bound, the observed count, the scope that was read, and a table of every topic signature in scope with how many events carried it, so you see what was emitted instead. Symbol topics are spelled out. Every other topic shows as its type (`<address>`, `<i128>`, …), so transfers to different recipients share one row:
+
+```text
+Event topic count mismatch: expected topic "Transfer" exactly 2 time(s), observed 0 (topic "Transfer" was not observed)
+Scope: most recent invocation
+| Observed topics     | Count |
+|---------------------|-------|
+| transfer, <address> |     2 |
+| fee                 |     1 |
+| audit               |     1 |
+| total               |     4 |
+```
+
+The table lists signatures in the order they first appeared. It honours `from = …` / `from_contract` but deliberately ignores the topic being counted, because the useful question on failure is "what did come out of the call?".
 
 ## Asserting on payload data
 
