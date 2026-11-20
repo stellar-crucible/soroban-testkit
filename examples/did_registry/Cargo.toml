@@ -1,6 +1,6 @@
 [package]
 name = "soroban-testkit-example-did-registry"
-description = "A DID document and credential revocation registry whose suite demonstrates every testkit crate"
+description = "A DID and verifiable credential registry whose suite demonstrates every testkit crate"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

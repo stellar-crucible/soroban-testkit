@@ -1,366 +1,295 @@
-# Worked Example: DID and Verifiable Credential Registry
+# Worked Example: DID Registry
 
-[`examples/did_registry`](https://github.com/stellar-crucible/soroban-testkit/tree/main/examples/did_registry)
-is a permissionless Decentralized Identifier (DID) registry with a credential
-revocation list. It is the example for identity-shaped work: state that is owned
-by an address rather than an operator, authorization that changes hands, and
-documents whose size is part of their cost.
+A registry for decentralized identifiers (DIDs) and verifiable credential status. It is the first example whose subject is identity rather than money: every state change is gated on a controller's authorization, the stored value is a DID Document shaped like the W3C data model, and the question a caller asks most often is a yes/no status check rather than a balance.
 
-Its suite uses all four testkit crates, one per file:
+Everything here is real code in [`examples/did_registry`](https://github.com/stellar-crucible/soroban-testkit/tree/main/examples/did_registry), a workspace member you can run.
 
-| File | Crate | Question it answers |
-|------|-------|---------------------|
-| `tests/fixtures.rs` | `soroban-testkit-fixtures` | What does a valid document look like, and which fixtures are malformed? |
-| `tests/assert.rs` | `soroban-testkit-assert` | What did the contract emit and record as authorized, and which error did it raise? |
-| `tests/budget_storage.rs` | `soroban-testkit-core` | What does an operation cost, in instructions and in ledger bytes? |
-| `tests/proptest.rs` | `soroban-testkit-generators` | Does authorization hold for inputs nobody wrote by hand? |
+<div class="tk-spec">
+  <div class="tk-spec__item"><span class="tk-spec__key">Source</span><span class="tk-spec__value">examples/did_registry</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Crates</span><span class="tk-spec__value">fixtures · assert · core · generators</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Tests</span><span class="tk-spec__value">45 passing</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Run</span><span class="tk-spec__value">cargo test -p soroban-testkit-example-did-registry</span></div>
+</div>
 
-Shared builders live in `tests/common/mod.rs`. Cargo compiles every
-`tests/*.rs` as its own crate, so a helper cannot be imported from a sibling
-test file; the module next to them is the standard way to share one, and all
-four files pull it in with `mod common;`.
+## What this example demonstrates
 
-## Running the example
+1. **A registry where authorization is the whole security model.** Every state change calls `require_auth`; rotation and endpoint updates additionally compare the signer with the stored controller, so a mocked-auth test cannot accidentally pass an unauthorized modification.
+2. **W3C-shaped data under Soroban's serialization constraints.** A DID Document with `id`, `controller`, a verification method and service endpoints, stored as typed contract values instead of JSON-LD.
+3. **A deterministic credential revocation registry.** An issuer records a credential, and later revokes it exactly once; a verifier asks the ledger whether it is revoked, and gets `None` for a credential the registry has never seen.
+4. **All four testkit crates**, one per file, including a property test for the central claim: only an authorized controller can modify a DID document.
+
+## DID Document structure and supported fields
+
+The contract defines four `#[contracttype]` values. Field names follow the W3C DID Core model, lower-cased to Rust conventions.
+
+```rust
+pub struct DidDocument {
+    pub id: String,                            // did:stellar:<identifier>
+    pub controller: Address,                   // the address that controls it
+    pub verification_method: VerificationMethod,
+    pub services: Vec<ServiceEndpoint>,
+    pub version: u32,                          // 1 on registration, +1 per change
+    pub updated_at: u64,                       // ledger timestamp of the last write
+}
+
+pub struct VerificationMethod {
+    pub id: String,                            // <did>#<fragment>
+    pub controller: Address,                   // key material, in Stellar form
+}
+
+pub struct ServiceEndpoint {
+    pub id: String,                            // <did>#<fragment>
+    pub service_type: String,                  // e.g. "LinkedDomains"
+    pub endpoint: String,                      // https:// or ipfs:// URI
+}
+```
+
+Validation is deliberate and bounded, so one document cannot grow without limit:
+
+| Field | Rule |
+| --- | --- |
+| `DidDocument.id` | `did:stellar:` followed by 1–64 bytes of `A–Z a–z 0–9 - . _ :`; at most 128 bytes total |
+| `VerificationMethod.id` | must start with the document DID, then `#` and a fragment; at most 160 bytes |
+| `services` | at most 8 entries |
+| `ServiceEndpoint.id` | 1–200 bytes, unique within the document |
+| `ServiceEndpoint.service_type` | 1–32 bytes |
+| `ServiceEndpoint.endpoint` | 1–200 bytes and an `https://` or `ipfs://` URI |
+
+**A compatibility boundary worth stating plainly:** these are W3C-*shaped* values, not a conforming DID Core implementation. There is no `@context`, no JSON-LD canonicalisation, no `publicKeyMultibase`/JWK, no `alsoKnownAs`, no deactivation and no resolution metadata. The verification method carries a **controller address** instead of encoded key material: a Stellar account address is its ed25519 public key, and a contract address is its contract id, so the host can enforce the method without ever parsing a foreign key format.
+
+## Contract registration and initialization
+
+`initialize` records the registry operator once. It is not consulted by any other entry point; it exists so a deployment that never ran initialization fails loudly (`admin()` panics with `registry not initialized`) instead of silently accepting documents.
+
+```rust
+let env = Env::default();
+env.mock_all_auths();
+let contract = env.register(DidRegistry, ());
+let admin = Address::generate(&env);
+let client = DidRegistryClient::new(&env, &contract);
+
+client.initialize(&admin);
+assert_eq!(client.admin(), admin);
+```
+
+## Registering a DID
+
+```rust
+pub fn register_did(
+    env: Env,
+    controller: Address,
+    did: String,
+    method_id: String,
+    services: Vec<ServiceEndpoint>,
+) -> DidDocument
+```
+
+`controller.require_auth()` runs first. Then the identifier, the verification method id and every endpoint are validated, and only then is the document read to see whether the DID exists. A second registration of the same DID panics with `DID is already registered`; control moves by rotation, which the current controller authorizes, never by re-registration.
+
+```rust
+let controller = Address::generate(&env);
+let did = String::from_str(&env, "did:stellar:alice");
+let method = String::from_str(&env, "did:stellar:alice#key-1");
+
+let document = client.register_did(&controller, &did, &method, &Vec::new(&env));
+assert_eq!(document.version, 1);
+assert_eq!(document.controller, controller);
+assert_eq!(document.verification_method.controller, controller);
+```
+
+The document is stored under one persistent key — `(symbol_short!("did"), did)` — so a registration writes one entry and never rewrites a shared map.
+
+## Resolving or inspecting a DID document
+
+```rust
+let resolved = client.resolve_did(&did);          // Option<DidDocument>
+let owner = client.controller_of(&did);           // Option<Address>
+let version = client.document_version(&did);      // Option<u32>
+let endpoint = client.service_endpoint(&did, &fragment); // Option<ServiceEndpoint>
+```
+
+A missing DID resolves to `None`. That is an ordinary resolution outcome, not an error, which is why the read does not panic and why the property tests can assert "the DID still resolves to exactly what was registered" after a refused write.
+
+## Rotating a controller key
+
+```rust
+pub fn rotate_controller(
+    env: Env,
+    did: String,
+    current_controller: Address,
+    new_controller: Address,
+) -> DidDocument
+```
+
+Rotation is the DID equivalent of key rotation: the verification method id, the services and the identifier stay put, and the address the method points at changes. Three refusals are explicit:
+
+- the DID must be registered (`DID is not registered`);
+- `current_controller` must be the stored controller (`caller is not the DID controller`) — this is what a mocked-auth test can check;
+- the target must differ from the current controller (`controller rotation must change the controller`), so a "rotation" cannot silently be a no-op that bumps the version.
+
+An accepted rotation increments `version` and `updated_at`, rewrites the same storage entry, and publishes a `rotated` event naming both addresses.
+
+```rust
+let rotated = client.rotate_controller(&did, &controller, &new_controller);
+assert_eq!(rotated.controller, new_controller);
+assert_eq!(rotated.verification_method.controller, new_controller);
+assert_eq!(rotated.version, 2);
+```
+
+With mock auths disabled, a caller that is not the controller fails at `require_auth` before any state is read.
+
+## Updating service endpoints
+
+```rust
+pub fn set_service_endpoints(
+    env: Env,
+    did: String,
+    controller: Address,
+    services: Vec<ServiceEndpoint>,
+) -> DidDocument
+```
+
+The call **replaces** the whole list rather than appending. That makes "this endpoint is gone" expressible in one deterministic write, keeps the document one storage entry, and means the test can assert the count equals what the controller submitted. Registration with a non-empty list is how endpoints are first created; this function is how they are updated.
+
+```rust
+let services = Vec::from_array(&env, [ServiceEndpoint {
+    id: String::from_str(&env, "did:stellar:alice#domain"),
+    service_type: String::from_str(&env, "LinkedDomains"),
+    endpoint: String::from_str(&env, "https://alice.example"),
+}]);
+let updated = client.set_service_endpoints(&did, &controller, &services);
+assert_eq!(updated.services.len(), 1);
+assert_eq!(updated.version, 3);
+```
+
+Endpoint data is validated before the document is read, so a bad URI is refused on an unregistered DID too. Duplicate fragment ids, an unsupported scheme (`ftp://`), an empty type or a ninth endpoint all panic with a sentence the test prints unchanged.
+
+## Registering and revoking credentials
+
+```rust
+pub struct Credential {
+    pub id: String,
+    pub issuer: Address,
+    pub subject: String,   // a registered DID
+    pub issued_at: u64,
+    pub revoked: bool,
+    pub revoked_at: u64,   // 0 until revoked
+}
+```
+
+```rust
+client.register_credential(&issuer, &credential_id, &subject_did);
+client.revoke_credential(&issuer, &credential_id);
+```
+
+Registration requires the issuer's authorization, a credential id of 1–128 bytes (`A–Z a–z 0–9 - . _ :`), a structurally valid subject DID, and that the subject DID is already registered. Credential ids are global to the registry, so a duplicate is refused rather than treated as a second credential.
+
+Revocation requires the issuer that registered the credential and happens at most once. A repeated revocation panics with `credential is already revoked` and leaves the original `revoked_at` timestamp untouched — an auditor reading the record sees when it was *first* revoked, not when someone retried.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">What the registry does not verify</span>
+  <p>No credential proof is inspected. The issuer is the address that called <code>register_credential</code>, and revocation is an authoritative on-chain status, not a status list fetched from the issuer. A contract cannot check an off-chain VC signature, so claiming "verifiable credential conformance" here would be false; what the example implements is the <em>status registry</em> half.</p>
+</div>
+
+## Checking credential revocation status
+
+```rust
+let status = client.credential(&credential_id);   // Option<Credential>
+let revoked = client.is_revoked(&credential_id);  // Option<bool>
+```
+
+Three states, deliberately distinct:
+
+| Result | Meaning |
+| --- | --- |
+| `Some(true)` | registered and revoked; `revoked_at` says when |
+| `Some(false)` | registered and currently valid |
+| `None` | the registry has never seen this credential |
+
+A verifier must treat `None` as "unknown", not as "valid" — collapsing the two is the bug the property test `an_unknown_credential_is_reported_as_unknown_not_as_active` exists to prevent.
+
+## Running the example's tests
 
 ```bash
 cargo test -p soroban-testkit-example-did-registry
-cargo test -p soroban-testkit-example-did-registry -- --nocapture   # measurements
-cargo test -p soroban-testkit-example-did-registry --test proptest
 ```
 
-The package has 55 tests: 8 fixture cases, 21 assertion cases, 14 measurement
-cases and 12 property tests (each running 32 generated cases).
+```text
+running 15 tests   # src/test.rs — fixtures
+test result: ok. 15 passed
+running 10 tests   # tests/assert_events.rs — assertions
+test result: ok. 10 passed
+running 11 tests   # tests/budget_and_storage.rs — core
+test result: ok. 11 passed
+running 9 tests    # tests/property.rs — generators
+test result: ok. 9 passed
+```
 
-## What it demonstrates
+45 tests in the package, all inside `cargo test --workspace --locked`. The suite is split by crate, one file each:
 
-- Registering a DID document with a controller's authorization.
-- Duplicate registration is refused and leaves the first document intact.
-- Resolving a document, and resolving one that does not exist.
-- Rotating a verification method's public key.
-- Moving a document to a new controller, after which the old controller can no
-  longer modify anything.
-- Adding, updating and removing service endpoints while preserving the rest of
-  the document.
-- Revoking a credential as its issuer's controller, querying revocation status,
-  and the idempotence of a repeated revocation.
+| File | Crate | What it covers |
+| --- | --- | --- |
+| `src/test.rs` | `soroban-testkit-fixtures` | `TestContextBuilder`, `user(index)`, `add_user`, `reset`, and the contract's validation rules |
+| `tests/assert_events.rs` | `soroban-testkit-assert` | `EventMatcher`, `EventLog`, `assert_auth_matches!`, `AuthMatcher`, and one unmocked authorization refusal |
+| `tests/budget_and_storage.rs` | `soroban-testkit-core` | `budget_guard!`, `BudgetSnapshot`, `BudgetBaseline`, `StorageSnapshot`, `FootprintSnapshot`, `assert_storage_tier!` |
+| `tests/property.rs` | `soroban-testkit-generators` | `proptest!` over account/contract controllers, documents and endpoint lists |
 
-## The supported DID Document subset
+The property test that carries the security claim generates an authorized controller, an attacker, a rotation target, a modification kind (`rotate`, replace endpoints, clear endpoints) and an endpoint count. It asserts the attacker's operation is refused **and** that `resolve_did`, `controller_of` and `document_version` still return the original document; then it performs the change as the controller and asserts the version moved exactly once.
 
-The contract deliberately models a small subset of
-[W3C DID Core](https://www.w3.org/TR/did-core/):
+## Understanding storage and budget measurements
+
+`tests/budget_and_storage.rs` measures two different things.
+
+**Storage footprint** uses `FootprintSnapshot`, which reports XDR-encoded bytes — the unit rent is charged in. Each measurement deploys and initializes the registry, captures the total, registers one document, and subtracts:
 
 ```rust
-#[contracttype]
-pub struct VerificationMethod {
-    pub id: String,              // a fragment such as "#key-1"
-    pub controller: Address,
-    pub public_key: BytesN<32>,  // raw Ed25519 key material
-}
-
-#[contracttype]
-pub struct ServiceEndpoint {
-    pub id: String,
-    pub service_type: String,   // e.g. "LinkedDomains"
-    pub endpoint: String,       // an https:// or ipfs:// URI
-}
-
-#[contracttype]
-pub struct DidDocument {
-    pub id: String,                           // did:soroban:<name>
-    pub controller: Address,
-    pub verification_methods: Vec<VerificationMethod>,
-    pub authentication: Vec<String>,          // ids of methods above
-    pub services: Vec<ServiceEndpoint>,
-}
+let before = FootprintSnapshot::capture(&env, &contract).total_bytes();
+client(&env, &contract).register_did(&controller, &did, &method, &endpoints);
+let after = FootprintSnapshot::capture(&env, &contract).total_bytes();
+let document_bytes = after - before;   // one persistent key plus its value
 ```
 
-What is supported:
+Measured on this workspace, with the document sizes the test documents:
 
-- A single controller per document, as an ed25519 account or a contract address.
-- Ed25519 verification methods, 32 raw bytes, with `controller` matching the
-  document's controller.
-- Authentication relationships that name verification method ids, so rotating a
-  key leaves the relationship pointing at the same method.
-- Service endpoints with a type and an `https://` or `ipfs://` URI.
+| Document | Services | URI bytes each | Bytes added |
+| --- | --- | --- | --- |
+| small | 0 | — | 452 |
+| medium | 2 | 32 | 772 |
+| large | 8 (the cap) | 168 | 2820 |
 
-What is **not** implemented, and is not claimed:
+The test measures each size twice and asserts the second reading equals the first: the numbers are XDR sizes rather than heap readings, so they are reproducible.
 
-- DID resolution as the W3C defines it (the contract's `resolve` is a storage
-  read; there is no universal resolver, no representation negotiation and no
-  DID Resolution metadata).
-- A registered DID method. `did:soroban:` is an illustrative prefix; the
-  registry only validates its shape so identifiers look like `did:method:id`.
-- Key formats other than Ed25519, key encodings such as multibase or JWK, and
-  `alsoKnownAs`, delegation, or multiple controllers.
-- Verifiable credential issuance or verification. A credential exists here only
-  as the identifier an issuer revokes.
+**Budget** uses `BudgetSnapshot::last_invocation` and `BudgetBaseline`, measuring the four state-changing paths on a document with two endpoints:
 
-## Registration and resolution
+```text
+   register_did cpu_insns=108684 mem_bytes=13837
+rotate_controller cpu_insns=112211 mem_bytes=18518
+register_credential cpu_insns=102649 mem_bytes=14825
+ revoke_credential cpu_insns=72421  mem_bytes=12521
+```
 
-Registration is permissionless: an address registers its own identifier and no
-operator pre-approves it. The controller must authorize the call, and the
-document must name that same address.
+Those lines are printed by `a_baseline_survives_the_file_ci_commits` on every run (`-- --nocapture` to see them) and are serialized through `BudgetBaseline::to_json_string`, which is the format a committed baseline file uses. They are measurements of a contract registered natively with `env.register`, so VM instantiation, wasm execution and rent reads are not metered: compare builds of this contract against each other, and deploy a wasm build when a fee quote is what you need.
+
+`budget_guard!` supplies the ceilings used in CI:
 
 ```rust
-pub fn register(env: Env, controller: Address, document: DidDocument) -> DidDocument {
-    controller.require_auth();
-    validate_document(&document);
-    if document.controller != controller {
-        fail("document controller must authorize its own registration");
-    }
-
-    let mut all = documents(&env);
-    if all.contains_key(document.id.clone()) {
-        fail("DID is already registered");
-    }
-    all.set(document.id.clone(), document.clone());
-    write_documents(&env, &all);
-    // ... publish Registered { did, controller }
-    document
-}
+soroban_testkit_core::budget_guard!(
+    &env,
+    "register_did",
+    { cpu_max: 20_000_000, mem_max: 20_000_000 },
+    || client(&env, &contract).register_did(&controller, &did, &method, &Vec::new(&env))
+);
 ```
 
-`validate_document` is the single invariant gate. It requires at least one
-verification method and one authentication relationship, caps a document at
-eight of each, rejects duplicate method or service ids, rejects an
-authentication relationship that names a method the document does not carry,
-and rejects a verification method naming another controller. It runs on
-registration and again after every modification, so no path can leave a
-document in a state registration would have refused.
-
-Resolution is a plain read, and an unknown identifier answers `None` rather
-than failing:
-
-```rust
-pub fn resolve(env: Env, did: String) -> Option<DidDocument> {
-    documents(&env).get(did)
-}
-```
-
-Duplicate registration raises `"DID is already registered"` and leaves the
-first document untouched.
-
-## Controller authorization and key rotation
-
-Soroban's `require_auth` proves that an address signed. It does not prove that
-the address is still the document's controller. After a controller change the
-old address can still produce a valid signature, so every mutating entry point
-does both checks:
-
-```rust
-fn require_controller(document: &DidDocument, signer: &Address, message: &'static str) {
-    if &document.controller != signer {
-        fail(message);
-    }
-}
-```
-
-`rotate_verification_key` replaces the 32-byte key of an existing method. The
-method keeps its id, position and controller, so authentication relationships
-keep pointing at it and now resolve to the new key:
-
-```rust
-client.rotate_verification_key(&controller, &did, &text(&env, "#key-1"), &new_key);
-```
-
-`transfer_controller` moves the document and rewrites the controller of every
-verification method with it, because a method naming the old controller would
-contradict its document. The previous controller authorizes nothing afterwards:
-
-```rust
-let moved = client.transfer_controller(&controller, &did, &successor);
-assert_eq!(moved.controller, successor);
-for index in 0..moved.verification_methods.len() {
-    assert_eq!(moved.verification_methods.get(index).unwrap().controller, successor);
-}
-```
-
-The assertion-based test drives the refusal through the real entry points:
-
-```rust
-assert!(client.try_add_service(&controller, &did, &endpoint).is_err());
-assert!(client.try_rotate_verification_key(&controller, &did, &key_id, &key).is_err());
-client.add_service(&successor, &did, &endpoint);   // the new controller succeeds
-```
-
-The property test `only_the_recorded_controller_can_add_a_service` generates a
-signer and a controller, registers, then asserts the call succeeds exactly when
-the two addresses are equal — and that a refused call left the document
-unchanged. It exercises the contract, not a helper.
-
-## Service endpoint management
-
-`add_service`, `update_service` and `remove_service` each authorize the
-controller, validate the endpoint, and re-validate the document. An endpoint
-looks like this:
-
-```rust
-let endpoint = ServiceEndpoint {
-    id: text(&env, "svc-1"),
-    service_type: text(&env, "LinkedDomains"),
-    endpoint: text(&env, "https://alice.example"),
-};
-client.add_service(&controller, &did, &endpoint);
-```
-
-Adding an id the document already carries, updating or removing one it does not
-carry, a duplicate id, an empty id, a type over 64 bytes, an endpoint over 256
-bytes, and an endpoint that is not `https://` or `ipfs://` are all refused.
-Modifications preserve everything else: the tests compare the verification
-methods, the authentication relationships and the untouched endpoints before and
-after each call.
-
-## Credential revocation
-
-A credential is revoked by the controller of its issuer's registered DID, not by
-whoever asks:
-
-```rust
-pub fn revoke_credential(
-    env: Env,
-    controller: Address,
-    issuer: String,
-    credential_id: String,
-    reason: String,
-) -> RevocationRecord {
-    controller.require_auth();
-    // ... validate the credential id and reason, then:
-    if let Some(existing) = revoked.get(credential_id.clone()) {
-        // first write wins; re-authorize against the recorded issuer
-        if existing.issuer != issuer {
-            fail("credential is already revoked by another issuer");
-        }
-        // ... require_controller(issuer document), then return `existing`
-    }
-    // ... require the issuer's recorded controller, store, publish
-}
-```
-
-Status queries are public reads:
-
-```rust
-client.revocation_status(&credential);   // Option<RevocationRecord>
-client.is_revoked(&credential);          // bool
-client.revocation_count();               // u32
-```
-
-Revocation is final and idempotent. A second call for the same credential
-returns the original record, timestamp and reason, writes nothing and publishes
-no second event. A credential cannot be reassigned to a different issuer after
-it has been revoked.
-
-## How the four crates are used
-
-**Fixtures** (`tests/fixtures.rs`) supplies `TestContextBuilder` and
-`TestContext`: one call produces an environment, an admin and named users, and
-`ctx.env.register(DidRegistry, ())` deploys the contract. The file's tests are
-about the fixtures themselves — that the small, medium and large document
-builders register, that each malformed fixture is refused, and that every
-invalid identifier in the fixture list fails in a fresh environment.
-
-**Assertions** (`tests/assert.rs`) uses `EventMatcher` and `EventLog` to read
-the `registered`, `key_rotated`, `controller_rotated`, `service_added`,
-`service_updated`, `service_removed` and `revoked` events and their data;
-`assert_auth_matches!` and `AuthMatcher` to check who authorized which function
-and that reads require nothing. A matcher reads the invocation that just ran, so
-each test asserts its event before a read replaces the scope, and `EventLog`
-collects several calls when the sequence matters.
-
-**Core** (`tests/budget_storage.rs`) uses `StorageSnapshot` to diff entries,
-`FootprintSnapshot` for XDR byte sizes, `BudgetSnapshot::last_invocation` for
-per-call instructions and memory, `budget_guard!` / `BudgetGuard` for ceilings,
-and `BudgetBaseline` for the JSON round trip CI commits.
-
-**Generators** (`tests/proptest.rs`) uses `account_address`,
-`contract_address` and `timestamp` from
-`soroban-testkit-generators::strategies` to drive the authorization properties
-and to cover both address formats, plus regex-generated identifiers and
-credentials for boundary cases.
-
-## Measurements
-
-`tests/budget_storage.rs` prints its measurements; the assertions check
-*relationships*, not absolute numbers, so an SDK bump does not turn the file
-red. Run it with `-- --nocapture` to see them. The numbers below were recorded
-on 2026-11-19 with Rust 1.100.0 and `soroban-sdk` 28 on this repository:
-
-| Document shape | `documents` XDR bytes | rendered value bytes |
-|----------------|-----------------------|----------------------|
-| 1 verification method | 516 | 570 |
-| 2 verification methods | 1120 | 1433 |
-| 4 verification methods | 2076 | 2882 |
-| 8 verification methods | 3736 | 5503 |
-| 0 service endpoints | 516 | — |
-| 1 service endpoint | 1084 | — |
-| 4 service endpoints | 2072 | — |
-| 8 service endpoints | 3620 | — |
-
-Registration cost for a one-method document and an eight-method,
-eight-endpoint document:
-
-| Case | CPU instructions | Memory bytes |
-|------|------------------|--------------|
-| small document | 68,586 | 8,901 |
-| large document | 411,953 | 32,238 |
-
-One revocation record renders as 243 bytes; two render as 486 bytes, because
-revocations share one map entry instead of opening a key each.
-
-The same one-method registration measured 68,826 CPU instructions and 8,904
-memory bytes in one environment, and an identical run in a second fresh
-environment measured exactly the same. Rewriting a stored document costs more
-than the first write (106,373 instructions for a key rotation against 68,826
-for registration) because it reads the map back and re-validates the document.
-
-Methodology, in short:
-
-- Byte sizes are the XDR length of the ledger entry (`FootprintSnapshot`), the
-  unit rent is charged in. The whole `documents` map is one entry, so a
-  measurement per document would need a key per document; this design trades
-  that for a fixed storage shape.
-- Costs are `BudgetSnapshot::last_invocation`, the top-level invocation that
-  just ran. A natively registered test contract is metered without the VM's own
-  costs, so these numbers are lower than a network would bill and are meaningful
-  relatively, not absolutely.
-- Every test builds its own `Env`, so a measurement cannot inherit another
-  test's storage or metering.
-- No absolute cost is asserted. The repository's committed baseline mechanism is
-  demonstrated with `BudgetBaseline`, and `examples/counter/budget.json` is where
-  the repository actually pins costs on one runner.
+A breach renders one parseable line, pinned by a `#[should_panic(expected = "BUDGET kind=ceiling case=register_did metric=cpu_insns")]` test.
 
 ## Security assumptions and limitations
 
-- **Authorization is the recorded controller.** `require_auth` plus the explicit
-  controller equality check are both required; either alone would let a stale
-  signer or an unauthorized address through.
-- **The registry is permissionless.** Anyone can register any unused
-  `did:soroban:` identifier. Availability of a human-readable name is not
-  guaranteed and is not this contract's job.
-- **One map, whole-document rewrites.** Every modification reads and rewrites
-  the entire `documents` map, so per-call cost grows with the number of
-  registered DIDs. The measurement suite makes that visible; a production
-  registry would key each document separately.
-- **Revocation is first-write-wins and permanent.** There is no un-revoke and no
-  expiry. A credential id is an opaque string; the contract does not check that
-  the credential exists or that the issuer ever issued it.
-- **Revocation authority follows the DID.** If an issuer DID changes
-  controllers, the new controller can revoke and can repeat an existing
-  revocation; the old one cannot.
-- **Bounded inputs.** Identifiers are capped at 96 bytes, verification methods
-  at 8 per document (64-byte ids), service endpoints at 8 (64-byte type,
-  256-byte URI), authentication relationships at 8, and reasons at 128 bytes.
-  There is no arithmetic on user-controlled values beyond length comparisons, so
-  overflow is not reachable.
-- **`#![no_std]`.** The contract uses only `soroban-sdk` types; the test files
-  are ordinary `std` tests.
-
-## Differences from full W3C compliance
-
-This is a worked example of contract and test patterns, not a DID
-implementation. It validates the `did:method:id` shape but implements no
-registered method; it stores a resolution result but not the resolution
-algorithm; it supports one key type and one controller; it omits delegates,
-`alsoKnownAs`, key encodings and representation metadata; and it records
-credential revocation only, with no issuance, proof format or status list
-structure. Treat the data model as an illustration of how identity state can be
-owned and authorized on Soroban, not as a conformance claim.
+- **The controller is the key.** Authorization is `require_auth` on a Stellar address plus an equality check against the stored controller. Soroban's account abstraction is doing the signature checking; this contract never sees a public key.
+- **No credential proof verification.** A credential's existence on chain means the issuer registered it, not that a presentation is valid. Verifiers must still check issuer trust and any off-chain proof.
+- **Credential ids are global.** Two issuers cannot register the same id, and there is no per-issuer namespace or revocation list. A production system would namespace ids or store one status list per issuer.
+- **Rotation does not invalidate history.** The version increments, but earlier credentials remain valid and earlier signatures over the old document are not recorded anywhere. There is no key-history or `deactivated` flag.
+- **No enumeration.** Documents and credentials are keyed entries; there is no index and no way to list them. A client must know the DID or credential id it is asking about.
+- **Persistent entries need rent management.** The contract never calls `extend_ttl`, so a document or credential whose entry expires is archived and resolves as missing until it is restored. An operator that wants documents to outlive the default TTL has to bump entries from a maintenance call.
+- **DID method scope.** `did:stellar:` is a method this example defines for itself; it is not a registered DID method, and no external resolver will know it. The `controller` embedded in a document is not cross-checked against the method-specific identifier, so a DID may name one address and be controlled by another — which is legal in DID Core, and deliberate here.
+- **The operator has no special powers.** `admin` is informational; there is no pause, no forced revocation and no upgrade path in this contract.

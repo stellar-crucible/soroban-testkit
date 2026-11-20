@@ -1,252 +1,265 @@
 #![no_std]
 
-//! A decentralized identifier (DID) registry and verifiable credential
-//! revocation list, written as a worked example for the Soroban testkit.
+//! A decentralized identifier (DID) and verifiable credential registry.
 //!
-//! The registry stores a deliberately small subset of the W3C DID Core data
-//! model: an identifier, one controller, Ed25519 verification methods,
-//! authentication relationships that name those methods, and service
-//! endpoints. It does **not** implement the DID resolution algorithm, DID
-//! methods beyond the illustrative `did:soroban:` prefix, key encodings other
-//! than 32 raw Ed25519 bytes, or verifiable credential issuance and
-//! verification. Credentials are represented only by the identifier an issuer
-//! revokes.
+//! The contract keeps one W3C-shaped DID Document per identifier and a status
+//! record per credential, so a verifier can ask this ledger three questions
+//! without trusting the holder: who controls a DID, where its services point,
+//! and whether a credential has been revoked.
 //!
-//! Every document lives in one persistent map keyed by its identifier, and
-//! every modification is authorized by the document's current controller. A
-//! controller change rewrites the controller of both the document and each of
-//! its verification methods, so an address that was a controller a moment ago
-//! can no longer authorize anything.
+//! # Compatibility boundaries
+//!
+//! The data structures use the field names and shapes of the W3C DID Core and
+//! Verifiable Credentials data models, but this contract is not a conforming
+//! implementation of either specification:
+//!
+//! - There is no JSON-LD processing, `@context` handling or canonicalisation.
+//!   Documents are typed contract values, and a client is responsible for
+//!   rendering them as JSON-LD if it needs one.
+//! - Verification methods carry no `publicKeyMultibase` or JWK. Soroban cannot
+//!   check a secp256k1 or ed25519 key encoded in another format, so the key
+//!   material is *implied* by the controller: a Stellar account address is its
+//!   ed25519 public key, and a contract address is its contract id.
+//! - The registry does not verify credential proofs. A credential's `issuer` is
+//!   the address that called `register_credential`, and revocation is an
+//!   authoritative on-chain status, not a status list the issuer publishes
+//!   elsewhere.
+//! - DID resolution is a direct storage read: no resolution metadata, no
+//!   `alsoKnownAs`, no deactivation. Only the fields below exist.
 
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, Address, BytesN, Env, Map, String, Symbol,
-    Vec,
+    contract, contractevent, contractimpl, contracttype, symbol_short, Address, Env, String,
+    Symbol, Vec,
 };
 
-/// Longest DID identifier the registry accepts, in bytes.
-pub const MAX_DID_LEN: u32 = 96;
+/// The only DID method this registry resolves. A DID is `did:stellar:<id>`.
+pub const DID_METHOD_PREFIX: &str = "did:stellar:";
 
-/// Longest verification method or service endpoint id, in bytes.
-pub const MAX_ID_LEN: u32 = 64;
+/// Longest DID identifier accepted, in bytes.
+const MAX_DID_LEN: u32 = 128;
 
-/// Longest service type, in bytes.
-pub const MAX_SERVICE_TYPE_LEN: u32 = 64;
+/// Longest method-specific identifier accepted, in bytes. A Stellar address is
+/// 56 characters, so the cap leaves room for a sub-identifier without letting
+/// one key reach a ledger entry limit.
+const MAX_METHOD_ID_LEN: u32 = 64;
+
+/// Longest verification method id accepted, in bytes.
+const MAX_VERIFICATION_METHOD_LEN: u32 = 160;
+
+/// A DID document holds at most this many service endpoints. The cap is what
+/// keeps one document's storage predictable.
+const MAX_SERVICES: u32 = 8;
+
+/// Longest service endpoint id, in bytes. A service id is usually the document
+/// DID plus a fragment, so the cap has to leave room for the largest DID the
+/// registry accepts.
+const MAX_SERVICE_ID_LEN: u32 = 200;
+
+/// Longest service endpoint type, in bytes.
+const MAX_SERVICE_TYPE_LEN: u32 = 32;
 
 /// Longest service endpoint URI, in bytes.
-pub const MAX_ENDPOINT_LEN: u32 = 256;
+const MAX_ENDPOINT_LEN: u32 = 200;
 
-/// Longest credential revocation reason, in bytes.
-pub const MAX_REASON_LEN: u32 = 128;
+/// Longest credential identifier accepted, in bytes.
+const MAX_CREDENTIAL_ID_LEN: u32 = 128;
 
-/// Longest credential identifier, in bytes.
-pub const MAX_CREDENTIAL_ID_LEN: u32 = 128;
-
-/// Verification methods one document may carry.
-pub const MAX_VERIFICATION_METHODS: u32 = 8;
-
-/// Authentication relationships one document may carry.
-pub const MAX_AUTHENTICATION: u32 = 8;
-
-/// Service endpoints one document may carry.
-pub const MAX_SERVICES: u32 = 8;
-
-/// The identifier prefix this registry understands.
+/// One verification method of a DID document.
 ///
-/// `soroban` is an illustrative method name, not a registered DID method: the
-/// prefix is validated so identifiers have the W3C `did:method:id` shape, and
-/// nothing else is claimed about it.
-const DID_PREFIX: &[u8] = b"did:soroban:";
-
-/// One Ed25519 verification method.
-///
-/// `id` is a DID URL fragment such as `#key-1`, unique inside its document.
-/// `public_key` is the raw 32-byte Ed25519 key; the registry does not accept
-/// other curves or encoded key material.
+/// W3C DID Core also allows `publicKeyJwk`, `publicKeyMultibase` and a
+/// `blockchainAccountId`. This contract stores the controller address instead,
+/// which is the only key representation the Soroban host can act on.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerificationMethod {
+    /// `<did>#<fragment>`, checked to start with the document's DID.
     pub id: String,
+    /// The account or contract address whose signature changes the document.
     pub controller: Address,
-    pub public_key: BytesN<32>,
 }
 
-/// One service endpoint, the registry's subset of a DID Core `service` entry.
+/// One service endpoint of a DID document.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServiceEndpoint {
+    /// `<did>#<fragment>` or any fragment the controller chooses.
     pub id: String,
+    /// The service type, such as `LinkedDomains` or `Messaging`.
     pub service_type: String,
+    /// An `https://` or `ipfs://` URI.
     pub endpoint: String,
 }
 
-/// The DID document subset the registry stores.
-///
-/// `authentication` holds verification method ids rather than duplicated key
-/// material, so rotating a key leaves the relationship in place and pointing at
-/// the new key. `services` is a vector because the document is always written
-/// as a whole and order is preserved between reads.
+/// One registered DID document.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DidDocument {
     pub id: String,
+    /// The address that controls this document today.
     pub controller: Address,
-    pub verification_methods: Vec<VerificationMethod>,
-    pub authentication: Vec<String>,
+    pub verification_method: VerificationMethod,
     pub services: Vec<ServiceEndpoint>,
+    /// Starts at 1 and increases with every accepted modification.
+    pub version: u32,
+    /// The ledger timestamp the document was last written at.
+    pub updated_at: u64,
 }
 
-/// A credential the issuer's controller has revoked.
-///
-/// The record is first-write-wins: revoking the same credential again returns
-/// the original `revoked_at` and reason instead of rewriting them.
+/// The status record for one credential.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RevocationRecord {
-    pub credential_id: String,
-    pub issuer: String,
+pub struct Credential {
+    pub id: String,
+    /// The address that registered the credential.
+    pub issuer: Address,
+    /// The DID the credential was issued to.
+    pub subject: String,
+    pub issued_at: u64,
+    pub revoked: bool,
+    /// `0` until the credential is revoked.
     pub revoked_at: u64,
-    pub reason: String,
 }
 
-/// A DID was registered.
+/// A DID document was registered for the first time.
 #[contractevent(topics = ["did", "registered"])]
 #[derive(Clone)]
-pub struct Registered {
+pub struct DidRegistered {
     pub did: String,
     pub controller: Address,
 }
 
-/// A verification method's public key was replaced.
-#[contractevent(topics = ["did", "key_rotated"])]
-#[derive(Clone)]
-pub struct VerificationKeyRotated {
-    pub did: String,
-    pub key_id: String,
-}
-
-/// A document moved to a new controller.
-#[contractevent(topics = ["did", "controller_rotated"])]
+/// The controller of a DID document moved to a new address.
+#[contractevent(topics = ["did", "rotated"])]
 #[derive(Clone)]
 pub struct ControllerRotated {
     pub did: String,
-    pub from: Address,
-    pub to: Address,
+    pub previous: Address,
+    pub controller: Address,
 }
 
-/// A service endpoint was added.
-#[contractevent(topics = ["did", "service_added"])]
+/// The whole service endpoint list of a DID document was replaced.
+#[contractevent(topics = ["did", "services"])]
 #[derive(Clone)]
-pub struct ServiceAdded {
+pub struct ServiceEndpointsUpdated {
     pub did: String,
-    pub service_id: String,
+    pub endpoints: u32,
 }
 
-/// A service endpoint was replaced.
-#[contractevent(topics = ["did", "service_updated"])]
+/// A credential was registered by its issuer.
+#[contractevent(topics = ["credential", "registered"])]
 #[derive(Clone)]
-pub struct ServiceUpdated {
-    pub did: String,
-    pub service_id: String,
+pub struct CredentialRegistered {
+    pub credential_id: String,
+    pub issuer: Address,
+    pub subject: String,
 }
 
-/// A service endpoint was removed.
-#[contractevent(topics = ["did", "service_removed"])]
-#[derive(Clone)]
-pub struct ServiceRemoved {
-    pub did: String,
-    pub service_id: String,
-}
-
-/// A credential was revoked, or its already-recorded revocation was asked for
-/// again.
+/// A credential was revoked by its issuer.
 #[contractevent(topics = ["credential", "revoked"])]
 #[derive(Clone)]
 pub struct CredentialRevoked {
     pub credential_id: String,
-    pub issuer: String,
+    pub issuer: Address,
+    pub revoked_at: u64,
 }
 
-fn documents_key(env: &Env) -> Symbol {
-    Symbol::new(env, "documents")
+fn admin_key() -> Symbol {
+    symbol_short!("admin")
 }
 
-fn revocations_key(env: &Env) -> Symbol {
-    Symbol::new(env, "revoked")
+/// `(did, <identifier>)`, so every document is one persistent entry.
+fn did_key(did: &String) -> (Symbol, String) {
+    (symbol_short!("did"), did.clone())
 }
 
-/// Every registered document, in one persistent map.
-fn documents(env: &Env) -> Map<String, DidDocument> {
+/// `(cred, <identifier>)`, so every credential is one persistent entry.
+fn credential_key(credential_id: &String) -> (Symbol, String) {
+    (symbol_short!("cred"), credential_id.clone())
+}
+
+fn read_admin(env: &Env) -> Address {
+    env.storage()
+        .instance()
+        .get(&admin_key())
+        .expect("registry not initialized")
+}
+
+fn read_did(env: &Env, did: &String) -> Option<DidDocument> {
+    env.storage().persistent().get(&did_key(did))
+}
+
+fn write_did(env: &Env, did: &String, document: &DidDocument) {
+    env.storage().persistent().set(&did_key(did), document);
+}
+
+fn read_credential(env: &Env, credential_id: &String) -> Option<Credential> {
     env.storage()
         .persistent()
-        .get(&documents_key(env))
-        .unwrap_or_else(|| Map::new(env))
+        .get(&credential_key(credential_id))
 }
 
-fn write_documents(env: &Env, map: &Map<String, DidDocument>) {
-    env.storage().persistent().set(&documents_key(env), map);
-}
-
-/// Every revoked credential, in one persistent map.
-fn revocations(env: &Env) -> Map<String, RevocationRecord> {
+fn write_credential(env: &Env, credential_id: &String, credential: &Credential) {
     env.storage()
         .persistent()
-        .get(&revocations_key(env))
-        .unwrap_or_else(|| Map::new(env))
+        .set(&credential_key(credential_id), credential);
 }
 
-fn write_revocations(env: &Env, map: &Map<String, RevocationRecord>) {
-    env.storage().persistent().set(&revocations_key(env), map);
-}
-
-fn fail(message: &'static str) -> ! {
-    panic!("{}", message)
-}
-
-fn check_required(condition: bool, message: &'static str) {
-    if !condition {
-        fail(message);
+/// Whether `value` begins with `prefix`, byte for byte.
+fn starts_with(value: &String, prefix: &[u8]) -> bool {
+    let bytes = value.to_bytes();
+    if bytes.len() < prefix.len() as u32 {
+        return false;
     }
-}
-
-/// Every identifier character the registry accepts: lower-case ASCII letters,
-/// digits, `-`, `.` and `_`.
-fn allowed_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_lowercase()
-        || byte.is_ascii_digit()
-        || byte == b'-'
-        || byte == b'.'
-        || byte == b'_'
-}
-
-/// Every id character the registry accepts for a verification method or a
-/// service endpoint, which allows the W3C fragment form `#key-1`.
-fn allowed_id_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || byte == b'-'
-        || byte == b'.'
-        || byte == b'_'
-        || byte == b':'
-        || byte == b'#'
-}
-
-/// Why a DID identifier is rejected, as a sentence a test prints unchanged.
-fn check_did(did: &String) -> Result<(), &'static str> {
-    let bytes = did.to_bytes();
-    let len = bytes.len();
-    if len == 0 || len > MAX_DID_LEN {
-        return Err("DID identifier must be 1 to 96 bytes");
-    }
-    if len <= DID_PREFIX.len() as u32 {
-        return Err("DID identifier must name something after did:soroban:");
-    }
-    for index in 0..DID_PREFIX.len() as u32 {
-        if bytes.get(index).unwrap() != DID_PREFIX[index as usize] {
-            return Err("DID identifier must start with did:soroban:");
+    for (index, expected) in prefix.iter().enumerate() {
+        if bytes.get(index as u32) != Some(*expected) {
+            return false;
         }
     }
-    for index in DID_PREFIX.len() as u32..len {
-        if !allowed_identifier_byte(bytes.get(index).unwrap()) {
-            return Err("DID identifier may only use a-z, 0-9, '-', '.' and '_'");
+    true
+}
+
+/// Whether `value` begins with another host `String`.
+fn starts_with_string(value: &String, prefix: &String) -> bool {
+    let value = value.to_bytes();
+    let prefix = prefix.to_bytes();
+    if value.len() < prefix.len() {
+        return false;
+    }
+    for index in 0..prefix.len() {
+        if value.get(index) != prefix.get(index) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Why an identifier is rejected, as a sentence a failing test prints unchanged.
+fn check_did(did: &String) -> Result<(), &'static str> {
+    let bytes = did.to_bytes();
+    if bytes.len() > MAX_DID_LEN {
+        return Err("DID is longer than 128 bytes");
+    }
+    if !starts_with(did, DID_METHOD_PREFIX.as_bytes()) {
+        return Err("DID must use the did:stellar: method");
+    }
+
+    let prefix_len = DID_METHOD_PREFIX.len() as u32;
+    let method_len = bytes.len() - prefix_len;
+    if method_len == 0 {
+        return Err("DID must name a method-specific identifier");
+    }
+    if method_len > MAX_METHOD_ID_LEN {
+        return Err("DID method-specific identifier is longer than 64 bytes");
+    }
+    for index in prefix_len..bytes.len() {
+        let byte = bytes.get(index).unwrap();
+        let allowed = byte.is_ascii_alphanumeric()
+            || byte == b'-'
+            || byte == b'.'
+            || byte == b'_'
+            || byte == b':';
+        if !allowed {
+            return Err("DID may only contain letters, digits, '-', '.', '_' and ':'");
         }
     }
     Ok(())
@@ -254,164 +267,30 @@ fn check_did(did: &String) -> Result<(), &'static str> {
 
 fn validate_did(did: &String) {
     if let Err(message) = check_did(did) {
-        fail(message);
+        panic!("{}", message);
     }
 }
 
-fn check_id(value: &String, field: &'static str, empty: &'static str) -> Result<(), &'static str> {
-    let bytes = value.to_bytes();
-    let len = bytes.len();
-    if len == 0 || len > MAX_ID_LEN {
-        return Err(empty);
+fn validate_verification_method(did: &String, method_id: &String) {
+    let bytes = method_id.to_bytes();
+    if bytes.len() > MAX_VERIFICATION_METHOD_LEN {
+        panic!("verification method id is longer than 160 bytes");
     }
-    for index in 0..len {
-        if !allowed_id_byte(bytes.get(index).unwrap()) {
-            return Err(field);
-        }
+    if !starts_with_string(method_id, did) {
+        panic!("verification method id must start with the DID");
     }
-    Ok(())
-}
-
-fn validate_method(method: &VerificationMethod, controller: &Address) {
-    if let Err(message) = check_id(
-        &method.id,
-        "verification method id may only use a-z, A-Z, 0-9, '-', '.', '_', ':' and '#'",
-        "verification method id must be 1 to 64 bytes",
-    ) {
-        fail(message);
-    }
-    if &method.controller != controller {
-        fail("verification methods must be controlled by the DID controller");
-    }
-}
-
-fn validate_service(service: &ServiceEndpoint) {
-    if let Err(message) = check_id(
-        &service.id,
-        "service endpoint id may only use a-z, A-Z, 0-9, '-', '.', '_', ':' and '#'",
-        "service endpoint id must be 1 to 64 bytes",
-    ) {
-        fail(message);
-    }
-
-    let service_type = service.service_type.to_bytes();
-    if service_type.is_empty() || service_type.len() > MAX_SERVICE_TYPE_LEN {
-        fail("service type must be 1 to 64 bytes");
-    }
-    for index in 0..service_type.len() {
-        let byte = service_type.get(index).unwrap();
-        let allowed = byte.is_ascii_alphanumeric()
-            || byte == b'-'
-            || byte == b'.'
-            || byte == b'_'
-            || byte == b'/';
-        if !allowed {
-            fail("service type may only use a-z, A-Z, 0-9, '-', '.', '_' and '/'");
-        }
-    }
-
-    let endpoint = service.endpoint.to_bytes();
-    if endpoint.is_empty() || endpoint.len() > MAX_ENDPOINT_LEN {
-        fail("service endpoint must be 1 to 256 bytes");
-    }
-    let https = prefix_matches(&endpoint, b"https://");
-    let ipfs = prefix_matches(&endpoint, b"ipfs://");
-    if !https && !ipfs {
-        fail("service endpoint must be an https:// or ipfs:// URI");
-    }
-}
-
-fn prefix_matches(value: &soroban_sdk::Bytes, prefix: &[u8]) -> bool {
-    if value.len() < prefix.len() as u32 {
-        return false;
-    }
-    for index in 0..prefix.len() as u32 {
-        if value.get(index).unwrap() != prefix[index as usize] {
-            return false;
-        }
-    }
-    true
-}
-
-fn has_method(methods: &Vec<VerificationMethod>, id: &String) -> bool {
-    for index in 0..methods.len() {
-        if &methods.get(index).unwrap().id == id {
-            return true;
-        }
-    }
-    false
-}
-
-fn service_index(services: &Vec<ServiceEndpoint>, id: &String) -> Option<u32> {
-    (0..services.len()).find(|index| &services.get(*index).unwrap().id == id)
-}
-
-/// Checks every invariant of a stored document.
-///
-/// Both registration and every later modification run this after applying the
-/// change, so no path can leave a document that authenticates a key it does not
-/// carry, carries a duplicate id, or exceeds a size cap.
-fn validate_document(document: &DidDocument) {
-    validate_did(&document.id);
-
-    check_required(
-        !document.verification_methods.is_empty(),
-        "DID document needs at least one verification method",
-    );
-    check_required(
-        document.verification_methods.len() <= MAX_VERIFICATION_METHODS,
-        "DID document is limited to 8 verification methods",
-    );
-    check_required(
-        !document.authentication.is_empty(),
-        "DID document needs at least one authentication relationship",
-    );
-    check_required(
-        document.authentication.len() <= MAX_AUTHENTICATION,
-        "DID document is limited to 8 authentication relationships",
-    );
-    check_required(
-        document.services.len() <= MAX_SERVICES,
-        "DID document is limited to 8 service endpoints",
-    );
-
-    for index in 0..document.verification_methods.len() {
-        let method = document.verification_methods.get(index).unwrap();
-        validate_method(&method, &document.controller);
-        for earlier in 0..index {
-            if document.verification_methods.get(earlier).unwrap().id == method.id {
-                fail("DID document has a duplicate verification method id");
-            }
-        }
-    }
-
-    for index in 0..document.authentication.len() {
-        let id = document.authentication.get(index).unwrap();
-        if !has_method(&document.verification_methods, &id) {
-            fail("authentication must reference a verification method of this document");
-        }
-        for earlier in 0..index {
-            if document.authentication.get(earlier).unwrap() == id {
-                fail("authentication lists the same verification method twice");
-            }
-        }
-    }
-
-    for index in 0..document.services.len() {
-        let service = document.services.get(index).unwrap();
-        validate_service(&service);
-        for earlier in 0..index {
-            if document.services.get(earlier).unwrap().id == service.id {
-                fail("DID document has a duplicate service endpoint id");
-            }
-        }
+    if bytes.get(did.to_bytes().len()) != Some(b'#') {
+        panic!("verification method id must be the DID followed by '#' and a fragment");
     }
 }
 
 fn validate_credential_id(credential_id: &String) {
     let bytes = credential_id.to_bytes();
-    if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_ID_LEN {
-        fail("credential id must be 1 to 128 bytes");
+    if bytes.is_empty() {
+        panic!("credential id must not be empty");
+    }
+    if bytes.len() > MAX_CREDENTIAL_ID_LEN {
+        panic!("credential id is longer than 128 bytes");
     }
     for index in 0..bytes.len() {
         let byte = bytes.get(index).unwrap();
@@ -421,28 +300,44 @@ fn validate_credential_id(credential_id: &String) {
             || byte == b'_'
             || byte == b':';
         if !allowed {
-            fail("credential id may only use a-z, A-Z, 0-9, '-', '.', '_' and ':'");
+            panic!("credential id may only contain letters, digits, '-', '.', '_' and ':'");
         }
     }
 }
 
-/// Fails unless `signer` is the document's controller.
-///
-/// `require_auth` proves the controller's address signed; this proves the
-/// signer is still *the* controller. Both are needed: after a controller change
-/// the old address can still produce a valid signature, and this is the check
-/// that turns it away.
-fn require_controller(document: &DidDocument, signer: &Address, message: &'static str) {
-    if &document.controller != signer {
-        fail(message);
+fn validate_services(services: &Vec<ServiceEndpoint>) {
+    if services.len() > MAX_SERVICES {
+        panic!("a DID document may hold at most 8 service endpoints");
     }
-}
 
-/// Loads a document or fails with a stable sentence.
-fn load_document(map: &Map<String, DidDocument>, did: &String) -> DidDocument {
-    match map.get(did.clone()) {
-        Some(document) => document,
-        None => fail("DID is not registered"),
+    for index in 0..services.len() {
+        let service = services.get(index).unwrap();
+
+        let id = service.id.to_bytes();
+        if id.is_empty() || id.len() > MAX_SERVICE_ID_LEN {
+            panic!("service endpoint id must be 1 to 200 bytes");
+        }
+        let kind = service.service_type.to_bytes();
+        if kind.is_empty() || kind.len() > MAX_SERVICE_TYPE_LEN {
+            panic!("service endpoint type must be 1 to 32 bytes");
+        }
+        let endpoint = service.endpoint.to_bytes();
+        if endpoint.is_empty() || endpoint.len() > MAX_ENDPOINT_LEN {
+            panic!("service endpoint URI must be 1 to 200 bytes");
+        }
+        if !(starts_with(&service.endpoint, b"https://")
+            || starts_with(&service.endpoint, b"ipfs://"))
+        {
+            panic!("service endpoint URI must be an https:// or ipfs:// URI");
+        }
+
+        // A duplicate fragment id would make the endpoint list ambiguous, so a
+        // list that repeats one is refused rather than silently de-duplicated.
+        for earlier in 0..index {
+            if services.get(earlier).unwrap().id == service.id {
+                panic!("service endpoint ids must be unique within a document");
+            }
+        }
     }
 }
 
@@ -451,338 +346,244 @@ pub struct DidRegistry;
 
 #[contractimpl]
 impl DidRegistry {
-    /// Registers a DID document for `controller`.
+    /// Records the registry operator. Call it once, before any registration.
     ///
-    /// The document must name the same address as its controller, carry at
-    /// least one verification method and authentication relationship, and every
-    /// verification method must be controlled by that address. Registration is
-    /// permissionless: an address registers its own identifier, and no operator
-    /// pre-approves it.
-    pub fn register(env: Env, controller: Address, document: DidDocument) -> DidDocument {
-        controller.require_auth();
-        validate_document(&document);
-        if document.controller != controller {
-            fail("document controller must authorize its own registration");
+    /// The operator is not consulted by any other function: it exists so the
+    /// registry has an identifiable owner and a deployment that never ran
+    /// `initialize` fails loudly instead of silently accepting documents.
+    pub fn initialize(env: Env, admin: Address) {
+        admin.require_auth();
+        if env.storage().instance().has(&admin_key()) {
+            panic!("registry already initialized");
         }
-
-        let mut all = documents(&env);
-        if all.contains_key(document.id.clone()) {
-            fail("DID is already registered");
-        }
-        all.set(document.id.clone(), document.clone());
-        write_documents(&env, &all);
-
-        Registered {
-            did: document.id.clone(),
-            controller: document.controller.clone(),
-        }
-        .publish(&env);
-
-        document
+        env.storage().instance().set(&admin_key(), &admin);
     }
 
-    /// The document registered for `did`, or `None`.
-    pub fn resolve(env: Env, did: String) -> Option<DidDocument> {
-        documents(&env).get(did)
+    /// The operator recorded by `initialize`.
+    pub fn admin(env: Env) -> Address {
+        read_admin(&env)
     }
 
-    /// Whether `did` has a document.
-    pub fn is_registered(env: Env, did: String) -> bool {
-        documents(&env).contains_key(did)
-    }
-
-    /// How many DIDs are registered.
-    pub fn document_count(env: Env) -> u32 {
-        documents(&env).len()
-    }
-
-    /// The controller recorded for `did`, or `None`.
+    /// Registers a new DID document under `did`, controlled by `controller`.
     ///
-    /// Reading the controller alone is the check a relying party makes before it
-    /// asks for an authorization; it does not need the whole document.
-    pub fn controller_of(env: Env, did: String) -> Option<Address> {
-        documents(&env).get(did).map(|document| document.controller)
-    }
-
-    /// Replaces the public key of an existing verification method.
-    ///
-    /// The method stays at its position and keeps its id and controller, so
-    /// authentication relationships remain valid and now resolve to the new key.
-    pub fn rotate_verification_key(
+    /// `method_id` must be `<did>#<fragment>`; the fragment is the controller's
+    /// choice, and the key material is the controller address itself.
+    pub fn register_did(
         env: Env,
         controller: Address,
         did: String,
-        key_id: String,
-        public_key: BytesN<32>,
+        method_id: String,
+        services: Vec<ServiceEndpoint>,
     ) -> DidDocument {
         controller.require_auth();
+        validate_did(&did);
+        validate_verification_method(&did, &method_id);
+        validate_services(&services);
 
-        let mut all = documents(&env);
-        let mut document = load_document(&all, &did);
-        require_controller(
-            &document,
-            &controller,
-            "only the DID controller can rotate a verification key",
-        );
-
-        let mut methods = document.verification_methods.clone();
-        let mut found = false;
-        for index in 0..methods.len() {
-            let mut method = methods.get(index).unwrap();
-            if method.id == key_id {
-                method.public_key = public_key.clone();
-                methods.set(index, method);
-                found = true;
-            }
-        }
-        if !found {
-            fail("verification method is not part of this DID document");
+        if read_did(&env, &did).is_some() {
+            panic!("DID is already registered");
         }
 
-        document.verification_methods = methods;
-        validate_document(&document);
-        all.set(did.clone(), document.clone());
-        write_documents(&env, &all);
+        let document = DidDocument {
+            id: did.clone(),
+            controller: controller.clone(),
+            verification_method: VerificationMethod {
+                id: method_id,
+                controller: controller.clone(),
+            },
+            services,
+            version: 1,
+            updated_at: env.ledger().timestamp(),
+        };
+        write_did(&env, &did, &document);
 
-        VerificationKeyRotated {
-            did: did.clone(),
-            key_id,
-        }
-        .publish(&env);
+        DidRegistered { did, controller }.publish(&env);
 
         document
     }
 
-    /// Moves a document to `new_controller`.
+    /// The document registered for `did`, if any. A missing DID resolves to
+    /// `None` rather than failing: asking about a DID that was never registered
+    /// is an ordinary outcome of resolution.
+    pub fn resolve_did(env: Env, did: String) -> Option<DidDocument> {
+        read_did(&env, &did)
+    }
+
+    /// The address that controls `did` today.
+    pub fn controller_of(env: Env, did: String) -> Option<Address> {
+        read_did(&env, &did).map(|document| document.controller)
+    }
+
+    /// The current version of `did`'s document; `None` when it is unregistered.
+    pub fn document_version(env: Env, did: String) -> Option<u32> {
+        read_did(&env, &did).map(|document| document.version)
+    }
+
+    /// Moves control of `did` from `current_controller` to `new_controller`.
     ///
-    /// Every verification method moves with it, because a method naming the old
-    /// controller would contradict the document it belongs to. After this call
-    /// the previous controller authorizes nothing: each mutating entry point
-    /// requires the recorded controller, not merely a signature.
-    pub fn transfer_controller(
+    /// The verification method id, the services and the DID itself stay put:
+    /// rotation replaces the key material a method points at, which in this
+    /// representation is the controller address.
+    pub fn rotate_controller(
         env: Env,
-        controller: Address,
         did: String,
+        current_controller: Address,
         new_controller: Address,
     ) -> DidDocument {
-        controller.require_auth();
+        current_controller.require_auth();
 
-        let mut all = documents(&env);
-        let mut document = load_document(&all, &did);
-        require_controller(
-            &document,
-            &controller,
-            "only the DID controller can transfer control of a DID",
-        );
-        if new_controller == controller {
-            fail("new controller must differ from the current controller");
+        let mut document = read_did(&env, &did).expect("DID is not registered");
+        if document.controller != current_controller {
+            panic!("caller is not the DID controller");
+        }
+        if new_controller == current_controller {
+            panic!("controller rotation must change the controller");
         }
 
-        let mut methods = document.verification_methods.clone();
-        for index in 0..methods.len() {
-            let mut method = methods.get(index).unwrap();
-            method.controller = new_controller.clone();
-            methods.set(index, method);
-        }
-        document.verification_methods = methods;
-
-        let previous = document.controller.clone();
         document.controller = new_controller.clone();
-        validate_document(&document);
-        all.set(did.clone(), document.clone());
-        write_documents(&env, &all);
+        document.verification_method.controller = new_controller.clone();
+        document.version += 1;
+        document.updated_at = env.ledger().timestamp();
+        write_did(&env, &did, &document);
 
         ControllerRotated {
             did,
-            from: previous,
-            to: new_controller,
+            previous: current_controller,
+            controller: new_controller,
         }
         .publish(&env);
 
         document
     }
 
-    /// Adds a service endpoint to a document.
-    pub fn add_service(
-        env: Env,
-        controller: Address,
-        did: String,
-        service: ServiceEndpoint,
-    ) -> DidDocument {
-        controller.require_auth();
-
-        let mut all = documents(&env);
-        let mut document = load_document(&all, &did);
-        require_controller(
-            &document,
-            &controller,
-            "only the DID controller can add a service endpoint",
-        );
-        validate_service(&service);
-        if service_index(&document.services, &service.id).is_some() {
-            fail("service endpoint is already registered for this DID");
-        }
-        check_required(
-            document.services.len() < MAX_SERVICES,
-            "DID document is limited to 8 service endpoints",
-        );
-
-        document.services.push_back(service.clone());
-        validate_document(&document);
-        all.set(did.clone(), document.clone());
-        write_documents(&env, &all);
-
-        ServiceAdded {
-            did,
-            service_id: service.id,
-        }
-        .publish(&env);
-
-        document
-    }
-
-    /// Replaces the service endpoint with the same id, leaving every other
-    /// field of the document untouched.
-    pub fn update_service(
-        env: Env,
-        controller: Address,
-        did: String,
-        service: ServiceEndpoint,
-    ) -> DidDocument {
-        controller.require_auth();
-
-        let mut all = documents(&env);
-        let mut document = load_document(&all, &did);
-        require_controller(
-            &document,
-            &controller,
-            "only the DID controller can update a service endpoint",
-        );
-        validate_service(&service);
-
-        let Some(index) = service_index(&document.services, &service.id) else {
-            fail("service endpoint is not registered for this DID");
-        };
-        document.services.set(index, service.clone());
-        validate_document(&document);
-        all.set(did.clone(), document.clone());
-        write_documents(&env, &all);
-
-        ServiceUpdated {
-            did,
-            service_id: service.id,
-        }
-        .publish(&env);
-
-        document
-    }
-
-    /// Removes a service endpoint by id.
+    /// Replaces the whole service endpoint list of `did`.
     ///
-    /// Removing an id the document does not carry is refused rather than
-    /// treated as a no-op, so a client that misspells an id does not believe a
-    /// live endpoint is gone.
-    pub fn remove_service(
+    /// Replacing rather than appending keeps the document one storage write and
+    /// makes "this endpoint is gone" expressible; a caller that wants to add
+    /// one endpoint submits the list that includes it.
+    pub fn set_service_endpoints(
         env: Env,
-        controller: Address,
         did: String,
-        service_id: String,
+        controller: Address,
+        services: Vec<ServiceEndpoint>,
     ) -> DidDocument {
         controller.require_auth();
+        validate_services(&services);
 
-        let mut all = documents(&env);
-        let mut document = load_document(&all, &did);
-        require_controller(
-            &document,
-            &controller,
-            "only the DID controller can remove a service endpoint",
-        );
+        let mut document = read_did(&env, &did).expect("DID is not registered");
+        if document.controller != controller {
+            panic!("caller is not the DID controller");
+        }
 
-        let Some(index) = service_index(&document.services, &service_id) else {
-            fail("service endpoint is not registered for this DID");
-        };
-        document.services.remove(index);
-        validate_document(&document);
-        all.set(did.clone(), document.clone());
+        document.services = services;
+        document.version += 1;
+        document.updated_at = env.ledger().timestamp();
+        write_did(&env, &did, &document);
 
-        write_documents(&env, &all);
-
-        ServiceRemoved { did, service_id }.publish(&env);
+        ServiceEndpointsUpdated {
+            did,
+            endpoints: document.services.len(),
+        }
+        .publish(&env);
 
         document
     }
 
-    /// Revokes the credential `credential_id` on behalf of `issuer`.
-    ///
-    /// `issuer` must be a registered DID and `controller` its recorded
-    /// controller, which is what stops one issuer revoking another issuer's
-    /// credentials. Revocation is final and idempotent: a second call for the
-    /// same credential returns the original record, its original timestamp and
-    /// reason, and publishes nothing.
-    pub fn revoke_credential(
-        env: Env,
-        controller: Address,
-        issuer: String,
-        credential_id: String,
-        reason: String,
-    ) -> RevocationRecord {
-        controller.require_auth();
-        validate_credential_id(&credential_id);
-        if reason.len() > MAX_REASON_LEN {
-            fail("revocation reason is capped at 128 bytes");
-        }
-
-        let mut revoked = revocations(&env);
-        if let Some(existing) = revoked.get(credential_id.clone()) {
-            if existing.issuer != issuer {
-                fail("credential is already revoked by another issuer");
+    /// The service endpoint with `service_id`, if the document holds one.
+    pub fn service_endpoint(env: Env, did: String, service_id: String) -> Option<ServiceEndpoint> {
+        let document = read_did(&env, &did)?;
+        for index in 0..document.services.len() {
+            let service = document.services.get(index).unwrap();
+            if service.id == service_id {
+                return Some(service);
             }
-            let issuer_document = load_document(&documents(&env), &existing.issuer);
-            require_controller(
-                &issuer_document,
-                &controller,
-                "only the issuer DID controller can revoke a credential",
-            );
-            return existing;
+        }
+        None
+    }
+
+    /// Registers `credential_id` as issued by `issuer` to `subject`.
+    ///
+    /// The subject DID must already be registered. The registry records status
+    /// only: it does not inspect or verify the credential's proof.
+    pub fn register_credential(
+        env: Env,
+        issuer: Address,
+        credential_id: String,
+        subject: String,
+    ) -> Credential {
+        issuer.require_auth();
+        validate_credential_id(&credential_id);
+        validate_did(&subject);
+
+        if read_did(&env, &subject).is_none() {
+            panic!("subject DID is not registered");
+        }
+        if read_credential(&env, &credential_id).is_some() {
+            panic!("credential is already registered");
         }
 
-        let issuer_document = load_document(&documents(&env), &issuer);
-        require_controller(
-            &issuer_document,
-            &controller,
-            "only the issuer DID controller can revoke a credential",
-        );
-
-        let record = RevocationRecord {
-            credential_id: credential_id.clone(),
-            issuer,
-            revoked_at: env.ledger().timestamp(),
-            reason,
+        let credential = Credential {
+            id: credential_id.clone(),
+            issuer: issuer.clone(),
+            subject: subject.clone(),
+            issued_at: env.ledger().timestamp(),
+            revoked: false,
+            revoked_at: 0,
         };
-        revoked.set(credential_id, record.clone());
-        write_revocations(&env, &revoked);
+        write_credential(&env, &credential_id, &credential);
+
+        CredentialRegistered {
+            credential_id,
+            issuer,
+            subject,
+        }
+        .publish(&env);
+
+        credential
+    }
+
+    /// Revokes `credential_id`. Only the issuer that registered it may do so,
+    /// and a credential is revoked at most once.
+    pub fn revoke_credential(env: Env, issuer: Address, credential_id: String) -> Credential {
+        issuer.require_auth();
+
+        let mut credential =
+            read_credential(&env, &credential_id).expect("credential is not registered");
+        if credential.issuer != issuer {
+            panic!("caller is not the credential issuer");
+        }
+        if credential.revoked {
+            panic!("credential is already revoked");
+        }
+
+        credential.revoked = true;
+        credential.revoked_at = env.ledger().timestamp();
+        write_credential(&env, &credential_id, &credential);
 
         CredentialRevoked {
-            credential_id: record.credential_id.clone(),
-            issuer: record.issuer.clone(),
+            credential_id,
+            issuer,
+            revoked_at: credential.revoked_at,
         }
         .publish(&env);
 
-        record
+        credential
     }
 
-    /// The revocation record for `credential_id`, or `None` while it is valid.
-    pub fn revocation_status(env: Env, credential_id: String) -> Option<RevocationRecord> {
-        revocations(&env).get(credential_id)
+    /// The status record for `credential_id`, if it is registered.
+    pub fn credential(env: Env, credential_id: String) -> Option<Credential> {
+        read_credential(&env, &credential_id)
     }
 
-    /// Whether `credential_id` has been revoked.
-    pub fn is_revoked(env: Env, credential_id: String) -> bool {
-        revocations(&env).contains_key(credential_id)
-    }
-
-    /// How many credentials have been revoked.
-    pub fn revocation_count(env: Env) -> u32 {
-        revocations(&env).len()
+    /// Whether `credential_id` is revoked.
+    ///
+    /// `None` means the registry has never seen the credential, which a
+    /// verifier must treat differently from `Some(false)`: an unknown
+    /// credential is not a valid one.
+    pub fn is_revoked(env: Env, credential_id: String) -> Option<bool> {
+        read_credential(&env, &credential_id).map(|credential| credential.revoked)
     }
 }
+
+#[cfg(test)]
+mod test;
