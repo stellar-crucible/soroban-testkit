@@ -288,9 +288,7 @@ impl ContractCoverageReport {
 
     /// Display name of the contract (either the given name or strkey).
     pub fn display_name(&self) -> &str {
-        self.contract_name
-            .as_deref()
-            .unwrap_or(&self.contract_id)
+        self.contract_name.as_deref().unwrap_or(&self.contract_id)
     }
 }
 
@@ -383,9 +381,10 @@ impl CoverageReport {
             for func in &report.functions {
                 let (status_str, notes) = match func.status {
                     FunctionCoverageStatus::Invoked => ("✓ Invoked", "-"),
-                    FunctionCoverageStatus::Uninvoked => {
-                        ("✗ **Uninvoked**", "**Dead code or unexercised entry point**")
-                    }
+                    FunctionCoverageStatus::Uninvoked => (
+                        "✗ **Uninvoked**",
+                        "**Dead code or unexercised entry point**",
+                    ),
                     FunctionCoverageStatus::Ignored => {
                         ("⊘ Ignored", "Configured ignore list (setup/initialization)")
                     }
@@ -555,13 +554,16 @@ impl CoverageAuditor {
         functions: impl IntoIterator<Item = impl Into<String>>,
     ) -> &mut Self {
         let key = contract.to_contract_key();
-        let state = self.contracts.entry(key.clone()).or_insert_with(|| ContractState {
-            contract_id: key.clone(),
-            name: None,
-            functions: BTreeSet::new(),
-            ignored: BTreeSet::new(),
-            invocations: BTreeMap::new(),
-        });
+        let state = self
+            .contracts
+            .entry(key.clone())
+            .or_insert_with(|| ContractState {
+                contract_id: key.clone(),
+                name: None,
+                functions: BTreeSet::new(),
+                ignored: BTreeSet::new(),
+                invocations: BTreeMap::new(),
+            });
         for func in functions {
             state.functions.insert(func.into());
         }
@@ -580,13 +582,16 @@ impl CoverageAuditor {
 
         self.aliases.insert(name_str.clone(), key.clone());
 
-        let state = self.contracts.entry(key.clone()).or_insert_with(|| ContractState {
-            contract_id: key.clone(),
-            name: Some(name_str.clone()),
-            functions: BTreeSet::new(),
-            ignored: BTreeSet::new(),
-            invocations: BTreeMap::new(),
-        });
+        let state = self
+            .contracts
+            .entry(key.clone())
+            .or_insert_with(|| ContractState {
+                contract_id: key.clone(),
+                name: Some(name_str.clone()),
+                functions: BTreeSet::new(),
+                ignored: BTreeSet::new(),
+                invocations: BTreeMap::new(),
+            });
         state.name = Some(name_str);
         for func in functions {
             state.functions.insert(func.into());
@@ -634,11 +639,7 @@ impl CoverageAuditor {
         contract: impl AsContractKey,
         client_def: &ClientDefinition,
     ) -> &mut Self {
-        self.register_contract_with_name(
-            &client_def.contract_name,
-            contract,
-            &client_def.functions,
-        )
+        self.register_contract_with_name(&client_def.contract_name, contract, &client_def.functions)
     }
 
     /// Extract all public functions from contract WASM bytecode.
@@ -753,13 +754,10 @@ impl CoverageAuditor {
     }
 
     /// Bind a human-readable alias to an address/contract key.
-    pub fn bind_address(
-        &mut self,
-        name_or_key: &str,
-        contract: impl AsContractKey,
-    ) -> &mut Self {
+    pub fn bind_address(&mut self, name_or_key: &str, contract: impl AsContractKey) -> &mut Self {
         let target_key = contract.to_contract_key();
-        self.aliases.insert(name_or_key.to_string(), target_key.clone());
+        self.aliases
+            .insert(name_or_key.to_string(), target_key.clone());
 
         if let Some(mut state) = self.contracts.remove(name_or_key) {
             state.contract_id = target_key.clone();
@@ -778,13 +776,16 @@ impl CoverageAuditor {
         function: impl Into<String>,
     ) -> &mut Self {
         let key = self.resolve_key(&contract.to_contract_key());
-        let state = self.contracts.entry(key.clone()).or_insert_with(|| ContractState {
-            contract_id: key,
-            name: None,
-            functions: BTreeSet::new(),
-            ignored: BTreeSet::new(),
-            invocations: BTreeMap::new(),
-        });
+        let state = self
+            .contracts
+            .entry(key.clone())
+            .or_insert_with(|| ContractState {
+                contract_id: key,
+                name: None,
+                functions: BTreeSet::new(),
+                ignored: BTreeSet::new(),
+                invocations: BTreeMap::new(),
+            });
         state.ignored.insert(function.into());
         self
     }
@@ -925,8 +926,7 @@ impl CoverageAuditor {
 
             let mut records = Vec::new();
             for name in &function_names {
-                let is_ignored =
-                    state.ignored.contains(name) || self.global_ignored.contains(name);
+                let is_ignored = state.ignored.contains(name) || self.global_ignored.contains(name);
                 let invocations = state.invocations.get(name).copied().unwrap_or(0);
                 let status = if is_ignored {
                     FunctionCoverageStatus::Ignored
@@ -1009,7 +1009,10 @@ impl CoverageAuditor {
     }
 
     fn resolve_key(&self, key: &str) -> String {
-        self.aliases.get(key).cloned().unwrap_or_else(|| key.to_string())
+        self.aliases
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.to_string())
     }
 
     fn record_invocation_internal(&mut self, key: &str, function: &str, count: usize) {
@@ -1028,13 +1031,16 @@ impl CoverageAuditor {
         }
 
         // If unregistered contract was invoked, auto-register as observed
-        let state = self.contracts.entry(resolved.clone()).or_insert_with(|| ContractState {
-            contract_id: resolved,
-            name: None,
-            functions: BTreeSet::new(),
-            ignored: BTreeSet::new(),
-            invocations: BTreeMap::new(),
-        });
+        let state = self
+            .contracts
+            .entry(resolved.clone())
+            .or_insert_with(|| ContractState {
+                contract_id: resolved,
+                name: None,
+                functions: BTreeSet::new(),
+                ignored: BTreeSet::new(),
+                invocations: BTreeMap::new(),
+            });
         *state.invocations.entry(function.to_string()).or_insert(0) += count;
     }
 }
@@ -1066,9 +1072,7 @@ fn read_u32_leb128(cursor: &mut &[u8]) -> Result<u32, CoverageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::xdr::{
-        ScSpecFunctionV0, ScSymbol, StringM, VecM, WriteXdr,
-    };
+    use soroban_sdk::xdr::{ScSpecFunctionV0, ScSymbol, StringM, VecM, WriteXdr};
     use soroban_sdk::{contract, contractimpl};
 
     fn encode_u32_leb128(mut val: u32) -> Vec<u8> {
@@ -1195,7 +1199,10 @@ mod tests {
     fn test_client_definition_builder_and_macro() {
         let def1 = client_definition!("TokenContract", [initialize, transfer, balance]);
         assert_eq!(def1.contract_name, "TokenContract");
-        assert_eq!(def1.public_functions(), &["initialize", "transfer", "balance"]);
+        assert_eq!(
+            def1.public_functions(),
+            &["initialize", "transfer", "balance"]
+        );
 
         let def2 = ClientDefinition::new("Vault")
             .function("deposit")
@@ -1246,7 +1253,10 @@ mod tests {
             contract_rep.uninvoked_functions(),
             vec!["admin_recover", "emergency_pause"]
         );
-        assert_eq!(contract_rep.invoked_functions(), vec!["deposit", "withdraw"]);
+        assert_eq!(
+            contract_rep.invoked_functions(),
+            vec!["deposit", "withdraw"]
+        );
         assert_eq!(contract_rep.ignored_functions(), vec!["initialize"]);
 
         // Now exercise the remaining functions
@@ -1306,8 +1316,12 @@ mod tests {
         assert!(md.contains("# Contract Function Coverage Report"));
         assert!(md.contains("`Vault` (`CAAA111`)"));
         assert!(md.contains("| `deposit` | ✓ Invoked | 5 | - |"));
-        assert!(md.contains("| `withdraw` | ✗ **Uninvoked** | 0 | **Dead code or unexercised entry point** |"));
-        assert!(md.contains("| `drain` | ⊘ Ignored | 0 | Configured ignore list (setup/initialization) |"));
+        assert!(md.contains(
+            "| `withdraw` | ✗ **Uninvoked** | 0 | **Dead code or unexercised entry point** |"
+        ));
+        assert!(md.contains(
+            "| `drain` | ⊘ Ignored | 0 | Configured ignore list (setup/initialization) |"
+        ));
         assert!(md.contains("> [!WARNING]"));
 
         let text = report.to_text();
