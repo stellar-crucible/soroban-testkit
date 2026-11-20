@@ -152,6 +152,64 @@ readable diff. A file whose `version` is newer than the loader is refused with
   <p><code>record()</code> and <code>save()</code> write the file; what refreshes it is a policy choice. Committing the file and failing on drift keeps the numbers honest, so most projects regenerate it in one deliberate commit rather than on every test run — <a href="../guides/budget-testing.html">Budget-Aware Testing</a> walks through both. The pattern is applied in this repository: <code>examples/counter/budget.json</code> holds the counter's two hot paths, two <code>#[ignore]</code>d tests record and check it, and the <code>Budget baseline</code> workflow runs the check on one pinned runner and reports the numbers on the pull request.</p>
 </div>
 
+## Storage leaks
+
+A contract that opens an order, escrow or position allocates keys for it and is
+supposed to remove them when the entity closes. A forgotten `remove` does not
+fail the call that forgot it — it quietly keeps paying rent. `StorageLeakDetector`
+captures the contract's storage before a lifecycle and reports the persistent and
+temporary keys that are still live at teardown.
+
+```rust
+use soroban_testkit_core::leak_detector::StorageLeakDetector;
+
+let mut detector = StorageLeakDetector::start(&ctx.env, &contract_id);
+// ... open escrow, fund, cancel ...
+detector.checkpoint("cancel");
+
+let leaks = detector.detect_orphaned_keys();
+assert!(leaks.is_empty(), "Storage leak detected: {leaks:?}");
+```
+
+`detect_orphaned_keys()` returns a `Vec<StorageLeak>`, each carrying the key,
+the storage tier, an estimated byte size (the rendered key and value) and the
+label of the first checkpoint that saw the key. A leak renders as one readable
+diagnostic:
+
+```text
+storage leak: temporary:quote (12 bytes, allocated at open escrow)
+```
+
+`assert_no_orphaned_keys()` fails with every leak on its own line, and
+`report(&leaks)` returns the same text for a custom assertion message.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Only new, non-instance keys are leaks</span>
+  <p>Keys present in the baseline snapshot are never reported: the detector judges what the lifecycle allocated, not what the contract already owned. Instance storage is the contract's singleton configuration and is always exempt. A key whose value was rewritten is not a leak either — the comparison is key identity.</p>
+</div>
+
+Permanent records a contract is supposed to keep — a config record, a factory
+registry, a fee cache — are exempted by name or wildcard:
+
+```rust
+use soroban_testkit_core::StorageLeakDetector;
+
+let detector = StorageLeakDetector::start(&env, &contract)
+    .ignoring_key("config")          // exact key, any tier
+    .ignoring_key("persistent:fees") // tier-qualified exact key
+    .ignoring_pattern("order:*")     // a family of keys
+    .ignoring_pattern("*:cache");    // a suffix on the qualified name
+
+assert!(detector.detect_orphaned_keys().is_empty());
+```
+
+`checkpoint(label)` records the current storage as a phase of the lifecycle. The
+first checkpoint containing a leaked key becomes its allocation site, so a
+failure points at the step that should have released it instead of only naming
+the key. Without a checkpoint a leak is still detected; its site reads as
+unobserved. `detect_orphaned_keys_in(&snapshot)` runs the same analysis against
+a snapshot the test captured itself.
+
 ## Error decoding
 
 Soroban reports failures as a packed integer. `DecodedError::from_error` splits it into the category the host raised it in and the code's known meaning:
