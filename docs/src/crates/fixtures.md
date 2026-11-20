@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -106,6 +106,78 @@ Both helpers saturate instead of wrapping: advancing past `u64::MAX` or
 `u32::MAX` returns the maximum rather than panicking or rolling the clock back
 to a date in 1970.
 
+## Scripting multi-block scenarios
+
+Time-dependent contract logic — vesting, streams, bridge relays — fails under
+ledger movement a single call cannot reproduce: a missed block, a stalled
+network, a rollback that makes the clock run backwards. `ScenarioBuilder`
+scripts that movement as a chain over one `TestContext`:
+
+```rust
+use soroban_testkit_fixtures::ScenarioBuilder;
+
+let mut scenario = ScenarioBuilder::new(&ctx);
+scenario
+    .step("Open stream", |ctx| stream_client.open(&1_000))
+    .advance_blocks(100)
+    .step("Claim partial", |ctx| stream_client.claim())
+    .halt(3_600)
+    .advance_blocks(500)
+    .step("Final claim", |ctx| stream_client.claim());
+
+scenario.assert_all_passed();
+```
+
+| Method | Effect |
+|--------|--------|
+| `step(label, f)` | Runs a contract invocation and records it |
+| `check(label, f)` | Runs a `bool` state-consistency check |
+| `probe(label, f)` | Reads a contract clock/state and rejects a backwards move |
+| `advance_blocks(n)` | Closes `n` ledgers, leaving the clock alone |
+| `advance_time(s)` | Moves the clock `s` seconds, leaving the sequence alone |
+| `advance(blocks, seconds)` | Moves both |
+| `halt(s)` | A network halt: time passes, no block closes |
+| `rollback_blocks(n)` | A reorg that rewinds the sequence |
+| `set_clock(seq, t)` | Jump to an explicit ledger position |
+
+`step` and `check` run through `catch_unwind`, so a contract panic does not stop
+the script: later steps still run, and `assert_all_passed` fails with the whole
+timeline, marking the step that panicked. `format_timeline()` returns the same
+text when a test wants to assert on it:
+
+```text
+SCENARIO FAILED (1 failure(s))
+#00 seq=0 t=1700000000 start: seq=0 t=1700000000 (start)
+#01 seq=0 t=1700000000 Open stream: seq 0->0, t 1700000000->1700000000 (passed)
+#02 seq=100 t=1700000000 advance 100 block(s): seq 0->100 (passed)
+#03 seq=100 t=1700000100 Claim partial: ... (FAILED: attempt to subtract with overflow)
+  -> scenario step #3 "Claim partial": attempt to subtract with overflow
+```
+
+`probe` is the automated clock-inversion check. A contract reports the time it
+believes it is at, and a reading below the previous one is recorded as a
+failure naming both values and the subtraction that would underflow — which is
+what catches a streaming contract that computes `now - last_claim` after a
+reorg.
+
+```rust
+scenario
+    .step("Open", |_| stream.open(&1_700_000_000, &10))
+    .advance_time(100)
+    .probe("before reorg", |_| stream.clock())
+    .set_clock(0, 1_699_999_900)
+    .probe("after reorg", |_| stream.clock());
+// one failure: clock inversion in "after reorg": 1699999900 after …
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Bursts and halts are the same clock, different chain</span>
+  <p>Block production is not uniform. A scenario can close 1 then 100 then 500 blocks, or stop closing them while seconds still pass. A contract that measures progress in <code>timestamp()</code> reaches the same state either way; one that confuses heights with time does not — and the timeline shows which steps saw which heights.</p>
+</div>
+
+`blocks_elapsed()` and `seconds_elapsed()` saturate at zero, so a rollback below
+the starting height reports zero rather than wrapping into a huge number.
+
 ## Resetting the chain underneath a test
 
 Some scenarios are the same actors on a clean chain twice: a phase-one
@@ -149,6 +221,29 @@ assert_eq!(client.balance(&vault, &ctx.users[0]), 0);
 restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
+
+## Persistent storage eviction
+
+`StateEvictionSimulator` creates a short-lived persistent entry, advances its
+ledger past the TTL, and exposes the archived read error before exercising
+restoration. It uses protocol 22 to observe the legacy `Storage` failure, then
+protocol 23 automatic restoration to model an invocation carrying the entry
+in its restore list. The restored value is read back and its TTL extended.
+
+```rust
+let env = Env::default();
+let contract = env.register(MyContract, ());
+let mut state = StateEvictionSimulator::new(&env, &contract, key.into_val(&env), value.into_val(&env));
+state.store();
+state.advance_past_ttl();
+assert!(state.try_read().unwrap_err().is_type(ScErrorType::Storage));
+state.restore(20_000);
+assert_eq!(state.read(), Some(state.original()));
+assert!(state.ttl() >= 20_000);
+```
+
+The simulator keeps archived state in the host so restoration must recover the
+original data; it does not substitute a new value during the test.
 
 ## Testing schema migrations
 

@@ -4,7 +4,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth · balance · storage · budget_diff</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -16,11 +16,18 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventMatcher::assert_not_emitted()` | No matching event exists |
 | `EventMatcher::assert_none_match(pred)` | No matching event satisfies a predicate |
 | `EventMatcher::assert_count(n)` | Exactly `n` events were emitted |
+| `EventMatcher::assert_count_within(bound)` | The number of matching events falls within a range (or equals a count) |
+| `EventMatcher::assert_topic_count(topic, bound)` | The number of events carrying `topic` falls within a range (or equals a count) |
+| `assert_event_count_range!(env, 3..=5)` | Macro form of `assert_count_within`, over an `Env` or an `EventLog` |
+| `assert_event_topic_count!(env, "Transfer", 2)` | Macro form of `assert_topic_count`, over an `Env` or an `EventLog` |
 | `EventMatcher::assert_data_matches(pred)` | One event's payload satisfies a predicate |
 | `EventMatcher::from_contract(addr)` | Restricts matches to one contract address |
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
+| `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
+| `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
+| `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
@@ -151,6 +158,72 @@ panicked at 'Expected no events to be emitted, found 1 — unexpected event: top
   <p><code>EventMatcher::new(&amp;env).assert_not_emitted()</code> proves the <strong>most recent invocation</strong> published nothing matching. Proving a topic never appeared across a test is the <a href="#asserting-across-several-invocations"><code>EventLog</code></a> case: collect each call, then <code>log.matcher().with_topic("Refund").assert_not_emitted()</code>.</p>
 </div>
 
+## Event count ranges and topic frequencies
+
+An exact `assert_count(n)` breaks the day a batch call starts emitting one extra fee or audit event, even though the behaviour under test did not change. Two macros state what the test actually depends on instead: that the total falls in a range, and that a given topic appeared a given number of times.
+
+```rust
+use soroban_testkit_assert::{assert_event_count_range, assert_event_topic_count};
+
+client.batch_transfer(&from, &recipients); // 2 transfers + auxiliary events
+
+// Total events within a range: any standard range works.
+assert_event_count_range!(env, 3..=5);
+assert_event_count_range!(env, 2..);
+assert_event_count_range!(env, ..=10);
+
+// An exact topic frequency, or a range of them.
+assert_event_topic_count!(env, "transfer", 2);
+assert_event_topic_count!(env, "fee", 0..=1);
+assert_event_topic_count!(env, "refund", 0);
+
+// Restrict either one to the events of one contract.
+assert_event_count_range!(env, from = token_id, 3..);
+assert_event_topic_count!(env, from = token_id, "transfer", 2);
+```
+
+The bound is an exact count (`2`) or any range over integers: `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`. Integer literals need no suffix. A topic counts the same way `with_topic` matches: an event counts once when **any** of its topics is that symbol, and symbols are case sensitive.
+
+The first argument is anything that implements `EventSource`: an `Env` (the most recent invocation) or an [`EventLog`](#asserting-across-several-invocations) (every call it collected), by value or by reference. That makes the macros the natural way to bound a whole multi-step test:
+
+```rust
+let mut log = EventLog::new(&env);
+for batch in batches {
+    client.batch_transfer(&from, &batch);
+    log.collect();
+}
+assert_event_count_range!(log, 6..=12);
+assert_event_topic_count!(log, "transfer", 6);
+```
+
+Both checks also exist as matcher methods, which compose with the existing filters:
+
+```rust
+EventMatcher::new(&env)
+    .from_contract(&token_id)
+    .with_topic("transfer")
+    .assert_count_within(2..=3);
+
+EventMatcher::new(&env).assert_topic_count("fee", 1);
+```
+
+### Failure diagnostics
+
+A failure prints the bound, the observed count, the scope that was read, and a table of every topic signature in scope with how many events carried it, so you see what was emitted instead. Symbol topics are spelled out. Every other topic shows as its type (`<address>`, `<i128>`, …), so transfers to different recipients share one row:
+
+```text
+Event topic count mismatch: expected topic "Transfer" exactly 2 time(s), observed 0 (topic "Transfer" was not observed)
+Scope: most recent invocation
+| Observed topics     | Count |
+|---------------------|-------|
+| transfer, <address> |     2 |
+| fee                 |     1 |
+| audit               |     1 |
+| total               |     4 |
+```
+
+The table lists signatures in the order they first appeared. It honours `from = …` / `from_contract` but deliberately ignores the topic being counted, because the useful question on failure is "what did come out of the call?".
+
 ## Asserting on payload data
 
 Topics say which event fired; the data says what happened. `assert_data_matches` hands the predicate one `EventData` per event in scope, after the contract and topic filters:
@@ -214,6 +287,55 @@ panicked at 'Expected an event whose data matches, checked 1 event(s) with data 
 ```
 
 Scalars print their values, maps and vectors print their entries, an address prints as its strkey (abbreviated above, printed whole in a real message), and a shape too rare to spell out falls back to its XDR debug form, so the message never hides the value it rejected. When no event is in scope the message says so instead of claiming the data was wrong.
+
+### Checking an event payload schema
+
+`assert_event_data_schema!` validates the complete map payload of every event
+matching the topic. It reports missing or mistyped fields individually and
+rejects extra keys, which helps catch accidental indexer schema changes:
+
+```rust
+use soroban_testkit_assert::assert_event_data_schema;
+use soroban_sdk::Address;
+
+client.transfer(&from, &to, &100);
+
+assert_event_data_schema!(&env, "transfer", {
+    amount: i128,
+    from: Address,
+    to: Address,
+});
+```
+
+Types are checked by Soroban value deserialization, including `i128`, `u64`,
+`Address`, `Symbol`, and `bool`. A failure names each offending field and shows
+the expected type and observed type/value. The assertion requires at least one
+event matching the topic.
+
+## Successful contract calls
+
+Use the generated client's `try_*` call with these macros instead of a bare
+`unwrap()`. A host failure is decoded into its category, code, and known name
+(for example `storage/3: MissingValue`); contract-specific errors retain their
+code and are identified as unregistered unless decoded separately:
+
+```rust
+use soroban_testkit_assert::{
+    assert_call_success_with_value, assert_no_contract_error,
+};
+
+// Assert success and keep the returned value for further checks.
+let balance = assert_no_contract_error!(client.try_balance(&account));
+assert!(balance > 0);
+
+// Assert that a successful invocation returned exactly the expected value.
+assert_call_success_with_value!(client.try_transfer(&from, &to, &100), ());
+```
+
+Both macros evaluate the call once and distinguish a returned contract/host
+error from an invocation failure. `assert_no_contract_error!` returns the
+successful value; `assert_call_success_with_value!` compares it with the
+expected value.
 
 ## Authorization matching
 
