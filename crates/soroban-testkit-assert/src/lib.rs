@@ -3,6 +3,7 @@ pub mod balance;
 pub mod budget_diff;
 pub mod events;
 pub mod invocation;
+pub mod sequence;
 pub mod storage;
 
 pub use auth::{
@@ -17,4 +18,5 @@ pub use budget_diff::{
     measure_invocation_budget, BudgetDiffMatcher, BudgetDiffReport, BudgetDiffViolation,
 };
 pub use events::{EventCountBound, EventSource};
+pub use sequence::{ExpectedEvent, SequenceMode, EXACT_SEQUENCE, ORDERED_SUBSEQUENCE};
 pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};

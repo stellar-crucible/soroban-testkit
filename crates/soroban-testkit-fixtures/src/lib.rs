@@ -2,12 +2,18 @@ pub mod archival;
 pub mod builder;
 pub mod congestion;
 pub mod consensus;
+pub mod crypto;
 pub mod event_indexer;
 pub mod eviction;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 pub mod protocol_registry;
+
+pub use crypto::{
+    construct_auth_message, malleate_signature, malleate_signature_bytes, mutate_message,
+    SignedAuth, SignerKeypair,
+};
 
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
@@ -233,6 +239,47 @@ impl TestContext {
         self.users = (0..user_count)
             .map(|_| Address::generate(&self.env))
             .collect();
+    }
+
+    /// Generates a cryptographically signed authorization entry for testing invocation verification.
+    ///
+    /// Constructs a valid [`soroban_sdk::testutils::AuthorizedInvocation`] for `contract::function(args)`
+    /// and signs the authorization digest using `signer`.
+    pub fn generate_signed_auth(
+        &self,
+        signer: &crypto::SignerKeypair,
+        contract: &Address,
+        function: soroban_sdk::Symbol,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+    ) -> crypto::SignedAuth {
+        self.generate_signed_auth_with_nonce(signer, contract, function, args, 0)
+    }
+
+    /// Generates a signed authorization entry with an explicit nonce for replay testing.
+    pub fn generate_signed_auth_with_nonce(
+        &self,
+        signer: &crypto::SignerKeypair,
+        contract: &Address,
+        function: soroban_sdk::Symbol,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+        nonce: u64,
+    ) -> crypto::SignedAuth {
+        use soroban_sdk::testutils::{AuthorizedFunction, AuthorizedInvocation};
+
+        let message = crypto::construct_auth_message(&self.env, contract, &function, &args, nonce);
+        let signature = signer.sign(&message);
+        let invocation = AuthorizedInvocation {
+            function: AuthorizedFunction::Contract((contract.clone(), function, args)),
+            sub_invocations: Vec::new(),
+        };
+
+        crypto::SignedAuth {
+            invocation,
+            signer: signer.address().clone(),
+            signature,
+            message,
+            nonce,
+        }
     }
 }
 
