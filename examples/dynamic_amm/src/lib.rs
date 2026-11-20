@@ -216,7 +216,9 @@ impl DynamicAmmContract {
         };
 
         env.storage().instance().set(&DataKey::Config, &config);
-        env.storage().instance().set(&DataKey::Reserves, &(0i128, 0i128));
+        env.storage()
+            .instance()
+            .set(&DataKey::Reserves, &(0i128, 0i128));
         env.storage().instance().set(&DataKey::TotalShares, &0i128);
         env.storage().instance().set(&DataKey::Twap, &twap);
 
