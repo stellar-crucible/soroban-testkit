@@ -9,7 +9,14 @@ members = [
     "examples/domain_service",
     "examples/token",
     "examples/bounty_escrow",
-    "examples/did_registry",
+    "examples/multisig_vault",
+    "examples/flash_mint",
+    "examples/crowdfunding",
+    "examples/liquid_staking",
+    "examples/cdp",
+    "examples/dynamic_amm",
+    "examples/orderbook",
+    "examples/nft",
 ]
 
 [workspace.package]

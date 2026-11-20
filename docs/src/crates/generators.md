@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl · storage_tier · cost_model</span></div>
 </div>
 
 ## Available strategies
@@ -19,6 +19,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
+| `fuzzed_invocation_args(env, typed, max_rogue)` | `Vec<Val>` | valid arguments mixed with integers, booleans, symbols, errors, and address objects |
 | `host_error_code_coverage()` | `HostError` | all 10 categories × all 10 codes |
 | `host_error()` | `HostError` | alias for `host_error_code_coverage()` |
 | `host_error_type()` | `ScErrorType` | every host category |
@@ -29,10 +30,26 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `byte_array_32()` | `[u8; 32]` | any 32 bytes — hashes, keys, seeds |
 | `byte_array_64()` | `[u8; 64]` | any 64 bytes — ed25519 signatures |
 | `byte_array::<N>()` | `[u8; N]` | any `N` bytes |
+| `ed25519_signature_pair()` | `Ed25519SignaturePair` | valid ed25519 public key, message digest, and signature |
+| `secp256k1_signature_pair()` | `Secp256k1SignaturePair` | valid secp256k1 public key, hash, signature, and recovery id |
+| `malleated_signature(sig)` | `[u8; 64]` | corrupted signature payload guaranteed to differ |
+| `contract_executable_wasm_hash()` | `[u8; 32]` | any 32-byte WASM bytecode hash |
+| `contract_executable()` | `ContractExecutable` | `Wasm`, `StellarAsset`, or `ExternalRef` variants |
+| `deployer_salt()` | `[u8; 32]` | 32-byte salt for deterministic deployment |
+| `storage_tier()` | `StorageTier` | `Instance`, `Persistent`, or `Temporary` (shrinks to `Temporary`) |
+| `storage_tier_with_ttl(current, min, max)` | `StorageTierWithTtl` | a tier paired with durability and live/expired TTL properties |
+| `mixed_tier_allocations(keys, size)` | `MixedTierAllocation<K>` | mixed key allocations across instance, persistent, and temporary tiers |
+| `mixed_tier_allocations_with_ttl(keys, current, min, max, size)` | `MixedTierTtlAllocation<K>` | mixed key allocations paired with TTLs per tier |
 | `entry_ttl(current, min_threshold, max_ttl)` | `EntryTtl` | a live entry whose TTL is in `min_threshold..=max_ttl` |
 | `expired_ttl(current)` | `EntryTtl` | an entry that expired before `current` |
 | `ttl_extension_delta()` | `u32` | 1 to `MAINNET_MAX_ENTRY_TTL` (3,110,400) ledgers |
 | `ttl_extension_delta_up_to(max)` | `u32` | 1 to `max` ledgers |
+| `soroban_duration(env, min_secs, max_secs)` | `Duration` | a host duration in `min_secs..=max_secs` seconds |
+| `soroban_timepoint(env, min_timestamp, max_timestamp)` | `Timepoint` | a host timepoint in `min_timestamp..=max_timestamp` unix seconds |
+| `ledger_sequence_interval()` | `(u32, u32)` | `(start, end)` with `start <= end`, both in `1..=10,000,000` |
+| `contract_cost_model()` | `ContractCostModel` | valid host cost schedule covering all `ContractCostType` variants, shrinking to baseline |
+| `contract_cost_model_with_multipliers(cpu, mem)` | `ContractCostModel` | cost schedule with custom CPU and Memory fee multipliers (percentage) |
+| `contract_cost_model_with_config(config)` | `ContractCostModel` | cost schedule with per-dimension and per-cost-type multiplier overrides |
 
 ## Usage with proptest
 
@@ -100,6 +117,29 @@ proptest! {
   <span class="tk-callout__title">No duplicates by construction</span>
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
 </div>
+
+## Fuzzing invocation argument types
+
+`fuzzed_invocation_args` takes the host environment, a vector of valid
+arguments for the target function, and a maximum number of rogue values. It
+returns actual host `Val`s, so object handles belong to the same environment
+as the contract client. Primitive values shrink toward zero and `false`, while
+the argument list shrinks toward the original typed arguments.
+
+```rust
+use soroban_sdk::{Env, IntoVal};
+use soroban_testkit_generators::fuzzed_invocation_args;
+
+let env = Env::default();
+let valid = vec![7u32.into_val(&env)];
+let args = fuzzed_invocation_args(&env, valid, 4);
+```
+
+Use the generated values with a contract entry point that accepts `Val` (or
+through the host's dynamic invocation API) to ensure dispatch and validation
+reject unexpected types before business logic runs. Generated rogue values
+cover signed/unsigned integers, booleans, symbols, contract errors, and
+address object handles.
 
 ## Host error discriminants
 
@@ -240,6 +280,8 @@ covers any other length.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking is per component</span>
   <p>A failing tuple shrinks one component at a time while the others stay put, and a failing byte array shrinks every byte towards <code>0x00</code> independently. A signature check that only trips on the last byte therefore minimises to sixty-three zeros and the one byte that matters, rather than to an arbitrary-looking blob.</p>
+</div>
+
 `EntryTtl` carries `current_ledger` and `live_until_ledger`, and answers the
 questions a rent test asks of them: `is_live()`, `ttl()` (`None` once expired),
 `ledgers_since_expiry()`, `expires_at()` (the first unreadable ledger) and
@@ -254,6 +296,340 @@ neither has a value to generate.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the expiration boundary</span>
   <p><code>entry_ttl</code> shrinks the TTL towards <code>min_threshold</code>, <code>expired_ttl</code> shrinks towards the entry that expired exactly one ledger ago, and <code>ttl_extension_delta</code> shrinks towards a single ledger. A renewal bug therefore minimises to the entry closest to dying, which is where off-by-one liveness checks fail. The module's own tests check these intervals against the host: what <code>entry_ttl</code> generates is what <code>get_ttl</code> reports, and a temporary entry is readable on <code>live_until_ledger</code> and gone on <code>expires_at()</code>.</p>
+</div>
+
+## Durations, timepoints and ledger intervals
+
+Vesting schedules, timelocks and renewal windows are all expressed in the
+SDK's two time types. Both are 64-bit unsigned second counts, but they are
+environment-backed wrappers rather than `u64`: build one with
+`Duration::from_seconds(&env, ..)` or `Timepoint::from_unix(&env, ..)` and read
+it back with `to_seconds()` or `to_unix()`. The strategies therefore take an
+`Env`, the same way `fuzzed_invocation_args` does, so the generated value
+belongs to the environment under test.
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::Env;
+use soroban_testkit_generators::{ledger_sequence_interval, soroban_duration, soroban_timepoint};
+
+proptest! {
+    #[test]
+    fn a_timelock_unlocks_after_its_start(
+        (start, duration) in {
+            let env = Env::default();
+            (
+                soroban_timepoint(&env, 1_600_000_000, 2_000_000_000),
+                soroban_duration(&env, 0, 100_000_000),
+            )
+        },
+        (first, last) in ledger_sequence_interval(),
+    ) {
+        let unlock = start.to_unix() + duration.to_seconds(); // bounded ranges
+        prop_assert!(unlock >= start.to_unix());
+        prop_assert!(first <= last);
+    }
+}
+```
+
+`ledger_sequence_interval()` returns the interval itself rather than a
+`Duration` or `Timepoint`: both ends are ordinary `u32` ledger numbers in the
+same range `ledger_sequence()` draws from, ordered so `start <= end` always
+holds.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Ranges are validated</span>
+  <p><code>soroban_duration</code> and <code>soroban_timepoint</code> panic when the minimum is above the maximum, matching the crate's existing range strategies. The whole <code>u64</code> range is accepted, including <code>u64::MAX</code>; the range strategy itself cannot overflow because it never adds to the generated value.</p>
+</div>
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the shortest span</span>
+  <p>A failing duration minimises to <code>min_secs</code>, a failing timepoint to <code>min_timestamp</code>, and a failing interval to <code>(1, 1)</code> — or to <code>(1, 2)</code> when the bug needs a non-empty span. A vesting calculation that is wrong at the end of its schedule is therefore reported at the earliest boundary that reproduces it rather than at a random year.</p>
+</div>
+
+## Event Fuzzing
+
+`EventFuzzHarness` produces valid SDK v28 `ContractEvent` values and mutates
+them to verify that event parsers reject malformed payloads cleanly.
+
+```rust
+use soroban_testkit_generators::event_fuzz::{
+    fuzzed_event, valid_transfer_event, EventFuzzHarness, MutationOperator,
+};
+
+// Start from a well-formed event and apply a single mutation.
+let harness = EventFuzzHarness::new(valid_transfer_event());
+let malformed = harness.mutate(MutationOperator::DropField, 42);
+
+// Or drive a property test across every mutation operator.
+proptest! {
+    #[test]
+    fn parser_never_panics(event in fuzzed_event(valid_transfer_event())) {
+        // Downstream decoding must return an error, never panic.
+        let _ = TransferEvent::try_from_event(&event);
+    }
+}
+```
+
+Supported mutation operators:
+
+| Operator | Effect |
+|----------|--------|
+| `DropField` | Removes a topic, or clears the data when no topics remain |
+| `TypeShift` | Replaces a value with a different `ScVal` variant |
+| `ByteTruncate` | Halves the length of bytes, strings, symbols, or vectors |
+| `SignFlip` | Flips the sign of a number or toggles a boolean |
+
+`EventFuzzHarness::shrink` deterministically reduces a malformed payload after
+a failure, mirroring proptest's shrinking so failures are reported with the
+smallest event that still reproduces the bug. `shrink_candidates` returns each
+intermediate step for debugging.
+
+## Contract executables and deployer salts
+
+Factory contracts and deployment utilities dynamically deploy child contracts using WASM hashes or contract executable descriptors. `contract_executable_wasm_hash()`, `contract_executable()`, and `deployer_salt()` test factory patterns and verify deterministic contract address calculation:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Address, BytesN, Env};
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn deterministic_factory_address(
+        salt in strategies::deployer_salt(),
+        wasm_hash in strategies::contract_executable_wasm_hash(),
+    ) {
+        let env = Env::default();
+        let deployer = Address::generate(&env);
+        let salt_n = BytesN::from_array(&env, &salt);
+
+        // Precompute deterministic deployment address
+        let predicted = env
+            .deployer()
+            .with_address(deployer.clone(), salt_n.clone())
+            .deployed_address();
+
+        // Repeated address calculations with identical inputs match
+        let predicted_repeat = env
+            .deployer()
+            .with_address(deployer, salt_n)
+            .deployed_address();
+
+        assert_eq!(predicted, predicted_repeat);
+    }
+}
+```
+
+`contract_executable()` generates variants across `ContractExecutable::Wasm`, `ContractExecutable::StellarAsset`, and `ContractExecutable::ExternalRef`, allowing comprehensive fuzzing of contract installation and factory routines.
+
+## Cryptographic signatures and malleation
+
+Contracts verifying external cryptographic signatures with `env.crypto().ed25519_verify` or `secp256k1_recover` require testing both valid signatures and corrupted variants.
+
+`ed25519_signature_pair()` generates cryptographically valid Ed25519 keypairs, message digests, and signatures. `secp256k1_signature_pair()` produces valid Secp256k1 SEC-1 uncompressed 65-byte public keys, message hashes, 64-byte compact ECDSA signatures, and recovery IDs:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Bytes, BytesN, Env};
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn verify_ed25519_signatures(pair in strategies::ed25519_signature_pair()) {
+        let env = Env::default();
+        let pk = BytesN::from_array(&env, pair.public_key());
+        let msg = Bytes::from_slice(&env, pair.message_digest());
+        let sig = BytesN::from_array(&env, pair.signature());
+
+        // Verifies cleanly without panic
+        env.crypto().ed25519_verify(&pk, &msg, &sig);
+    }
+
+    #[test]
+    fn recover_secp256k1_public_keys(pair in strategies::secp256k1_signature_pair()) {
+        let env = Env::default();
+        let hash_bytes = Bytes::from_slice(&env, pair.message_hash());
+        let hash = env.crypto().sha256(&hash_bytes);
+        let sig = BytesN::from_array(&env, pair.signature());
+
+        let recovered = env.crypto().secp256k1_recover(&hash, &sig, pair.recovery_id());
+        assert_eq!(recovered.to_array(), *pair.public_key());
+    }
+}
+```
+
+`malleated_signature(valid_sig)` introduces single-bit or byte perturbations into valid signatures to verify that corrupted or tampered signatures fail verification cleanly.
+
+## Storage tiers and allocations
+
+Property-testing generalized storage adapters, multi-tier caches, or state partitioning layers requires generating random storage tier allocations (`Instance`, `Persistent`, `Temporary`) to test that functions handle all three tiers correctly.
+
+`storage_tier()` produces all standard `StorageTier` enum variants compatible with `soroban-testkit-core`. It shrinks towards `StorageTier::Temporary` so that failing test cases simplify to the most ephemeral storage tier:
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_core::storage::StorageTier;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn cache_adapter_handles_all_tiers(tier in strategies::storage_tier()) {
+        match tier {
+            StorageTier::Temporary => { /* ephemeral storage handling */ }
+            StorageTier::Persistent => { /* restorable long-lived storage */ }
+            StorageTier::Instance => { /* contract instance storage */ }
+        }
+    }
+}
+```
+
+### Storage tiers with TTL properties
+
+`storage_tier_with_ttl(current_ledger, min_threshold, max_ttl)` pairs each generated tier with its protocol durability (`ContractDataDurability`) and entry TTL properties (`EntryTtl`):
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn storage_renewal_respects_durability(
+        alloc in strategies::storage_tier_with_ttl(1_000, 100, 10_000),
+    ) {
+        assert!(alloc.is_live());
+        if alloc.is_temporary() {
+            assert!(!alloc.is_restorable());
+        } else if alloc.is_persistent() {
+            assert!(alloc.is_restorable());
+        }
+    }
+}
+```
+
+### Mixed-tier key allocations
+
+`mixed_tier_allocations(key_strategy, count_range)` generates partitioned plans allocating a dynamic set of keys across instance, persistent, and temporary storage tiers:
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn storage_manager_partitions_keys_properly(
+        plan in strategies::mixed_tier_allocations("[a-z0-9_]{3,12}", 10..=30),
+    ) {
+        let (inst_count, pers_count, temp_count) = plan.counts();
+        assert_eq!(inst_count + pers_count + temp_count, plan.len());
+
+        for key in plan.temporary_keys() {
+            // Test temporary key eviction / purging logic
+        }
+        for key in plan.persistent_keys() {
+            // Test archive and restoration logic
+        }
+    }
+}
+```
+
+## Host cost models and budget threshold fuzzing
+
+Soroban meters contract execution across granular [`ContractCostType`](https://docs.rs/soroban-env-host/latest/soroban_env_host/xdr/enum.ContractCostType.html)
+categories — including `WasmInsnExec`, `MemAlloc`, `MemCpy`, `MemCmp`, `ValSer`,
+`ValDeser`, `ComputeSha256Hash`, `VerifyEd25519Sig`, `VmInstantiation`, and elliptic curve arithmetic.
+Simulating resource cost fluctuations allows contracts to be stress-tested against
+future protocol parameter adjustments and network fee shifts.
+
+`contract_cost_model()` generates a realistic [`ContractCostModel`] covering all standard
+`ContractCostType` enumerations. It generates valid host cost schedules (`ContractCostParams`)
+directly compatible with `soroban-env-host`, supports configuring custom fee multipliers
+for individual cost dimensions (`CostDimension::Cpu` and `CostDimension::Memory`), and
+shrinks towards the baseline protocol fee schedule.
+
+```rust
+use proptest::prelude::*;
+use soroban_env_host::xdr::ContractCostType;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn contract_execution_fits_under_fee_shifts(
+        model in strategies::contract_cost_model(),
+    ) {
+        // Construct a soroban-env-host Budget loaded with the generated schedule
+        let budget = model.try_into_budget(10_000_000, 10_000_000).unwrap();
+
+        // Meter operations or invoke contract functions
+        budget.charge(ContractCostType::WasmInsnExec, None).unwrap();
+        budget.charge(ContractCostType::MemAlloc, Some(1024)).unwrap();
+
+        assert!(budget.get_cpu_insns_remaining().unwrap() > 0);
+    }
+}
+```
+
+### Configuring fee multipliers
+
+Use `contract_cost_model_with_multipliers` to supply percentage ranges for CPU and Memory
+fee multipliers (where `100` represents 100% / 1.0x baseline):
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn test_tight_cpu_headroom(
+        // Stress-test 1.5x - 4.0x CPU shifts and 1.0x - 2.0x Memory shifts
+        model in strategies::contract_cost_model_with_multipliers(150..=400, 100..=200),
+    ) {
+        let (cpu_cost, mem_cost) = model.evaluate_cost(
+            soroban_env_host::xdr::ContractCostType::ComputeSha256Hash,
+            1,
+            Some(256),
+        );
+        assert!(cpu_cost > 0);
+        assert_eq!(mem_cost, 0);
+    }
+}
+```
+
+For fine-grained control, configure individual cost dimensions or specific `ContractCostType`
+discriminants using `ContractCostModelConfig`:
+
+```rust
+use proptest::prelude::*;
+use soroban_env_host::xdr::ContractCostType;
+use soroban_testkit_generators::cost_model::{
+    ContractCostModelConfig, CostDimension,
+};
+use soroban_testkit_generators::strategies;
+
+let config = ContractCostModelConfig::new()
+    .with_cpu_multiplier_range(100..=200)
+    .with_mem_multiplier_range(100..=150)
+    // Target a specific crypto primitive for severe cost surge
+    .with_cost_type_multiplier_range(
+        ContractCostType::VerifyEd25519Sig,
+        CostDimension::Cpu,
+        300..=1000,
+    );
+
+proptest! {
+    #[test]
+    fn ed25519_heavy_contract_tolerates_signature_cost_spike(
+        model in strategies::contract_cost_model_with_config(config.clone()),
+    ) {
+        let budget = model.try_into_budget(5_000_000, 5_000_000).unwrap();
+        budget.charge(ContractCostType::VerifyEd25519Sig, Some(64)).unwrap();
+    }
+}
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the baseline protocol fee schedule</span>
+  <p>proptest shrinks integer offsets towards zero. <code>contract_cost_model()</code> generates fee shifts as offsets relative to 100% baseline, so failing runs simplify towards the standard on-chain protocol fee schedule (<code>100%</code> / <code>1.0x</code>) rather than stopping at an arbitrary random multiplier.</p>
 </div>
 
 ## Custom strategies
