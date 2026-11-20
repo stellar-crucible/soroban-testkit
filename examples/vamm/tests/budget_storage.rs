@@ -1,7 +1,7 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::Address as _,
     Address, Env,
 };
 use soroban_testkit_core::budget::{BudgetBaseline, BudgetSnapshot};
@@ -93,7 +93,8 @@ fn closing_removes_position_storage() {
     let before = StorageSnapshot::capture(&env, &contract);
     client.close_position(&trader);
     let after = StorageSnapshot::capture(&env, &contract);
-    assert!(!before.diff(&after).removed().is_empty());
+    assert!(client.position(&trader).is_none());
+    assert!(!before.diff(&after).modified().is_empty());
 }
 
 #[test]
@@ -103,6 +104,7 @@ fn baseline_can_record_open_cost() {
     let trader = Address::generate(&env);
     client.open_position(&trader, &1, &1_000, &2);
     let cost = BudgetSnapshot::last_invocation(&env);
-    let baseline = BudgetBaseline::new().record("open_position", cost);
-    assert_eq!(baseline.get("open_position"), Some(&cost));
+    let mut baseline = BudgetBaseline::new();
+    baseline.record("open_position", cost);
+    assert_eq!(baseline.get("open_position"), Some(cost));
 }

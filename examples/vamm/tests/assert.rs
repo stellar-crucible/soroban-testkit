@@ -1,6 +1,5 @@
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, Address};
 use soroban_testkit_assert::assert_auth_matches;
 use soroban_testkit_assert::auth::AuthMatcher;
 use soroban_testkit_fixtures::builder::TestContextBuilder;
@@ -18,7 +17,10 @@ fn open_requires_trader_authorization() {
     let ctx = TestContextBuilder::new().with_users(3).build();
     let client = deploy(&ctx);
     client.open_position(ctx.user(0), &1, &1_000, &2);
-    assert_auth_matches!(&ctx.env, ctx.user(0));
+    assert_auth_matches!(&ctx.env, {
+        invoker: ctx.user(0),
+        function: "open_position",
+    });
 }
 
 #[test]
@@ -27,7 +29,10 @@ fn close_requires_trader_authorization() {
     let client = deploy(&ctx);
     client.open_position(ctx.user(0), &1, &1_000, &2);
     client.close_position(ctx.user(0));
-    assert_auth_matches!(&ctx.env, ctx.user(0));
+    assert_auth_matches!(&ctx.env, {
+        invoker: ctx.user(0),
+        function: "close_position",
+    });
 }
 
 #[test]
@@ -36,14 +41,21 @@ fn add_margin_requires_trader_authorization() {
     let client = deploy(&ctx);
     client.open_position(ctx.user(0), &1, &1_000, &2);
     client.add_margin(ctx.user(0), &500);
-    assert_auth_matches!(&ctx.env, ctx.user(0));
+    assert_auth_matches!(&ctx.env, {
+        invoker: ctx.user(0),
+        function: "add_margin",
+    });
 }
 
 #[test]
 fn auth_matcher_accepts_a_trader_address() {
     let ctx = TestContextBuilder::new().with_users(3).build();
-    let _ = deploy(&ctx);
-    assert!(AuthMatcher::new(ctx.user(0)).to_string().contains("Address"));
+    let client = deploy(&ctx);
+    client.open_position(ctx.user(0), &1, &1_000, &2);
+    AuthMatcher::new(&ctx.env)
+        .invoker(ctx.user(0))
+        .function("open_position")
+        .assert_matches();
 }
 
 #[test]

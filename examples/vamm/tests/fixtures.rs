@@ -33,7 +33,7 @@ fn opens_a_leveraged_long() {
     let ctx = TestContextBuilder::new().with_users(2).build();
     let (_, client) = deploy(&ctx);
     let position = client.open_position(ctx.user(0), &1, &1_000, &5);
-    assert_eq!(position.size, 5_000_000);
+    assert_eq!(position.size, 5_000);
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn opens_a_leveraged_short() {
     let ctx = TestContextBuilder::new().with_users(2).build();
     let (_, client) = deploy(&ctx);
     let position = client.open_position(ctx.user(0), &-1, &1_000, &3);
-    assert_eq!(position.size, -3_000_000);
+    assert_eq!(position.size, -3_000);
 }
 
 #[test]

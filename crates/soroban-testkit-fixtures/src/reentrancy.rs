@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
+    contract, contracterror, contractimpl, symbol_short, Address, Env,
 };
 
 const LOCKED: soroban_sdk::Symbol = symbol_short!("locked");
@@ -44,8 +44,9 @@ impl ReentrancyReceiver {
     pub fn callback(env: Env, target: Address, panic_after_callback: bool) {
         let recursive_result = ReentrancyTargetClient::new(&env, &target).try_reenter();
         match recursive_result {
-            Ok(Err(_)) => {}
-            _ => panic!("recursive invocation was not rejected by the target guard"),
+            Err(Ok(ReentrancyError::Locked)) | Err(Err(_)) => {}
+            Ok(Ok(_)) => panic!("recursive invocation was not rejected by the target guard"),
+            _ => panic!("recursive invocation did not return the locked guard error"),
         }
         if panic_after_callback {
             panic!("simulated receiver panic after re-entrant call");
@@ -53,8 +54,6 @@ impl ReentrancyReceiver {
     }
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReentrancyGuardHarness {
     pub env: Env,
     pub target: Address,
@@ -106,7 +105,6 @@ mod tests {
     #[test]
     fn callback_reentry_is_rejected_and_success_clears_the_lock() {
         let harness = ReentrancyGuardHarness::new();
-
         assert!(harness.execute(false));
         assert!(!harness.lock_is_set());
     }

@@ -98,11 +98,11 @@ proptest! {
         let client = VammContractClient::new(&env, &contract);
         client.open_position(&trader, &1, &100, &10);
         client.move_mark(&10_000_000, &mark);
-        if client.is_liquidatable(trader.clone()) {
-            client.liquidate(trader.clone());
-            prop_assert!(client.position(trader).is_none());
+        if client.is_liquidatable(&trader) {
+            client.liquidate(&trader);
+            prop_assert!(client.position(&trader).is_none());
         } else {
-            prop_assert!(client.position(trader).is_some());
+            prop_assert!(client.position(&trader).is_some());
         }
     }
 }
