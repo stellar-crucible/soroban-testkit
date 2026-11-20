@@ -5,7 +5,7 @@ WASM analysis and host execution profiling — the primitives the rest of Testki
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · wasm · profiler</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · wasm · profiler · reentrancy</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -43,6 +43,10 @@ WASM analysis and host execution profiling — the primitives the rest of Testki
 | `StackDepthBreach` | A trace deeper than its cap, rendered with every frame |
 | `CompatibilityAuditor` | Evaluates contracts against upcoming SDK v29 / Protocol 22+ changes and flags deprecated host calls |
 | `CompatibilityScorecard` | Actionable readiness scorecard with grades, remediation advice, and Markdown output |
+| `ReentrancyGuardAuditor` | Statically and dynamically analyzes lock flag state across multi-frame calls and external callbacks |
+| `LockState` | `Uninitialized`, `Locked`, or `Unlocked` reentrancy guard states |
+| `ReentrancyReport` | Comprehensive violation diagnostics and visual ASCII state access ordering timelines |
+| `ReentrancyViolation` | Flagged uninitialized, unlocked, premature release, dangling, or indirect reentrant calls |
 
 ## Budget snapshots
 
@@ -714,6 +718,95 @@ assert!(scorecard.is_ready_for_upgrade, "Contract contains critical obsolete cal
 
 // Render a CI-ready Markdown report:
 let markdown_report = scorecard.to_markdown();
+```
+
+## Reentrancy guard and state access ordering auditor
+
+DeFi contracts using external callbacks, token transfers, or multi-contract routing
+must guarantee that reentrancy guard flags cannot be bypassed via indirect re-entry
+paths. Static and dynamic verification of state access order ensures protocol safety
+under Check-Effects-Interactions (CEI) patterns.
+
+[`ReentrancyGuardAuditor`] monitors lock flag states and cross-contract invocations,
+verifying that:
+1. Reentrancy locks are set (`LockState::Locked`) *before* any external invocation is performed.
+2. Locks are initialized and never accessed while uninitialized.
+3. Locks are not prematurely released before external calls finish.
+4. Locks are properly reset (`LockState::Unlocked`) upon frame exit.
+
+### Static trace verification
+
+Harnesses and unit tests can verify execution sequences directly:
+
+```rust
+use soroban_testkit_core::{LockState, ReentrancyGuardAuditor};
+
+let mut auditor = ReentrancyGuardAuditor::new();
+auditor
+    .enter_frame("CVAULT", "withdraw")
+    .set_lock("CVAULT", LockState::Locked)
+    .external_call("CVAULT", "CTOKEN", "transfer")
+    .enter_frame("CTOKEN", "transfer")
+    .exit_frame("CTOKEN", "transfer")
+    .set_lock("CVAULT", LockState::Unlocked)
+    .exit_frame("CVAULT", "withdraw");
+
+let report = auditor.audit();
+assert!(report.is_safe());
+```
+
+### Detecting flawed reentrancy guard implementations
+
+When a contract fails to initialize its lock before calling an external callback or releases its guard prematurely, `assert_reentrancy_safe()` flags the vulnerability and renders a state access ordering timeline:
+
+```rust,should_panic
+use soroban_testkit_core::ReentrancyGuardAuditor;
+
+let mut auditor = ReentrancyGuardAuditor::new();
+auditor
+    .enter_frame("CVAULT", "withdraw")
+    // Flaw: External call performed while lock is uninitialized!
+    .external_call("CVAULT", "CTOKEN", "transfer")
+    .exit_frame("CVAULT", "withdraw");
+
+// Panics with visual state access ordering timeline:
+auditor.assert_reentrancy_safe();
+```
+
+### Visual state access ordering timeline
+
+On assertion failure or via `report.render_timeline()`, the auditor outputs an ASCII execution timeline detailing every step, depth, contract, action, lock state, and violation diagnostic:
+
+```text
+====================================================================================================
+                        STATE ACCESS ORDERING & REENTRANCY TIMELINE
+====================================================================================================
+Step | Depth | Contract   | Action                                | Lock State    | Status / Notes
+-----+-------+------------+---------------------------------------+---------------+-----------------
+1    | 1     | CVAULT     | Enter: withdraw                       | Uninitialized | OK
+2    | 1     | CVAULT     | ExternalCall -> CTOKEN::transfer      | Uninitialized | [VIOLATION] External call made while lock flag is Uninitialized on 'CVAULT'
+3    | 1     | CVAULT     | Exit: withdraw                        | Uninitialized | OK
+----------------------------------------------------------------------------------------------------
+Result: FAILED — 1 reentrancy violation(s) detected:
+  1. [Step 2] External call from 'CVAULT' to 'CTOKEN::transfer' while lock is Uninitialized
+====================================================================================================
+```
+
+### Dynamic environment observation
+
+The auditor can also observe contract invocations dynamically from the test environment:
+
+```rust
+use soroban_testkit_core::ReentrancyGuardAuditor;
+# use soroban_sdk::Env;
+
+# fn audit_env(env: &Env) {
+let auditor = ReentrancyGuardAuditor::from_env(env);
+let report = auditor.audit();
+if report.has_violations() {
+    println!("{}", report.render_timeline());
+}
+# }
 ```
 
 <hr class="tk-divider" />

@@ -4,6 +4,7 @@ pub mod error;
 pub mod footprint;
 pub mod namespace_auditor;
 pub mod profiler;
+pub mod reentrancy;
 pub mod stack_depth;
 pub mod storage;
 pub mod wasm;
@@ -18,6 +19,10 @@ pub use footprint::{
     DEFAULT_PROJECTION_LEDGERS,
 };
 pub use namespace_auditor::{NamespaceAuditor, NamespaceReport};
+pub use reentrancy::{
+    ActionKind, LockState, ReentrancyGuardAuditor, ReentrancyReport, ReentrancyViolation,
+    ReentrancyViolationKind, TimelineStep,
+};
 pub use stack_depth::{
     CallFrame, StackDepthAuditor, StackDepthBreach, DEFAULT_WARNING_THRESHOLD,
     HOST_CALL_STACK_LIMIT,
