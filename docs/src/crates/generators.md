@@ -277,6 +277,8 @@ covers any other length.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking is per component</span>
   <p>A failing tuple shrinks one component at a time while the others stay put, and a failing byte array shrinks every byte towards <code>0x00</code> independently. A signature check that only trips on the last byte therefore minimises to sixty-three zeros and the one byte that matters, rather than to an arbitrary-looking blob.</p>
+</div>
+
 `EntryTtl` carries `current_ledger` and `live_until_ledger`, and answers the
 questions a rent test asks of them: `is_live()`, `ttl()` (`None` once expired),
 `ledgers_since_expiry()`, `expires_at()` (the first unreadable ledger) and

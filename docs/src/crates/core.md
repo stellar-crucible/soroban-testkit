@@ -26,6 +26,7 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
 | `FootprintSnapshot` | XDR byte size of every live storage key of one contract, by tier |
+| `RentParameters`, `RentEstimate` | Protocol fee parameters and the Stroop cost of keeping a footprint alive for N ledgers |
 | `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
 | `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
@@ -380,6 +381,91 @@ extracts:
 Post `footprint.md` as the pull-request comment the same way the `Budget
 baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
 as a function, for embedding it in an `xtask` without spawning a process.
+
+## Rent projection and the summary table
+
+Byte counts answer "how much state is there". The question a deployer actually
+asks is "what does keeping it cost", and the two differ by the entry writes and
+the rent term the network charges per TTL bump. `FootprintSnapshot` projects
+forward, and renders itself as a table.
+
+`StorageFootprint::measure` captures one contract without going through an
+artifact, which is what you want inside a test that just deployed something:
+
+```rust
+use soroban_testkit_core::{DEFAULT_PROJECTION_LEDGERS, StorageFootprint};
+
+let snapshot = StorageFootprint::measure(&ctx.env, &contract_id);
+
+// Bytes, and the Stroops to hold them for another 518,400 ledgers.
+let bytes = snapshot.total_bytes();
+let stroops = snapshot.projected_rent(DEFAULT_PROJECTION_LEDGERS);
+```
+
+The arithmetic is the network's own: each entry is priced through
+`soroban_env_host::fees::compute_rent_fee`, the function core calls, so a
+projection agrees with what the protocol charges rather than with a restatement
+of the formula here. A projection is the cost of one TTL bump from zero, which
+means it is rent *plus* the per-entry write *plus* the 48-byte `TtlEntry` the
+bump itself writes. Doubling the horizon therefore adds rent without adding a
+second entry write.
+
+`rent_estimate` breaks the same number up per tier, and `RentParameters` is
+where you override the fee set:
+
+```rust
+use soroban_testkit_core::{RentParameters, StorageFootprint};
+
+let params = RentParameters::default()
+    // Re-price rent per KB for a network holding more state than the target,
+    // following core's own curve instead of the floor.
+    .with_soroban_state_size(6_000_000_000);
+let estimate = StorageFootprint::measure(&ctx.env, &contract_id)
+    .rent_estimate(&params, 518_400);
+
+let persistent = estimate.persistent_stroops;
+assert!(estimate.total_stroops() >= persistent);
+```
+
+`to_markdown` renders the entries and the projection as one table, for a PR
+comment or a docs page:
+
+```rust
+print!("{}", snapshot.to_markdown());
+```
+
+```markdown
+### Entries
+
+| Key | Bytes |
+|-----|--------:|
+| `instance:admin` | 24 |
+| `instance:paused` | 24 |
+| `persistent:count` | 80 |
+| `persistent:owner` | 80 |
+| `temporary:nonce` | 80 |
+
+| Tier | Entries | Bytes | Rent for 518400 ledgers |
+|------|--------:|------:|----------------------:|
+| instance | 2 | 48 | 40047 |
+| persistent | 2 | 160 | 106762 |
+| temporary | 1 | 80 | 36714 |
+| **Total** | **5** | **288** | **183523** |
+
+<sub>Sizes are XDR-encoded bytes. Rent is priced by `soroban-env-host`'s
+`compute_rent_fee` at the protocol 23 fee parameters, entry write and
+`TtlEntry` included.</sub>
+```
+
+Two things about those numbers are worth reading carefully. The tier rows are
+not three copies of the same arithmetic: persistent and temporary keys are each
+their own ledger entry, so each pays its own entry write, while every key in
+instance storage lives inside one `ContractData` entry and is priced as that
+single map. That is why two 24-byte instance keys rent for less than one 80-byte
+persistent key. And because the snapshot records the key-plus-value map entries
+of instance storage rather than the envelope around them, the instance column is
+a floor. `StorageFootprint::to_markdown` does the same for every contract in the
+artifact, one section each, under a `## \`label\`` heading.
 
 ## Storage fragmentation analyzer
 
