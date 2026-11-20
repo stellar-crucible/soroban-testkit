@@ -1,11 +1,64 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
+pub use crate::crypto::{
+    ed25519_signature_pair, malleated_signature, secp256k1_signature_pair, Ed25519SignaturePair,
+    Secp256k1SignaturePair,
+};
+pub use crate::executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+pub use crate::storage_tier::{
+    mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
+    storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
+    MixedTierTtlAllocation, StorageTierWithTtl,
+};
+
 use proptest::prelude::*;
 use soroban_sdk::xdr::{
     AccountId, ContractId, Hash, Limits, PublicKey, ScAddress, ScMap, ScMapEntry, ScVal, ScVec,
     Uint256, VecM, WriteXdr as _,
 };
-use soroban_sdk::{Address, Env, TryFromVal as _};
+use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol, TryFromVal as _, Val};
+
+/// Generate arbitrary Soroban invocation arguments, including values whose
+/// object handles are owned by `env`. `typed` contains valid arguments for a
+/// particular contract method; the strategy inserts zero or more rogue values
+/// at arbitrary positions so the same client call exercises type validation.
+///
+/// The primitive branches shrink to zero, `false`, and the empty symbol. Host
+/// objects and errors are included as type mismatches and disappear as the
+/// list shrinks.
+pub fn fuzzed_invocation_args(
+    env: &Env,
+    typed: Vec<Val>,
+    max_rogue: u32,
+) -> impl Strategy<Value = Vec<Val>> {
+    let env = env.clone();
+    let int_env = env.clone();
+    let bool_env = env.clone();
+    let uint_env = env.clone();
+    let address_env = env.clone();
+    let rogue = prop_oneof![
+        4 => any::<i32>().prop_map(move |value| value.into_val(&int_env)),
+        4 => any::<bool>().prop_map(move |value| value.into_val(&bool_env)),
+        2 => any::<u32>().prop_map(move |value| value.into_val(&uint_env)),
+        2 => Just(Symbol::new(&env, "rogue_symbol").into_val(&env)),
+        1 => Just(soroban_sdk::Error::from_contract_error(1).into_val(&env)),
+        1 => any::<u8>().prop_map(move |_| Address::generate(&address_env).into_val(&address_env)),
+    ];
+    (
+        prop::collection::vec(rogue, 0..=max_rogue as usize),
+        any::<Vec<usize>>(),
+    )
+        .prop_map(move |(mut rogue, order)| {
+            let mut args = typed.clone();
+            // Interleave rogue values at deterministic positions derived from
+            // the order vector. This keeps the strategy shrinkable.
+            for (index, value) in rogue.drain(..).enumerate() {
+                let position = order.get(index).copied().unwrap_or(index).min(args.len());
+                args.insert(position, value);
+            }
+            args
+        })
+}
 
 /// The two address formats Soroban accepts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
