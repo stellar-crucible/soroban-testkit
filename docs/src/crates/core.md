@@ -19,6 +19,9 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `BudgetMetric` | Which resource a violation was measured against — `Cpu` or `Memory`, and the `cpu_insns` / `mem_bytes` word `as_str()` prints for it |
 | `BudgetBaseline` | Recorded costs per case, loaded from and saved to a JSON file |
 | `budget_guard!` | Macro form of the guard around a single invocation |
+| `MemoryPressureAuditor` | Measures what each invocation allocated, copied and kept live; `measure()` returns the call's value |
+| `AllocationProfile` | One invocation's allocations, allocated bytes, peak live bytes, copied bytes, churn ratio and efficiency score |
+| `AllocationReport` | Every measured profile, the hotspot filter and the Markdown report |
 | `DecodedError` | A Soroban error code split into category, meaning and context |
 | `ErrorRegistry` | Your `#[contracterror]` codes mapped to the words they mean |
 | `ClientOutcome`, `unwrap_decoded` | Unwrap a v28 `try_*` client call, panicking with the decoded error |

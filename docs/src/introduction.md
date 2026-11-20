@@ -55,7 +55,7 @@ Each crate is independent — adopt one, or combine all four for a complete test
   <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-core</span>
     <h3 class="tk-card__title">Inspect &amp; measure</h3>
-    <p class="tk-card__body">Budget snapshots with call-level diffs, on-chain error decoding, and storage inspection across instance, persistent and temporary tiers.</p>
+    <p class="tk-card__body">Budget snapshots with call-level diffs, on-chain error decoding, per-invocation memory pressure profiles, and storage inspection across instance, persistent and temporary tiers.</p>
     <div class="tk-card__meta"><span class="tk-badge">BudgetSnapshot</span><span class="tk-badge">DecodedError</span></div>
   </div>
   <div class="tk-card">
@@ -67,7 +67,7 @@ Each crate is independent — adopt one, or combine all four for a complete test
   <div class="tk-card">
     <span class="tk-card__kicker">soroban-testkit-fixtures</span>
     <h3 class="tk-card__title">Set up once</h3>
-    <p class="tk-card__body">A reusable test context plus a builder for environments, admin accounts and generated users.</p>
+    <p class="tk-card__body">A reusable test context plus a builder for environments, admin accounts and generated users, with ledger control and simulated archival sweeps.</p>
     <div class="tk-card__meta"><span class="tk-badge">TestContext</span><span class="tk-badge">TestContextBuilder</span></div>
   </div>
   <div class="tk-card">
