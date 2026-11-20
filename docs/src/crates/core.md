@@ -4,7 +4,7 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · reentrancy</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · reentrancy · tracer · ttl</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -51,6 +51,11 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `CoverageReport` | Aggregates execution metrics, coverage percentages, Markdown tables, and plaintext summaries |
 | `ClientDefinition` | Typed representation of contract client entry points for coverage auditing |
 | `client_definition!` | Macro for concise client entry point declaration |
+| `CallTracer` | Recovers the cross-contract call tree of an invocation: depth, contract, function, metered CPU/memory and outcome per frame; renders ASCII trees and Mermaid sequence diagrams |
+| `TraceFrame`, `CallOutcome` | One traced contract frame, and whether it returned, failed (with the host error) or is unknown |
+| `TtlInspector` | Live TTL of a storage entry in any tier, read without triggering eviction or auto-restore, with the ledger's rent thresholds |
+| `TtlStatus`, `RentThresholds` | `Live` / `Expired` (temporary) / `Archived` (persistent, instance), and the ledger's min/max TTL parameters |
+| `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
 
 ## Budget snapshots
 
@@ -889,3 +894,117 @@ When uninvoked functions are detected, `report.to_markdown()` renders detailed s
 <hr class="tk-divider" />
 
 <p class="tk-muted">Next: <a href="./assert.html">soroban-testkit-assert</a> — turn these measurements into readable assertions.</p>
+
+## Cross-contract call tracing
+
+In a router → pair → token architecture a failure three frames down reaches
+the test as one panic naming the outermost call. `CallTracer` recovers the
+whole invocation tree:
+
+```rust
+use soroban_testkit_core::tracer::CallTracer;
+
+let tracer = CallTracer::capture(&env, || {
+    router.swap_exact_in(&pool, &user, &true, &amount_in, &min_out)
+})
+.with_label(&router_id, "router")
+.with_label(&pool, "pool")
+.with_label(&token_a, "token_a")
+.with_label(&token_b, "token_b");
+
+assert_eq!(tracer.depth(), 3);
+tracer.assert_success();
+println!("{}", tracer.render_ascii());
+println!("{}", tracer.render_mermaid());
+```
+
+`render_ascii()` prints one frame per line with its outcome and the CPU
+instructions and memory bytes metered while it ran (sub-calls included;
+`TraceFrame::self_cpu_insns()` subtracts them):
+
+```text
+router::swap_exact_in [ok] cpu=271623 mem=51987
+└── pool::swap [ok] cpu=242342 mem=42756
+    ├── token_b::transfer [ok] cpu=74519 mem=13436
+    └── token_a::transfer [ok] cpu=75818 mem=13131
+```
+
+`render_mermaid()` emits a `sequenceDiagram` you can paste into a pull
+request; a failed frame returns with a `--x` arrow labelled with its error.
+
+### Failures and the invocation path
+
+A client call whose contract fails panics. `capture` catches that panic and
+keeps it, so the trace of the failing call is still readable:
+
+```rust
+let tracer = CallTracer::capture(&env, || router.swap_exact_in(&pool, &broke, &true, &1, &0));
+
+assert_eq!(
+    tracer.render_failure_path().unwrap(),
+    "router::swap_exact_in -> pool::swap -> token_b::transfer (error: Contract(101))"
+);
+tracer.assert_success(); // panics, printing the failing path and the whole tree
+```
+
+A frame the host rejects before it starts — a re-entry attempt, for example —
+is still traced, marked as an error with the error its caller saw. A
+sub-call caught with `try_invoke_contract` shows up as a failed child of a
+successful parent.
+
+### Where the data comes from
+
+Nothing is hooked while a test runs, so a test that never builds a tracer pays
+nothing. After the closure returns the tracer reads two records the SDK test
+host already keeps for the latest top-level invocation: the per-invocation
+resource meter (the call tree with per-frame CPU and memory) and the
+`fn_call` / `fn_return` / `error` diagnostic events (which frames returned, and
+with which error). Both reset at every top-level invocation, so `capture`
+describes the *last* top-level call in its closure; trace several with
+`CallTracer::new()` and one `record(&env, || ..)` per call.
+
+## Entry TTLs and rent thresholds
+
+`TtlInspector` reads the `live_until_ledger` of any contract storage entry
+together with the ledger's rent parameters:
+
+```rust
+use soroban_testkit_core::ttl::{TtlInspector, TtlStatus};
+
+let ttl = TtlInspector::for_key(&env, &contract_id, &DataKey::Balance(user.clone()));
+assert_eq!(ttl.tier, StorageTier::Persistent);
+assert_eq!(ttl.status(), TtlStatus::Live);
+println!("{} ledgers left, expires at {}", ttl.ttl(), ttl.expiration_ledger());
+println!("min ttl for the tier: {}", ttl.min_ttl());
+println!("furthest extension: live until {}", ttl.max_live_until_ledger());
+```
+
+`for_key` searches persistent storage, then temporary, then the instance map;
+`persistent`, `temporary` and `instance` name the tier explicitly. An instance
+key reports the TTL of the contract instance it lives in.
+
+The inspector reads the host's storage map directly. A normal read of an
+expired entry has side effects in the SDK test host — a temporary entry is
+dropped and a persistent one is restored on the spot — so inspecting through
+the contract would destroy the state under test. `status()` reports `Expired`
+for a temporary entry past its TTL and `Archived` for a persistent entry or
+instance.
+
+### Checking `extend_ttl`
+
+`TtlExtension::observe` reads an entry around a call:
+
+```rust
+use soroban_testkit_core::ttl::TtlExtension;
+
+let extension = TtlExtension::observe(&env, &contract_id, &key, || client.bump(&threshold, &extend_to));
+
+extension.assert_matches_extend_ttl(threshold, extend_to); // the host's rules, judged from `before`
+extension.assert_extended_to(extend_to);                   // clamped to the network ceiling
+```
+
+`TtlInspector::predict_extend_ttl(threshold, extend_to)` applies the same
+rules without a call: the host extends only when the current TTL is at or
+below `threshold`, sets `live_until` to `current + extend_to` clamped to
+`current + max_entry_ttl - 1`, and never shortens a TTL.
+

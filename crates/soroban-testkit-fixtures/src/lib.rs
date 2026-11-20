@@ -8,6 +8,8 @@ pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 pub mod protocol_registry;
+#[cfg(test)]
+mod ttl_tests;
 
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
@@ -28,7 +30,9 @@ pub use protocol_registry::{
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
-use soroban_sdk::{Address, Env, TryFromVal as _};
+use soroban_sdk::{Address, Env, IntoVal, TryFromVal as _, Val};
+pub use soroban_testkit_core::ttl::{RentThresholds, TtlExtension, TtlInspector, TtlStatus};
+use soroban_testkit_core::StorageTier;
 
 pub use event_indexer::{
     EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
@@ -173,6 +177,162 @@ impl TestContext {
         let mut simulator = crate::archival::ArchivalSweepSimulator::new();
         simulator.sweep(&self.env, count);
         simulator
+    }
+
+    /// The sequence number the ledger currently reports; the same reading as
+    /// [`TestContext::sequence`], named for TTL arithmetic.
+    pub fn ledger_sequence(&self) -> u32 {
+        self.sequence()
+    }
+
+    /// Inspect the live TTL and rent thresholds of the entry `contract` stores
+    /// under `key`, in whichever tier holds it.
+    ///
+    /// See [`TtlInspector::for_key`] for how the tier is chosen.
+    pub fn ttl<K: IntoVal<Env, Val>>(&self, contract: &Address, key: &K) -> TtlInspector {
+        TtlInspector::for_key(&self.env, contract, key)
+    }
+
+    /// Move the ledger to the first sequence at which `key`'s entry is no
+    /// longer live, returning that sequence.
+    ///
+    /// The target is read from the entry's own `live_until_ledger`, so the
+    /// test never hard-codes the network's minimum rent. Afterwards a
+    /// temporary entry reads as empty and a persistent entry (or an instance
+    /// key) is archived.
+    ///
+    /// ```rust
+    /// use soroban_sdk::{contract, contractimpl, symbol_short, Env, Val};
+    /// use soroban_testkit_fixtures::TestContext;
+    /// use soroban_testkit_fixtures::TtlInspector;
+    ///
+    /// #[contract]
+    /// pub struct Nonces;
+    ///
+    /// #[contractimpl]
+    /// impl Nonces {
+    ///     pub fn put(env: Env) {
+    ///         env.storage().temporary().set(&symbol_short!("nonce"), &1u32);
+    ///     }
+    /// }
+    ///
+    /// # fn main() {
+    /// let ctx = TestContext::new();
+    /// let contract_id = ctx.env.register(Nonces, ());
+    /// NoncesClient::new(&ctx.env, &contract_id).put();
+    /// let key = symbol_short!("nonce");
+    ///
+    /// let ttl = TtlInspector::for_key(&ctx.env, &contract_id, &key);
+    /// assert!(ttl.live_until_ledger > ctx.ledger_sequence());
+    ///
+    /// ctx.fast_forward_to_expiration(&contract_id, &key);
+    /// let value = ctx.env.as_contract(&contract_id, || {
+    ///     ctx.env.storage().temporary().get::<_, Val>(&key)
+    /// });
+    /// assert!(value.is_none());
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when no tier of `contract` holds `key`.
+    pub fn fast_forward_to_expiration<K: IntoVal<Env, Val>>(
+        &self,
+        contract: &Address,
+        key: &K,
+    ) -> u32 {
+        let target = self.ttl(contract, key).expiration_ledger();
+        self.env.ledger().set_sequence_number(target);
+        target
+    }
+
+    /// Move the ledger to the last sequence at which `key`'s entry is still
+    /// live — the boundary one ledger before
+    /// [`TestContext::fast_forward_to_expiration`] — returning that sequence.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no tier of `contract` holds `key`.
+    pub fn fast_forward_to_last_live_ledger<K: IntoVal<Env, Val>>(
+        &self,
+        contract: &Address,
+        key: &K,
+    ) -> u32 {
+        let target = self.ttl(contract, key).live_until_ledger;
+        self.env.ledger().set_sequence_number(target);
+        target
+    }
+
+    /// Run `call` and report what it did to `key`'s TTL, for checking an
+    /// `extend_ttl` inside a contract against the host's rules.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no tier of `contract` holds `key` before the call.
+    pub fn observe_ttl_extension<K, F, T>(
+        &self,
+        contract: &Address,
+        key: &K,
+        call: F,
+    ) -> TtlExtension
+    where
+        K: IntoVal<Env, Val>,
+        F: FnOnce() -> T,
+    {
+        TtlExtension::observe(&self.env, contract, key, call)
+    }
+
+    /// Fail unless `contract`'s temporary entry under `key` is gone: either
+    /// past its TTL, or already dropped by the host.
+    ///
+    /// Proves it the way a contract would see it — by reading the key from
+    /// inside `contract` and finding nothing.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the entry is still live, or when a read returns a value.
+    #[track_caller]
+    pub fn assert_temporary_expired<K: IntoVal<Env, Val>>(&self, contract: &Address, key: &K) {
+        if let Some(ttl) =
+            TtlInspector::try_in_tier(&self.env, contract, key, StorageTier::Temporary)
+        {
+            ttl.assert_expired();
+        }
+        let key: Val = key.into_val(&self.env);
+        let (has, value) = self.env.as_contract(contract, || {
+            let temporary = self.env.storage().temporary();
+            (temporary.has(&key), temporary.get::<_, Val>(&key))
+        });
+        assert!(
+            !has && value.is_none(),
+            "Expected the temporary entry {key:?} of {contract:?} to read as empty at ledger {}, but the contract can still read it",
+            self.ledger_sequence()
+        );
+    }
+
+    /// Fail unless `contract`'s persistent entry under `key` has passed its
+    /// TTL and is therefore archived.
+    ///
+    /// The check reads the TTL without accessing the entry, because a normal
+    /// read in the SDK test host restores an archived entry on the spot. Use
+    /// [`TestContext::archive_expired`] to take archived entries off the ledger
+    /// entirely and test the restore path.
+    ///
+    /// # Panics
+    ///
+    /// Panics when persistent storage does not hold `key`, or when the entry
+    /// is still live.
+    #[track_caller]
+    pub fn assert_persistent_archived<K: IntoVal<Env, Val>>(&self, contract: &Address, key: &K) {
+        let ttl = TtlInspector::persistent(&self.env, contract, key);
+        assert_eq!(
+            ttl.status(),
+            TtlStatus::Archived,
+            "Expected {} to be archived at ledger {}, but it is live until ledger {}",
+            ttl.describe(),
+            ttl.current_ledger,
+            ttl.live_until_ledger
+        );
     }
 
     /// Swap in a fresh environment and keep every address this context holds.

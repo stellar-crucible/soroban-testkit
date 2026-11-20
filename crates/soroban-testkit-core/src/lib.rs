@@ -8,6 +8,8 @@ pub mod reentrancy;
 pub mod stack_depth;
 pub mod storage;
 pub mod storage_fragmentation;
+pub mod tracer;
+pub mod ttl;
 
 pub use compatibility::{
     CompatibilityAuditor, CompatibilityGrade, CompatibilityScorecard, DeprecationItem,
@@ -35,3 +37,5 @@ pub use storage_fragmentation::{
     ConsolidationOpportunity, FragmentationReport, StorageEntryMetrics,
     StorageFragmentationAnalyzer, TierFragmentationSummary,
 };
+pub use tracer::{CallOutcome, CallTracer, TraceFrame};
+pub use ttl::{RentThresholds, TtlExtension, TtlInspector, TtlStatus};
