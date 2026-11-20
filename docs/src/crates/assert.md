@@ -34,6 +34,8 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `AuthSubInvocationMatcher::assert_matches()` | An authorized sub-call matching contract, function, and arguments appears at any depth |
+| `assert_auth_sub_invocation!(env, { .. })` | Inline sub-invocation matcher isolating intermediate contract calls at any depth |
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
 | `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
 | `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
@@ -483,48 +485,60 @@ contract Contract(C…BBBB) function "route"                   | contract Contra
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
 ```
 
-## Storage assertions
+### Isolating intermediate sub-invocations
 
-Closing an account, burning a balance or cancelling an escrow should leave no storage behind. `assert_storage_key_deleted!` and `assert_storage_empty!` prove entries are gone from the ledger rather than merely rewritten:
+When inspecting authorization trees from complex multi-contract calls, developers often only care about asserting that a specific intermediate contract properly authorized a sub-call, regardless of top-level invoker details.
+
+`assert_auth_sub_invocation!` searches recursively across all recorded authorization trees and matches any sub-invocation matching `{ contract, function, args }` at any depth:
 
 ```rust
-use soroban_testkit_assert::{assert_storage_empty, assert_storage_key_deleted};
-use soroban_testkit_assert::storage::StorageTier;
+use soroban_testkit_assert::assert_auth_sub_invocation;
 
-// The key no longer exists in any tier.
-assert_storage_key_deleted!(&env, &token, "balance");
+aggregator.swap(&user, &pool_id, &vault_id, &500i128);
 
-// Only the named tier is inspected; another tier may still hold the key.
-assert_storage_key_deleted!(&env, &token, "allowance", StorageTier::Persistent);
+// Matches Vault deposit at depth 2 without naming Aggregator or Pool:
+assert_auth_sub_invocation!(env, {
+    contract: vault_id,
+    function: "deposit",
+    args: [user.clone(), 500i128],
+});
 
-// The contract's whole storage is empty, or one tier of it is.
-assert_storage_empty!(&env, &token);
-assert_storage_empty!(&env, &token, StorageTier::Temporary);
+// Matches intermediate Pool route without top-level wrapper details:
+assert_auth_sub_invocation!(env, {
+    contract: pool_id,
+    function: "route",
+    args: [_, vault_id, 500i128],
+});
 ```
 
-Both assertions inspect instance, persistent and temporary storage through [`StorageSnapshot`](core.html), with instance storage unfolded per key exactly as `assert_storage_tier!` reports it. The key is the snapshot's rendered form: a symbol's text for the usual case, but also `[a, b]` for a vector or `{k: v}` for a map, so composite keys can be named too.
+All fields are optional and accept `_` as a wildcard:
 
-<div class="tk-callout tk-callout--warn">
-  <span class="tk-callout__title">Deleted is not the same as empty</span>
-  <p>These assertions are about the <strong>entry</strong>, not its value. A key rewritten to <code>0</code>, set to <code>Option::None</code> (stored as <code>void</code>), or holding an empty map is still a live ledger entry and fails both assertions. Delete the key with <code>storage().remove(&amp;key)</code>; overwriting it with a tombstone is not enough.</p>
-</div>
+- `contract: addr` (or `_` / omitted): filters calls targeting `addr`.
+- `function: "name"` (or `_` / omitted): filters calls named `"name"`.
+- `args: [_, val]` (or `_` / omitted): matches arguments positionally with `_` wildcards.
+- `invoker: addr` (or `_` / omitted): restricts matches to authorization trees originating from `addr`.
 
-A failure lists every surviving entry with the tier it lives in, its rendered value, and the XDR bytes the ledger holds:
+The same matching is available via the chainable builder `AuthSubInvocationMatcher`:
+
+```rust
+use soroban_testkit_assert::auth::{AuthArgs, AuthSubInvocationMatcher};
+
+AuthSubInvocationMatcher::new(&env)
+    .contract(&vault_id)
+    .function("deposit")
+    .args(AuthArgs::new().any().value(&env, 500i128))
+    .assert_matches();
+```
+
+When no matching sub-invocation is found, the assertion formats the full recorded authorization tree displaying all sub-invocations:
 
 ```text
-panicked at 'Expected contract storage to be empty, but 2 entries survived:
-  persistent:balance = 0 [8 bytes: 0000000300000000]
-  temporary:allowance = void [4 bytes: 00000000]'
+panicked at 'Expected authorization sub-invocation matching { contract Contract(C…), function "deposit", args [_, 999] }, found no match in 1 recorded authorization tree(s):
+[0] invoker Contract(C…1234)
+contract Contract(C…AAAA) function "swap" args [...]
+└── contract Contract(C…BBBB) function "route" args [...]
+    └── contract Contract(C…CCCC) function "deposit" args [...]'
 ```
-
-Naming a key narrows the message to that key's survivors:
-
-```text
-panicked at 'Expected storage key "balance" to be deleted from all tiers, but it still exists:
-  persistent:balance = 0 [8 bytes: 0000000300000000]'
-```
-
-A contract that never wrote storage passes `assert_storage_empty!`, and an address that is not a contract owns no contract data, so it passes too.
 
 ## Failure messages
 

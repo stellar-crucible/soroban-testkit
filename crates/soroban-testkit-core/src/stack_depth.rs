@@ -382,7 +382,7 @@ fn symbol(topics: &[ScVal], index: usize) -> Option<String> {
 
 /// Encode a contract id as its `C...` strkey: version byte `0x10`, the 32-byte
 /// payload, a CRC16-XModem checksum, and RFC 4648 base32 without padding.
-fn contract_strkey(bytes: &[u8; 32]) -> String {
+pub(crate) fn contract_strkey(bytes: &[u8; 32]) -> String {
     const VERSION: u8 = 2 << 3;
     let mut raw = Vec::with_capacity(35);
     raw.push(VERSION);

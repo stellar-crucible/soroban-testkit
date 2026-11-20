@@ -1,6 +1,10 @@
 pub mod event_fuzz;
 
 #[cfg(feature = "proptest")]
+pub mod authorization;
+#[cfg(feature = "proptest")]
+pub mod cost_model;
+#[cfg(feature = "proptest")]
 pub mod crypto;
 #[cfg(feature = "proptest")]
 pub mod differential;
@@ -8,6 +12,8 @@ pub mod differential;
 pub mod errors;
 #[cfg(feature = "proptest")]
 pub mod executables;
+#[cfg(feature = "proptest")]
+pub mod multisig;
 #[cfg(feature = "proptest")]
 pub mod storage_tier;
 #[cfg(feature = "proptest")]
@@ -19,6 +25,14 @@ pub mod ttl;
 #[cfg(feature = "proptest")]
 pub mod tuples;
 
+#[cfg(feature = "proptest")]
+pub use authorization::{address_with_nonce, authorization_credential, sequential_nonces};
+#[cfg(feature = "proptest")]
+pub use cost_model::{
+    contract_cost_model, contract_cost_model_with_config, contract_cost_model_with_multipliers,
+    ContractCostComponent, ContractCostEntry, ContractCostModel, ContractCostModelConfig,
+    CostDimension, BASELINE_COST_ENTRIES,
+};
 #[cfg(feature = "proptest")]
 pub use crypto::{
     ed25519_signature_pair, malleated_signature, secp256k1_signature_pair, Ed25519SignaturePair,
@@ -33,6 +47,8 @@ pub use differential::{
 pub use errors::{host_error_code_coverage, HostError};
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+#[cfg(feature = "proptest")]
+pub use multisig::{multisig_policy, MultisigPolicy, Signer};
 #[cfg(feature = "proptest")]
 pub use storage_tier::{
     mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,

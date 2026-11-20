@@ -646,7 +646,7 @@ fn emitting_contract(address: &Address) -> Option<soroban_sdk::xdr::ContractId> 
 }
 
 /// The topic symbols of one event, as readable text.
-fn event_topics(event: &soroban_sdk::xdr::ContractEvent) -> Vec<String> {
+pub(crate) fn event_topics(event: &soroban_sdk::xdr::ContractEvent) -> Vec<String> {
     let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
     body.topics.iter().map(topic_label).collect()
 }
@@ -814,7 +814,7 @@ fn scval_type_name(value: &soroban_sdk::xdr::ScVal) -> &'static str {
 }
 
 /// The data payload of an event, unwrapped from its XDR body.
-fn event_data(event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::xdr::ScVal {
+pub(crate) fn event_data(event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::xdr::ScVal {
     let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
     body.data.clone()
 }
