@@ -778,9 +778,7 @@ auditor.assert_reentrancy_safe();
 On assertion failure or via `report.render_timeline()`, the auditor outputs an ASCII execution timeline detailing every step, depth, contract, action, lock state, and violation diagnostic:
 
 ```text
-====================================================================================================
                         STATE ACCESS ORDERING & REENTRANCY TIMELINE
-====================================================================================================
 Step | Depth | Contract   | Action                                | Lock State    | Status / Notes
 -----+-------+------------+---------------------------------------+---------------+-----------------
 1    | 1     | CVAULT     | Enter: withdraw                       | Uninitialized | OK
@@ -789,7 +787,6 @@ Step | Depth | Contract   | Action                                | Lock State  
 ----------------------------------------------------------------------------------------------------
 Result: FAILED — 1 reentrancy violation(s) detected:
   1. [Step 2] External call from 'CVAULT' to 'CTOKEN::transfer' while lock is Uninitialized
-====================================================================================================
 ```
 
 ### Dynamic environment observation
