@@ -76,6 +76,7 @@ almost all of that without building a `LedgerInfo` by hand:
 | `ctx.set_timestamp(t)` | Jump to absolute time `t` |
 | `ctx.advance_time(s)` | Add `s` seconds, return the new timestamp |
 | `ctx.advance_ledger(n)` | Add `n` to the sequence, return the new height |
+| `ctx.archive_expired(n)` | Advance `n` ledgers, archive everything past its TTL, return the `ArchivalSweepSimulator` holding it |
 
 ```rust
 use soroban_testkit_fixtures::TestContext;
