@@ -5,6 +5,10 @@ pub mod events;
 pub mod invocation;
 pub mod storage;
 
+pub use auth::{
+    AuthArgs, AuthMatcher, AuthSubInvocationMatcher, AuthSubTree, AuthSubTreeMatcher,
+    SubInvocations,
+};
 pub use balance::{
     assert_balance_conserved_internal, AccountBalanceEntry, BalanceConservationReport,
     IntoTrackedAccount, TrackedAccount,
