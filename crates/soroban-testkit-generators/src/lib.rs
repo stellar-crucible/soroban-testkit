@@ -1,6 +1,8 @@
 pub mod event_fuzz;
 
 #[cfg(feature = "proptest")]
+pub mod cost_model;
+#[cfg(feature = "proptest")]
 pub mod crypto;
 #[cfg(feature = "proptest")]
 pub mod differential;
@@ -21,6 +23,12 @@ pub mod ttl;
 #[cfg(feature = "proptest")]
 pub mod tuples;
 
+#[cfg(feature = "proptest")]
+pub use cost_model::{
+    contract_cost_model, contract_cost_model_with_config, contract_cost_model_with_multipliers,
+    ContractCostComponent, ContractCostEntry, ContractCostModel, ContractCostModelConfig,
+    CostDimension, BASELINE_COST_ENTRIES,
+};
 #[cfg(feature = "proptest")]
 pub use crypto::{
     ed25519_signature_pair, malleated_signature, secp256k1_signature_pair, Ed25519SignaturePair,

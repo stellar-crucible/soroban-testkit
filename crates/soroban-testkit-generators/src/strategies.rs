@@ -1,5 +1,10 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
+pub use crate::cost_model::{
+    contract_cost_model, contract_cost_model_with_config, contract_cost_model_with_multipliers,
+    ContractCostComponent, ContractCostEntry, ContractCostModel, ContractCostModelConfig,
+    CostDimension, BASELINE_COST_ENTRIES,
+};
 pub use crate::crypto::{
     ed25519_signature_pair, malleated_signature, secp256k1_signature_pair, Ed25519SignaturePair,
     Secp256k1SignaturePair,

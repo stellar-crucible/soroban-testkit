@@ -2048,6 +2048,7 @@ dependencies = [
  "k256",
  "proptest",
  "sha2",
+ "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",
 ]

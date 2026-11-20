@@ -3,6 +3,7 @@ pub mod compatibility;
 pub mod error;
 pub mod footprint;
 pub mod namespace_auditor;
+pub mod reentrancy;
 pub mod stack_depth;
 pub mod storage;
 pub mod storage_fragmentation;
@@ -16,6 +17,10 @@ pub use footprint::{
     DEFAULT_PROJECTION_LEDGERS,
 };
 pub use namespace_auditor::{NamespaceAuditor, NamespaceReport};
+pub use reentrancy::{
+    ActionKind, LockState, ReentrancyGuardAuditor, ReentrancyReport, ReentrancyViolation,
+    ReentrancyViolationKind, TimelineStep,
+};
 pub use stack_depth::{
     CallFrame, StackDepthAuditor, StackDepthBreach, DEFAULT_WARNING_THRESHOLD,
     HOST_CALL_STACK_LIMIT,
