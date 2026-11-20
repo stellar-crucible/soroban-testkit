@@ -150,6 +150,92 @@ impl<'a> EventMatcher<'a> {
             seen.join(", ")
         );
     }
+
+    /// Assert that every matching event has exactly the named fields and that
+    /// each field can be deserialized as its declared type.
+    pub fn assert_data_schema(&self, schema: &[EventFieldSchema]) {
+        let events = self.matched();
+        if events.is_empty() {
+            panic!(
+                "Expected an event matching topic {:?} for schema validation, but no event was emitted",
+                self.topic.as_deref().unwrap_or("<any>")
+            );
+        }
+
+        let mut failures = Vec::new();
+        for (index, event) in events.iter().enumerate() {
+            let data = EventData::new(self.env, event_data(event));
+            let errors = schema_errors(&data, schema);
+            if !errors.is_empty() {
+                failures.push(format!("event {}: {}", index + 1, errors.join("; ")));
+            }
+        }
+
+        if !failures.is_empty() {
+            panic!(
+                "Event data schema mismatch for topic {:?}:\n{}",
+                self.topic.as_deref().unwrap_or("<any>"),
+                failures.join("\n")
+            );
+        }
+    }
+}
+
+/// One field and its expected deserialization type in an event schema.
+pub struct EventFieldSchema {
+    name: &'static str,
+    type_name: &'static str,
+    matches: fn(&EventData<'_>) -> bool,
+}
+
+impl EventFieldSchema {
+    /// Creates a field descriptor. Prefer constructing these with
+    /// [`assert_event_data_schema!`].
+    pub fn new(
+        name: &'static str,
+        type_name: &'static str,
+        matches: fn(&EventData<'_>) -> bool,
+    ) -> Self {
+        Self {
+            name,
+            type_name,
+            matches,
+        }
+    }
+}
+
+/// Assert that a topic's event payload has the specified fields and types.
+///
+/// Every emitted event matching the topic is checked. Extra fields are rejected
+/// as well, so the assertion detects both type drift and schema changes.
+///
+/// ```rust,ignore
+/// # use soroban_testkit_assert::assert_event_data_schema;
+/// # use soroban_sdk::{Address, Env};
+/// # let env = Env::default();
+/// assert_event_data_schema!(&env, "transfer", {
+///     amount: i128,
+///     recipient: Address,
+/// });
+/// ```
+#[macro_export]
+macro_rules! assert_event_data_schema {
+    ($env:expr, $topic:expr, { $($field:ident : $ty:ty),* $(,)? }) => {{
+        let __schema_env = $env;
+        let __schema_topic = $topic;
+        let __schema = [
+            $(
+                $crate::events::EventFieldSchema::new(
+                    stringify!($field),
+                    stringify!($ty),
+                    |__data| __data.deserialize::<$ty>().is_some(),
+                )
+            ),*
+        ];
+        $crate::events::EventMatcher::new(__schema_env)
+            .with_topic(__schema_topic)
+            .assert_data_schema(&__schema)
+    }};
 }
 
 /// The events of several invocations, asserted over as one set.
@@ -338,6 +424,86 @@ impl<'a> EventData<'a> {
     }
 }
 
+fn schema_errors(data: &EventData<'_>, schema: &[EventFieldSchema]) -> Vec<String> {
+    use soroban_sdk::xdr::ScVal;
+
+    let ScVal::Map(Some(entries)) = &data.raw else {
+        return vec![format!(
+            "expected a map payload, found {} ({})",
+            scval_type_name(&data.raw),
+            data_label(data.env, &data.raw)
+        )];
+    };
+
+    let mut errors = Vec::new();
+    for field in schema {
+        let entry = entries.iter().find(|entry| {
+            let ScVal::Symbol(key) = &entry.key else {
+                return false;
+            };
+            AsRef::<[u8]>::as_ref(key) == field.name.as_bytes()
+        });
+
+        match entry {
+            None => errors.push(format!(
+                "missing field `{}` (expected {})",
+                field.name, field.type_name
+            )),
+            Some(entry) => {
+                let value = EventData::new(data.env, entry.val.clone());
+                if !(field.matches)(&value) {
+                    errors.push(format!(
+                        "field `{}` expected {}, found {} (value {})",
+                        field.name,
+                        field.type_name,
+                        scval_type_name(&entry.val),
+                        data_label(data.env, &entry.val)
+                    ));
+                }
+            }
+        }
+    }
+
+    for entry in entries.iter() {
+        match &entry.key {
+            ScVal::Symbol(symbol) => {
+                let key = String::from_utf8_lossy(AsRef::<[u8]>::as_ref(&symbol));
+                if !schema.iter().any(|field| field.name == key) {
+                    errors.push(format!("unexpected field `{key}`"));
+                }
+            }
+            key => errors.push(format!(
+                "unexpected non-symbol map key {}",
+                data_label(data.env, key)
+            )),
+        }
+    }
+
+    errors
+}
+
+fn scval_type_name(value: &soroban_sdk::xdr::ScVal) -> &'static str {
+    use soroban_sdk::xdr::ScVal;
+
+    match value {
+        ScVal::Bool(_) => "bool",
+        ScVal::I128(_) => "i128",
+        ScVal::Address(_) => "Address",
+        ScVal::Symbol(_) => "Symbol",
+        ScVal::U32(_) => "u32",
+        ScVal::I32(_) => "i32",
+        ScVal::U64(_) => "u64",
+        ScVal::I64(_) => "i64",
+        ScVal::U128(_) => "u128",
+        ScVal::Void => "void",
+        ScVal::Vec(_) => "Vec",
+        ScVal::Map(_) => "Map",
+        ScVal::String(_) => "String",
+        ScVal::Bytes(_) => "Bytes",
+        _ => "other ScVal",
+    }
+}
+
 /// The data payload of an event, unwrapped from its XDR body.
 fn event_data(event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::xdr::ScVal {
     let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
@@ -436,7 +602,8 @@ mod tests {
     use super::{EventLog, EventMatcher};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{
-        contract, contractimpl, contracttype, map, symbol_short, vec, Address, Env, Symbol,
+        contract, contractevent, contractimpl, contracttype, map, symbol_short, vec, Address, Env,
+        Symbol,
     };
 
     #[contract]
@@ -616,6 +783,16 @@ mod tests {
         pub amount: i128,
     }
 
+    #[contractevent(topics = ["schema"])]
+    #[derive(Clone)]
+    pub struct SchemaEvent {
+        pub amount: i128,
+        pub count: u64,
+        pub enabled: bool,
+        pub name: Symbol,
+        pub recipient: Address,
+    }
+
     #[contract]
     pub struct DataEmitterContract;
 
@@ -640,6 +817,17 @@ mod tests {
             );
             env.events()
                 .publish((symbol_short!("moved"),), Moved { to, amount: 500 });
+        }
+
+        pub fn emit_schema(env: Env, recipient: Address) {
+            SchemaEvent {
+                amount: 500,
+                count: 7,
+                enabled: true,
+                name: Symbol::new(&env, "widget"),
+                recipient,
+            }
+            .publish(&env);
         }
     }
 
@@ -1030,5 +1218,64 @@ mod tests {
         log.collect();
 
         log.matcher().assert_count(3);
+    }
+
+    #[test]
+    fn assert_event_data_schema_accepts_expected_struct_field_types() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_schema(&recipient);
+
+        crate::assert_event_data_schema!(&env, "schema", {
+            amount: i128,
+            count: u64,
+            enabled: bool,
+            name: Symbol,
+            recipient: Address,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "missing field `absent` (expected Symbol)")]
+    fn assert_event_data_schema_reports_missing_fields() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_schema(&recipient);
+
+        crate::assert_event_data_schema!(&env, "schema", {
+            absent: Symbol,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "field `amount` expected u64, found i128")]
+    fn assert_event_data_schema_reports_wrong_field_types() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_schema(&recipient);
+
+        crate::assert_event_data_schema!(&env, "schema", {
+            amount: u64,
+            count: u64,
+            enabled: bool,
+            name: Symbol,
+            recipient: Address,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "unexpected field `to`")]
+    fn assert_event_data_schema_rejects_extra_fields() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_shapes(&recipient);
+
+        crate::assert_event_data_schema!(&env, "moved", {
+            amount: i128,
+        });
     }
 }
