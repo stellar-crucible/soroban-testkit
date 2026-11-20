@@ -5,6 +5,7 @@ pub mod eviction;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
+pub mod protocol_registry;
 
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
@@ -12,6 +13,11 @@ pub use congestion::{
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use profiles::NetworkProfile;
+pub use protocol_registry::{
+    ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
+    ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
+    ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;

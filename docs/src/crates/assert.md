@@ -34,6 +34,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `AuthSubInvocationMatcher::assert_matches()` | An authorized sub-call matching contract, function, and arguments appears at any depth |
+| `assert_auth_sub_invocation!(env, { .. })` | Inline sub-invocation matcher isolating intermediate contract calls at any depth |
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
 | `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
 | `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
@@ -481,6 +483,61 @@ invoker Contract(C…1234)                                     | [0] invoker Con
 contract Contract(C…BBBB) function "route"                   | contract Contract(C…AAAA) function "swap" args [...]
 ├── contract Contract(C…CCCC) function "deposit"             | └── contract Contract(C…BBBB) function "route" args [...]
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
+```
+
+### Isolating intermediate sub-invocations
+
+When inspecting authorization trees from complex multi-contract calls, developers often only care about asserting that a specific intermediate contract properly authorized a sub-call, regardless of top-level invoker details.
+
+`assert_auth_sub_invocation!` searches recursively across all recorded authorization trees and matches any sub-invocation matching `{ contract, function, args }` at any depth:
+
+```rust
+use soroban_testkit_assert::assert_auth_sub_invocation;
+
+aggregator.swap(&user, &pool_id, &vault_id, &500i128);
+
+// Matches Vault deposit at depth 2 without naming Aggregator or Pool:
+assert_auth_sub_invocation!(env, {
+    contract: vault_id,
+    function: "deposit",
+    args: [user.clone(), 500i128],
+});
+
+// Matches intermediate Pool route without top-level wrapper details:
+assert_auth_sub_invocation!(env, {
+    contract: pool_id,
+    function: "route",
+    args: [_, vault_id, 500i128],
+});
+```
+
+All fields are optional and accept `_` as a wildcard:
+
+- `contract: addr` (or `_` / omitted): filters calls targeting `addr`.
+- `function: "name"` (or `_` / omitted): filters calls named `"name"`.
+- `args: [_, val]` (or `_` / omitted): matches arguments positionally with `_` wildcards.
+- `invoker: addr` (or `_` / omitted): restricts matches to authorization trees originating from `addr`.
+
+The same matching is available via the chainable builder `AuthSubInvocationMatcher`:
+
+```rust
+use soroban_testkit_assert::auth::{AuthArgs, AuthSubInvocationMatcher};
+
+AuthSubInvocationMatcher::new(&env)
+    .contract(&vault_id)
+    .function("deposit")
+    .args(AuthArgs::new().any().value(&env, 500i128))
+    .assert_matches();
+```
+
+When no matching sub-invocation is found, the assertion formats the full recorded authorization tree displaying all sub-invocations:
+
+```text
+panicked at 'Expected authorization sub-invocation matching { contract Contract(C…), function "deposit", args [_, 999] }, found no match in 1 recorded authorization tree(s):
+[0] invoker Contract(C…1234)
+contract Contract(C…AAAA) function "swap" args [...]
+└── contract Contract(C…BBBB) function "route" args [...]
+    └── contract Contract(C…CCCC) function "deposit" args [...]'
 ```
 
 ## Failure messages
