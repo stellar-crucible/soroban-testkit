@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · differential · errors · tuples · ttl</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl · storage_tier</span></div>
 </div>
 
 ## Available strategies
@@ -36,10 +36,17 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `contract_executable_wasm_hash()` | `[u8; 32]` | any 32-byte WASM bytecode hash |
 | `contract_executable()` | `ContractExecutable` | `Wasm`, `StellarAsset`, or `ExternalRef` variants |
 | `deployer_salt()` | `[u8; 32]` | 32-byte salt for deterministic deployment |
+| `storage_tier()` | `StorageTier` | `Instance`, `Persistent`, or `Temporary` (shrinks to `Temporary`) |
+| `storage_tier_with_ttl(current, min, max)` | `StorageTierWithTtl` | a tier paired with durability and live/expired TTL properties |
+| `mixed_tier_allocations(keys, size)` | `MixedTierAllocation<K>` | mixed key allocations across instance, persistent, and temporary tiers |
+| `mixed_tier_allocations_with_ttl(keys, current, min, max, size)` | `MixedTierTtlAllocation<K>` | mixed key allocations paired with TTLs per tier |
 | `entry_ttl(current, min_threshold, max_ttl)` | `EntryTtl` | a live entry whose TTL is in `min_threshold..=max_ttl` |
 | `expired_ttl(current)` | `EntryTtl` | an entry that expired before `current` |
 | `ttl_extension_delta()` | `u32` | 1 to `MAINNET_MAX_ENTRY_TTL` (3,110,400) ledgers |
 | `ttl_extension_delta_up_to(max)` | `u32` | 1 to `max` ledgers |
+| `soroban_duration(env, min_secs, max_secs)` | `Duration` | a host duration in `min_secs..=max_secs` seconds |
+| `soroban_timepoint(env, min_timestamp, max_timestamp)` | `Timepoint` | a host timepoint in `min_timestamp..=max_timestamp` unix seconds |
+| `ledger_sequence_interval()` | `(u32, u32)` | `(start, end)` with `start <= end`, both in `1..=10,000,000` |
 
 ## Usage with proptest
 
@@ -288,6 +295,55 @@ neither has a value to generate.
   <p><code>entry_ttl</code> shrinks the TTL towards <code>min_threshold</code>, <code>expired_ttl</code> shrinks towards the entry that expired exactly one ledger ago, and <code>ttl_extension_delta</code> shrinks towards a single ledger. A renewal bug therefore minimises to the entry closest to dying, which is where off-by-one liveness checks fail. The module's own tests check these intervals against the host: what <code>entry_ttl</code> generates is what <code>get_ttl</code> reports, and a temporary entry is readable on <code>live_until_ledger</code> and gone on <code>expires_at()</code>.</p>
 </div>
 
+## Durations, timepoints and ledger intervals
+
+Vesting schedules, timelocks and renewal windows are all expressed in the
+SDK's two time types. Both are 64-bit unsigned second counts, but they are
+environment-backed wrappers rather than `u64`: build one with
+`Duration::from_seconds(&env, ..)` or `Timepoint::from_unix(&env, ..)` and read
+it back with `to_seconds()` or `to_unix()`. The strategies therefore take an
+`Env`, the same way `fuzzed_invocation_args` does, so the generated value
+belongs to the environment under test.
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::Env;
+use soroban_testkit_generators::{ledger_sequence_interval, soroban_duration, soroban_timepoint};
+
+proptest! {
+    #[test]
+    fn a_timelock_unlocks_after_its_start(
+        (start, duration) in {
+            let env = Env::default();
+            (
+                soroban_timepoint(&env, 1_600_000_000, 2_000_000_000),
+                soroban_duration(&env, 0, 100_000_000),
+            )
+        },
+        (first, last) in ledger_sequence_interval(),
+    ) {
+        let unlock = start.to_unix() + duration.to_seconds(); // bounded ranges
+        prop_assert!(unlock >= start.to_unix());
+        prop_assert!(first <= last);
+    }
+}
+```
+
+`ledger_sequence_interval()` returns the interval itself rather than a
+`Duration` or `Timepoint`: both ends are ordinary `u32` ledger numbers in the
+same range `ledger_sequence()` draws from, ordered so `start <= end` always
+holds.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Ranges are validated</span>
+  <p><code>soroban_duration</code> and <code>soroban_timepoint</code> panic when the minimum is above the maximum, matching the crate's existing range strategies. The whole <code>u64</code> range is accepted, including <code>u64::MAX</code>; the range strategy itself cannot overflow because it never adds to the generated value.</p>
+</div>
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the shortest span</span>
+  <p>A failing duration minimises to <code>min_secs</code>, a failing timepoint to <code>min_timestamp</code>, and a failing interval to <code>(1, 1)</code> — or to <code>(1, 2)</code> when the bug needs a non-empty span. A vesting calculation that is wrong at the end of its schedule is therefore reported at the earliest boundary that reproduces it rather than at a random year.</p>
+</div>
+
 ## Event Fuzzing
 
 `EventFuzzHarness` produces valid SDK v28 `ContractEvent` values and mutates
@@ -402,33 +458,77 @@ proptest! {
 
 `malleated_signature(valid_sig)` introduces single-bit or byte perturbations into valid signatures to verify that corrupted or tampered signatures fail verification cleanly.
 
-## Differential comparison
+## Storage tiers and allocations
 
-A strategy generates inputs; `DifferentialHarness` generates them *and* runs a second implementation of the same rule, so the assertion is agreement rather than a property you had to think of. It runs its own `proptest` loop, so it belongs in an ordinary `#[test]` rather than inside a `proptest!` block.
+Property-testing generalized storage adapters, multi-tier caches, or state partitioning layers requires generating random storage tier allocations (`Instance`, `Persistent`, `Temporary`) to test that functions handle all three tiers correctly.
+
+`storage_tier()` produces all standard `StorageTier` enum variants compatible with `soroban-testkit-core`. It shrinks towards `StorageTier::Temporary` so that failing test cases simplify to the most ephemeral storage tier:
 
 ```rust
-use soroban_testkit_generators::differential::DifferentialHarness;
-use soroban_testkit_generators::strategies::token_amount;
+use proptest::prelude::*;
+use soroban_testkit_core::storage::StorageTier;
+use soroban_testkit_generators::strategies;
 
-#[test]
-fn fee_router_matches_the_specified_fee() {
-    let env = Env::default();
-    let id = env.register(FeeRouter, ());
-    let client = FeeRouterClient::new(&env, &id);
-
-    DifferentialHarness::new()
-        .cases(64)
-        .tolerance(1)
-        .compare(token_amount(), |amount| client.calculate_fee(&amount), reference_fee);
+proptest! {
+    #[test]
+    fn cache_adapter_handles_all_tiers(tier in strategies::storage_tier()) {
+        match tier {
+            StorageTier::Temporary => { /* ephemeral storage handling */ }
+            StorageTier::Persistent => { /* restorable long-lived storage */ }
+            StorageTier::Instance => { /* contract instance storage */ }
+        }
+    }
 }
 ```
 
-`compare` asserts and panics with the shrunk input; `diff` runs the same loop and returns a `DifferentialReport` you inspect instead. Both closures take the generated value by value and return anything convertible into a trace: a primitive, a `Vec<u8>`, an `Option`, or an `ExecutionTrace` that also names the storage keys the call left behind. `tolerance` is in absolute units and applies only where both sides are numeric, so a `Divergence` carries the `DivergenceKind` (`Return` or `State { key }`), both values, and their delta where one exists.
+### Storage tiers with TTL properties
 
-<div class="tk-callout">
-  <span class="tk-callout__title">Model it, don't copy it</span>
-  <p>The reference closure has to come from the specification. A second copy of the contract's body agrees with it case for case, including on the case that is wrong, and the run proves nothing. <a href="../guides/property-testing.html">Property Testing</a> covers what shrinking does and does not promise about the payload it prints.</p>
-</div>
+`storage_tier_with_ttl(current_ledger, min_threshold, max_ttl)` pairs each generated tier with its protocol durability (`ContractDataDurability`) and entry TTL properties (`EntryTtl`):
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn storage_renewal_respects_durability(
+        alloc in strategies::storage_tier_with_ttl(1_000, 100, 10_000),
+    ) {
+        assert!(alloc.is_live());
+        if alloc.is_temporary() {
+            assert!(!alloc.is_restorable());
+        } else if alloc.is_persistent() {
+            assert!(alloc.is_restorable());
+        }
+    }
+}
+```
+
+### Mixed-tier key allocations
+
+`mixed_tier_allocations(key_strategy, count_range)` generates partitioned plans allocating a dynamic set of keys across instance, persistent, and temporary storage tiers:
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn storage_manager_partitions_keys_properly(
+        plan in strategies::mixed_tier_allocations("[a-z0-9_]{3,12}", 10..=30),
+    ) {
+        let (inst_count, pers_count, temp_count) = plan.counts();
+        assert_eq!(inst_count + pers_count + temp_count, plan.len());
+
+        for key in plan.temporary_keys() {
+            // Test temporary key eviction / purging logic
+        }
+        for key in plan.persistent_keys() {
+            // Test archive and restoration logic
+        }
+    }
+}
+```
 
 ## Custom strategies
 
