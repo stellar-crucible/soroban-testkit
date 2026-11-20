@@ -1,14 +1,18 @@
 //! Strategies for Soroban authorization inputs.
 use proptest::prelude::*;
-use soroban_sdk::xdr::{AddressWithNonce, AuthorizationCredential, ScAddress};
+use soroban_sdk::xdr::{ScAddress, ScVal, SorobanAddressCredentials, SorobanCredentials};
 
 use crate::strategies::{address, AddressBytes};
 
 /// Generates a valid address/nonce pair from a Soroban address.
-pub fn address_with_nonce(address: AddressBytes) -> impl Strategy<Value = AddressWithNonce> {
-    (0i64..=i64::MAX).prop_map(move |nonce| AddressWithNonce {
+pub fn address_with_nonce(
+    address: AddressBytes,
+) -> impl Strategy<Value = SorobanAddressCredentials> {
+    (0i64..=i64::MAX).prop_map(move |nonce| SorobanAddressCredentials {
         address: ScAddress::from(address),
         nonce,
+        signature_expiration_ledger: 0,
+        signature: ScVal::Void,
     })
 }
 
@@ -27,16 +31,23 @@ pub fn sequential_nonces(count: usize) -> impl Strategy<Value = Vec<i64>> {
 }
 
 /// Generates standard and address-based authorization credentials.
-pub fn authorization_credential() -> impl Strategy<Value = AuthorizationCredential> {
+pub fn authorization_credential() -> impl Strategy<Value = SorobanCredentials> {
     prop_oneof![
-        Just(AuthorizationCredential::SourceAccount),
+        Just(SorobanCredentials::SourceAccount),
         address().prop_map(|address| {
-            // The address credential requires the full Soroban credentials payload.
-            AuthorizationCredential::Address(soroban_sdk::xdr::SorobanAddressCredentials {
+            SorobanCredentials::Address(SorobanAddressCredentials {
                 address: ScAddress::from(address),
                 nonce: 0,
                 signature_expiration_ledger: 0,
-                signature: soroban_sdk::xdr::ScVal::Void,
+                signature: ScVal::Void,
+            })
+        }),
+        address().prop_map(|address| {
+            SorobanCredentials::AddressV2(SorobanAddressCredentials {
+                address: ScAddress::from(address),
+                nonce: 0,
+                signature_expiration_ledger: 0,
+                signature: ScVal::Void,
             })
         }),
     ]
@@ -46,6 +57,7 @@ pub fn authorization_credential() -> impl Strategy<Value = AuthorizationCredenti
 mod tests {
     use super::*;
     use proptest::test_runner::TestRunner;
+    use soroban_sdk::xdr::{ReadXdr as _, WriteXdr as _};
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
@@ -60,7 +72,7 @@ mod tests {
         #[test]
         fn credentials_encode_as_xdr(credential in authorization_credential()) {
             let bytes = credential.to_xdr(soroban_sdk::xdr::Limits::none()).unwrap();
-            let decoded = AuthorizationCredential::from_xdr(bytes.as_slice(), soroban_sdk::xdr::Limits::none()).unwrap();
+            let decoded = SorobanCredentials::from_xdr(bytes.as_slice(), soroban_sdk::xdr::Limits::none()).unwrap();
             prop_assert_eq!(decoded, credential);
         }
     }
