@@ -18,7 +18,11 @@
 - [Worked Example: Counter](./guides/counter-example.md)
 - [Worked Example: Token](./guides/token-example.md)
 - [Worked Example: Bounty Escrow](./guides/bounty-escrow-example.md)
-- [Worked Example: Prediction Market](./guides/prediction-market-example.md)
+- [Worked Example: Multisig Vault](./guides/multisig-vault-example.md)
+- [Worked Example: Flash Mint](./guides/flash-mint-example.md)
+- [Worked Example: Crowdfunding and Milestone Escrow](./guides/crowdfunding-example.md)
+- [Worked Example: Liquid Staking](./guides/liquid-staking-example.md)
+- [Worked Example: Synthetic Asset CDP](./guides/cdp-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 

@@ -29,6 +29,13 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
 | `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
+| `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
+| `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
+| `StackDepthAuditor` | Reconstructs a contract call chain from host diagnostic events and checks it against a depth cap |
+| `CallFrame` | One invocation in that chain: depth, contract id, function |
+| `StackDepthBreach` | A trace deeper than its cap, rendered with every frame |
+| `CompatibilityAuditor` | Evaluates contracts against upcoming SDK v29 / Protocol 22+ changes and flags deprecated host calls |
+| `CompatibilityScorecard` | Actionable readiness scorecard with grades, remediation advice, and Markdown output |
 
 ## Budget snapshots
 
@@ -253,6 +260,33 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
 
+## Storage Namespace Auditing
+
+When contracts compose multiple modules or traits, bare symbol keys such as
+`"admin"` can collide and silently overwrite another module's state.
+`NamespaceAuditor` records keys per module and reports collisions and
+un-namespaced keys.
+
+```rust
+use soroban_testkit_core::namespace_auditor::NamespaceAuditor;
+
+let mut auditor = NamespaceAuditor::new(&env, &contract);
+auditor
+    .record("ownable", "ownable::admin")
+    .record("pausable", "pausable::paused");
+
+let report = auditor.audit();
+assert!(!report.has_collisions(), "Storage collision: {:?}", report.collisions());
+println!("{report}");
+```
+
+Keys are considered namespaced when they contain a namespace separator
+(`::`, `:`, `.`, `/`) such as `DataKey::Admin` or `ownable:admin`. Bare keys
+like `admin` are flagged as collision risks. A collision is reported when the
+same key is written by two independent modules. `report.modules()` returns the
+full key map, while `NamespaceAuditor::from_entries` infers module ownership
+from a `StorageEntry` snapshot.
+
 ## Storage footprint diffs in CI
 
 A refactor that widens a struct or adds a key silently grows what a contract
@@ -346,6 +380,139 @@ extracts:
 Post `footprint.md` as the pull-request comment the same way the `Budget
 baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
 as a function, for embedding it in an `xtask` without spawning a process.
+
+## Storage fragmentation analyzer
+
+Storing data across dozens of small scalar entries inflates the ledger footprint due to repeated `LedgerKey` overhead and redundant key serialization. `StorageFragmentationAnalyzer` inspects contract storage across `instance`, `persistent`, and `temporary` tiers to measure key-to-value byte ratios, identify fragmented entries sharing common prefixes, and calculate projected byte and Stroop rent savings:
+
+```rust
+use soroban_testkit_core::{StorageFragmentationAnalyzer, StorageTier};
+
+let analyzer = StorageFragmentationAnalyzer::new()
+    .with_overhead_threshold(0.40)      // Flag entries where key bytes >= 40% of total
+    .with_stroop_rate_per_byte(100);    // Rent rate assumption for Stroop savings
+
+let report = analyzer.analyze(&env, &contract_id);
+
+println!("Overall overhead ratio: {:.1}%", report.overall_overhead_ratio * 100.0);
+println!("Potential byte savings: {} B", report.total_projected_byte_savings());
+println!("Projected Stroop savings: {} Stroops", report.total_projected_stroop_savings());
+
+// Render an optimization report as Markdown:
+let markdown = report.to_markdown();
+```
+
+## Call-stack depth auditing
+
+Deep contract composition has a hard ceiling: the host refuses one more nested
+call once the stack is full. `StackDepthAuditor` reconstructs the chain that
+ran, reports its high-water depth, and checks it against a cap a test controls.
+
+```rust
+use soroban_testkit_core::StackDepthAuditor;
+
+client.deposit(&user, &1_000); // proxy -> vault -> token
+
+let auditor = StackDepthAuditor::from_env(&env);
+println!("{}", auditor.trace());
+// call trace: 3 frame(s), max depth 3, cap 100, warning threshold 90
+//   depth=1 contract=CDEPOSIT... function=deposit
+//   depth=2 contract=CVAULT... function=transfer_in
+//   depth=3 contract=CTOKEN... function=transfer
+
+assert_eq!(auditor.max_depth(), 3);
+assert!(!auditor.warning_triggered());
+auditor.assert_within(); // panics with the full trace if the cap was passed
+```
+
+### Where the depth comes from
+
+The pinned host does not expose a public per-frame hook. `Host::set_trace_hook`
+is crate-private, and the public `Host::set_invocation_hook` fires only when a
+top-level invocation starts and finishes, not for each nested call. What the
+host does expose is its diagnostic event stream: `fn_call` is emitted before a
+frame opens and carries the called contract id and function name, and
+`fn_return` is emitted when that call returns. `StackDepthAuditor` reads those
+events through `Env::host().get_diagnostic_events()` and nests them in order,
+which makes the reconstruction exact for successful cross-contract chains.
+
+For a harness or an instrumented test contract, `enter(contract, function)`
+and `exit()` record the same frames by hand:
+
+```rust
+use soroban_testkit_core::StackDepthAuditor;
+
+let mut auditor = StackDepthAuditor::new();
+auditor.enter("CPROXY", "forward").enter("CIMPL", "credit");
+assert_eq!(auditor.max_depth(), 2);
+auditor.exit();
+```
+
+### The host limit
+
+The cap defaults to the host's own limit, not a number Testkit guessed.
+`soroban-env-host` 28.0.2 defines `DEFAULT_HOST_DEPTH_LIMIT = 100` in
+`src/budget/limits.rs`, and `Host::with_frame` in `src/host/frame.rs` returns
+`Context/ExceededLimit` when the context stack has already reached it. A test
+environment's top-level client call starts with an empty context stack, so
+contract frames 1 through 100 are accepted and the 101st nested call is the one
+that fails. An entry point reached through `Host::invoke_function` pushes a
+host-function frame first, which leaves room for 99 contract frames. The
+constant is re-exported as `HOST_CALL_STACK_LIMIT`.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">A warning is not a failure</span>
+  <p><code>warning_triggered()</code> and <code>warnings()</code> report frames at or beyond the warning threshold — 90% of the cap by default, set with <code>with_warning_threshold</code>. Only <code>breach()</code> and <code>assert_within()</code> treat a depth as a failure.</p>
+</div>
+
+### Lowering the cap to test recovery
+
+Running 100 nested calls to reach the real limit is slow and awkward. A test
+can check the same contract against a shallower ceiling instead:
+
+```rust
+use soroban_testkit_core::StackDepthAuditor;
+
+let auditor = StackDepthAuditor::from_env(&env).with_lowered_cap(4);
+if auditor.breach().is_some() {
+    // The contract's fallback path: split the call, or return a partial result.
+}
+
+// Or check a recorded trace against a hypothetical cap without changing it.
+let would_breach = auditor.simulate_lowered_cap(2);
+assert!(would_breach.is_some());
+```
+
+`with_lowered_cap` reduces the auditor's cap and `simulate_lowered_cap`
+answers what a different cap would have said about the same trace; neither
+changes the host. `StackDepthBreach` carries `max_depth`, `cap` and the
+rendered trace, so a panic message lists every frame rather than only the
+number that was too large.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">What the trace cannot show</span>
+  <p><code>Env::default()</code> enables diagnostics, which is what makes the reconstruction possible. A call that traps emits no <code>fn_return</code>, so its frame is recorded but never paired with a return; the high-water depth is still correct. The host also refuses contract re-entry before it emits a nested <code>fn_call</code>, so a refused recursive call leaves no extra frame. Where diagnostics are unavailable, use <code>enter</code>/<code>exit</code> from an instrumented harness.</p>
+</div>
+
+## SDK v29 compatibility auditor
+
+As protocol standards move from Protocol 21/22 toward Protocol 23 and SDK v29, legacy host functions and untyped APIs are deprecated. `CompatibilityAuditor` monitors contract invocations, events, and host errors to identify deprecated calls early, outputting a compatibility scorecard with concrete remediation instructions:
+
+```rust
+use soroban_testkit_core::{CompatibilityAuditor, CompatibilityGrade};
+
+let mut auditor = CompatibilityAuditor::new()
+    .with_target_protocol(22); // Target Protocol 22 / SDK v29
+
+// Audit contract interactions:
+let scorecard = auditor.audit_contract(&env, &contract_id);
+
+println!("Readiness grade: {}", scorecard.grade.as_str());
+assert!(scorecard.is_ready_for_upgrade, "Contract contains critical obsolete calls!");
+
+// Render a CI-ready Markdown report:
+let markdown_report = scorecard.to_markdown();
+```
 
 <hr class="tk-divider" />
 

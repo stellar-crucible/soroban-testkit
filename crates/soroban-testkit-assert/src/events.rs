@@ -35,9 +35,10 @@ impl<'a> EventMatcher<'a> {
         self
     }
 
-    /// Applies the configured filters to the events in scope, whether that scope
-    /// is the latest invocation or an [`EventLog`].
-    fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
+    /// The events in scope after the contract filter only: what a count
+    /// diagnostic prints so the author sees everything the call published, not
+    /// just what survived the topic filter.
+    fn scoped(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
         let mut events = match self.events {
             Some(collected) => collected.to_vec(),
             None => self.env.events().all().events().to_vec(),
@@ -52,20 +53,25 @@ impl<'a> EventMatcher<'a> {
                 },
             );
         }
+        events
+    }
 
+    /// Applies the configured filters to the events in scope, whether that scope
+    /// is the latest invocation or an [`EventLog`].
+    fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
+        let mut events = self.scoped();
         if let Some(topic) = &self.topic {
-            let bytes = topic.as_bytes();
-            events.retain(|event| {
-                let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
-                body.topics.iter().any(|topic| match topic {
-                    soroban_sdk::xdr::ScVal::Symbol(symbol) => {
-                        AsRef::<[u8]>::as_ref(symbol) == bytes
-                    }
-                    _ => false,
-                })
-            });
+            events.retain(|event| has_topic(event, topic));
         }
         events
+    }
+
+    /// Which events this matcher reads, in the words a failure message uses.
+    fn scope_label(&self) -> String {
+        match self.events {
+            Some(collected) => format!("event log ({} collected)", collected.len()),
+            None => "most recent invocation".to_string(),
+        }
     }
 
     pub fn assert_emitted(&self) {
@@ -150,6 +156,395 @@ impl<'a> EventMatcher<'a> {
             seen.join(", ")
         );
     }
+
+    /// Assert that every matching event has exactly the named fields and that
+    /// each field can be deserialized as its declared type.
+    pub fn assert_data_schema(&self, schema: &[EventFieldSchema]) {
+        let events = self.matched();
+        if events.is_empty() {
+            panic!(
+                "Expected an event matching topic {:?} for schema validation, but no event was emitted",
+                self.topic.as_deref().unwrap_or("<any>")
+            );
+        }
+
+        let mut failures = Vec::new();
+        for (index, event) in events.iter().enumerate() {
+            let data = EventData::new(self.env, event_data(event));
+            let errors = schema_errors(&data, schema);
+            if !errors.is_empty() {
+                failures.push(format!("event {}: {}", index + 1, errors.join("; ")));
+            }
+        }
+
+        if !failures.is_empty() {
+            panic!(
+                "Event data schema mismatch for topic {:?}:\n{}",
+                self.topic.as_deref().unwrap_or("<any>"),
+                failures.join("\n")
+            );
+        }
+    }
+
+    /// Fail unless the number of matching events satisfies `bound`.
+    ///
+    /// `bound` is an exact count (`3`) or any range: `3..=5`, `2..`, `..=4`,
+    /// `1..10`. Use a range when a call may add auxiliary events (fees, logs,
+    /// hooks) and an exact count would break each time one is added.
+    ///
+    /// Honours [`Self::from_contract`] and [`Self::with_topic`]. On failure the
+    /// message carries a table of every topic signature in scope and how often
+    /// it appeared, so the author can see what was emitted instead.
+    pub fn assert_count_within(&self, bound: impl EventCountBound) {
+        let count = self.matched().len();
+        if !bound.contains_count(count) {
+            let what = match &self.topic {
+                Some(topic) => format!("event(s) with topic \"{topic}\""),
+                None => "event(s)".to_string(),
+            };
+            panic!(
+                "Event count out of range: expected {} {what}, observed {count}\n{}",
+                bound.describe(),
+                self.observed_table(),
+            );
+        }
+    }
+
+    /// Fail unless the number of events carrying the `topic` symbol satisfies
+    /// `bound`.
+    ///
+    /// An event counts when any of its topics is the symbol `topic`, the same
+    /// rule [`Self::with_topic`] applies. `bound` is an exact frequency (`2`) or
+    /// a range (`1..=3`). The filters already configured on the matcher apply
+    /// first, so `from_contract(&id).assert_topic_count("transfer", 2)` counts
+    /// only that contract's transfers.
+    ///
+    /// On failure the message names the topic, says whether it was seen at all,
+    /// and prints the table of every topic signature in scope.
+    pub fn assert_topic_count(&self, topic: impl Into<String>, bound: impl EventCountBound) {
+        let topic = topic.into();
+        let count = self
+            .matched()
+            .iter()
+            .filter(|event| has_topic(event, &topic))
+            .count();
+        if !bound.contains_count(count) {
+            let note = if count == 0 {
+                format!(" (topic \"{topic}\" was not observed)")
+            } else {
+                String::new()
+            };
+            panic!(
+                "Event topic count mismatch: expected topic \"{topic}\" {} time(s), observed {count}{note}\n{}",
+                bound.describe(),
+                self.observed_table(),
+            );
+        }
+    }
+
+    /// A table of the topic signatures in scope (after the contract filter) and
+    /// how many events carried each, in the order they first appeared.
+    fn observed_table(&self) -> String {
+        let events = self.scoped();
+        let mut rows: Vec<(String, usize)> = Vec::new();
+        for event in &events {
+            let signature = topic_signature(event);
+            match rows.iter_mut().find(|(seen, _)| *seen == signature) {
+                Some((_, count)) => *count += 1,
+                None => rows.push((signature, 1)),
+            }
+        }
+        format_topic_table(&self.scope_label(), &rows, events.len())
+    }
+}
+
+/// How many events an assertion accepts: an exact count or a range of counts.
+///
+/// Implemented for the integer types and every standard range over them, so a
+/// test writes `3`, `3..=5`, `3..`, `..5`, `..=5`, `1..10`, or `..`. Integer
+/// literals need no suffix. A negative bound simply matches no count.
+pub trait EventCountBound {
+    /// Whether `count` events satisfy the bound.
+    fn contains_count(&self, count: usize) -> bool;
+
+    /// The bound as a failure message spells it, e.g. `exactly 2` or `3..=5`.
+    fn describe(&self) -> String;
+}
+
+macro_rules! impl_event_count_bound {
+    ($($int:ty),* $(,)?) => {$(
+        impl EventCountBound for $int {
+            fn contains_count(&self, count: usize) -> bool {
+                count as i128 == *self as i128
+            }
+            fn describe(&self) -> String {
+                format!("exactly {}", self)
+            }
+        }
+
+        impl EventCountBound for ::core::ops::Range<$int> {
+            fn contains_count(&self, count: usize) -> bool {
+                let count = count as i128;
+                (self.start as i128) <= count && count < (self.end as i128)
+            }
+            fn describe(&self) -> String {
+                format!("{}..{}", self.start, self.end)
+            }
+        }
+
+        impl EventCountBound for ::core::ops::RangeInclusive<$int> {
+            fn contains_count(&self, count: usize) -> bool {
+                let count = count as i128;
+                (*self.start() as i128) <= count && count <= (*self.end() as i128)
+            }
+            fn describe(&self) -> String {
+                format!("{}..={}", self.start(), self.end())
+            }
+        }
+
+        impl EventCountBound for ::core::ops::RangeFrom<$int> {
+            fn contains_count(&self, count: usize) -> bool {
+                (self.start as i128) <= count as i128
+            }
+            fn describe(&self) -> String {
+                format!("{}..", self.start)
+            }
+        }
+
+        impl EventCountBound for ::core::ops::RangeTo<$int> {
+            fn contains_count(&self, count: usize) -> bool {
+                (count as i128) < (self.end as i128)
+            }
+            fn describe(&self) -> String {
+                format!("..{}", self.end)
+            }
+        }
+
+        impl EventCountBound for ::core::ops::RangeToInclusive<$int> {
+            fn contains_count(&self, count: usize) -> bool {
+                (count as i128) <= (self.end as i128)
+            }
+            fn describe(&self) -> String {
+                format!("..={}", self.end)
+            }
+        }
+    )*};
+}
+
+impl_event_count_bound!(usize, u8, u16, u32, u64, i32, i64);
+
+impl EventCountBound for ::core::ops::RangeFull {
+    fn contains_count(&self, _count: usize) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "any number (..)".to_string()
+    }
+}
+
+/// Anything the event-count macros can read events from: an [`Env`] (the most
+/// recent invocation) or an [`EventLog`] (every invocation it collected).
+///
+/// References to either work too, so `env`, `&env`, `log`, and `&log` are all
+/// accepted by [`assert_event_count_range!`](crate::assert_event_count_range)
+/// and [`assert_event_topic_count!`](crate::assert_event_topic_count).
+pub trait EventSource {
+    /// A fresh matcher over this source, with no filters applied.
+    fn event_matcher(&self) -> EventMatcher<'_>;
+}
+
+impl EventSource for Env {
+    fn event_matcher(&self) -> EventMatcher<'_> {
+        EventMatcher::new(self)
+    }
+}
+
+impl EventSource for EventLog<'_> {
+    fn event_matcher(&self) -> EventMatcher<'_> {
+        self.matcher()
+    }
+}
+
+impl<T: EventSource + ?Sized> EventSource for &T {
+    fn event_matcher(&self) -> EventMatcher<'_> {
+        (**self).event_matcher()
+    }
+}
+
+impl<T: EventSource + ?Sized> EventSource for &mut T {
+    fn event_matcher(&self) -> EventMatcher<'_> {
+        (**self).event_matcher()
+    }
+}
+
+/// Assert that the number of events in scope falls within a range.
+///
+/// The first argument is an [`Env`](soroban_sdk::Env) (the most recent
+/// invocation) or an [`EventLog`](crate::events::EventLog) (every collected
+/// invocation). The bound is an exact count or any range (`3..=5`, `2..`,
+/// `..=4`). Add `from = contract` to count only one contract's events.
+///
+/// On failure the panic message prints a table of every observed topic
+/// signature and how many events carried it.
+///
+/// ```rust,ignore
+/// use soroban_testkit_assert::assert_event_count_range;
+///
+/// client.batch_transfer(&from, &recipients);
+/// assert_event_count_range!(env, 3..=5);
+/// assert_event_count_range!(env, from = contract_id, 3..);
+/// assert_event_count_range!(log, ..=10);
+/// ```
+#[macro_export]
+macro_rules! assert_event_count_range {
+    ($source:expr, from = $contract:expr, $bound:expr $(,)?) => {{
+        $crate::events::EventSource::event_matcher(&$source)
+            .from_contract(&$contract)
+            .assert_count_within($bound)
+    }};
+    ($source:expr, $bound:expr $(,)?) => {{
+        $crate::events::EventSource::event_matcher(&$source).assert_count_within($bound)
+    }};
+}
+
+/// Assert how many events in scope carry a topic symbol.
+///
+/// The first argument is an [`Env`](soroban_sdk::Env) or an
+/// [`EventLog`](crate::events::EventLog). The count is exact (`2`) or any range
+/// (`1..=3`). Add `from = contract` to count only one contract's events.
+///
+/// On failure the panic message says whether the topic was observed at all and
+/// prints a table of every observed topic signature with its count.
+///
+/// ```rust,ignore
+/// use soroban_testkit_assert::assert_event_topic_count;
+///
+/// assert_event_topic_count!(env, "transfer", 2);
+/// assert_event_topic_count!(env, "fee", 0..=1);
+/// assert_event_topic_count!(log, from = token_id, "mint", 3);
+/// ```
+#[macro_export]
+macro_rules! assert_event_topic_count {
+    ($source:expr, from = $contract:expr, $topic:expr, $bound:expr $(,)?) => {{
+        $crate::events::EventSource::event_matcher(&$source)
+            .from_contract(&$contract)
+            .assert_topic_count($topic, $bound)
+    }};
+    ($source:expr, $topic:expr, $bound:expr $(,)?) => {{
+        $crate::events::EventSource::event_matcher(&$source).assert_topic_count($topic, $bound)
+    }};
+}
+
+/// Whether any topic of `event` is the symbol `topic`.
+fn has_topic(event: &soroban_sdk::xdr::ContractEvent, topic: &str) -> bool {
+    let bytes = topic.as_bytes();
+    let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
+    body.topics.iter().any(|topic| match topic {
+        soroban_sdk::xdr::ScVal::Symbol(symbol) => AsRef::<[u8]>::as_ref(symbol) == bytes,
+        _ => false,
+    })
+}
+
+/// The shape of an event's topics, used to group rows in the count table.
+///
+/// Symbols are spelled out because they name the event. Every other topic
+/// becomes its type in angle brackets, so transfers to different addresses
+/// share one row instead of each getting its own.
+fn topic_signature(event: &soroban_sdk::xdr::ContractEvent) -> String {
+    let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
+    if body.topics.is_empty() {
+        return "(no topics)".to_string();
+    }
+    body.topics
+        .iter()
+        .map(|topic| match topic {
+            soroban_sdk::xdr::ScVal::Symbol(symbol) => {
+                String::from_utf8_lossy(AsRef::<[u8]>::as_ref(symbol)).into_owned()
+            }
+            other => format!("<{}>", other.name().to_ascii_lowercase()),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Renders the observed-topics table a count assertion prints on failure.
+fn format_topic_table(scope: &str, rows: &[(String, usize)], total: usize) -> String {
+    const HEADER: &str = "Observed topics";
+    let width = rows
+        .iter()
+        .map(|(signature, _)| signature.chars().count())
+        .chain([HEADER.len(), "(none)".len(), "total".len()])
+        .max()
+        .unwrap_or(HEADER.len());
+
+    let mut out = format!("Scope: {scope}\n");
+    out.push_str(&format!("| {HEADER:<width$} | Count |\n"));
+    out.push_str(&format!("|{}|-------|\n", "-".repeat(width + 2)));
+    if rows.is_empty() {
+        out.push_str(&format!("| {:<width$} | {:>5} |\n", "(none)", 0));
+    }
+    for (signature, count) in rows {
+        out.push_str(&format!("| {signature:<width$} | {count:>5} |\n"));
+    }
+    out.push_str(&format!("| {:<width$} | {total:>5} |\n", "total"));
+    out
+}
+
+/// One field and its expected deserialization type in an event schema.
+pub struct EventFieldSchema {
+    name: &'static str,
+    type_name: &'static str,
+    matches: fn(&EventData<'_>) -> bool,
+}
+
+impl EventFieldSchema {
+    /// Creates a field descriptor. Prefer constructing these with
+    /// [`assert_event_data_schema!`].
+    pub fn new(
+        name: &'static str,
+        type_name: &'static str,
+        matches: fn(&EventData<'_>) -> bool,
+    ) -> Self {
+        Self {
+            name,
+            type_name,
+            matches,
+        }
+    }
+}
+
+/// Assert that a topic's event payload has the specified fields and types.
+///
+/// Every emitted event matching the topic is checked. Extra fields are rejected
+/// as well, so the assertion detects both type drift and schema changes.
+///
+/// ```rust,ignore
+/// # use soroban_testkit_assert::assert_event_data_schema;
+/// # use soroban_sdk::{Address, Env};
+/// # let env = Env::default();
+/// assert_event_data_schema!(&env, "transfer", {
+///     amount: i128,
+///     recipient: Address,
+/// });
+/// ```
+#[macro_export]
+macro_rules! assert_event_data_schema {
+    ($env:expr, $topic:expr, { $($field:ident : $ty:ty),* $(,)? }) => {{
+        let __schema_env = $env;
+        let __schema_topic = $topic;
+        let __schema = [
+            $(
+                $crate::events::EventFieldSchema::new(
+                    stringify!($field),
+                    stringify!($ty),
+                    |__data| __data.deserialize::<$ty>().is_some(),
+                )
+            ),*
+        ];
+        $crate::events::EventMatcher::new(__schema_env)
+            .with_topic(__schema_topic)
+            .assert_data_schema(&__schema)
+    }};
 }
 
 /// The events of several invocations, asserted over as one set.
@@ -338,6 +733,86 @@ impl<'a> EventData<'a> {
     }
 }
 
+fn schema_errors(data: &EventData<'_>, schema: &[EventFieldSchema]) -> Vec<String> {
+    use soroban_sdk::xdr::ScVal;
+
+    let ScVal::Map(Some(entries)) = &data.raw else {
+        return vec![format!(
+            "expected a map payload, found {} ({})",
+            scval_type_name(&data.raw),
+            data_label(data.env, &data.raw)
+        )];
+    };
+
+    let mut errors = Vec::new();
+    for field in schema {
+        let entry = entries.iter().find(|entry| {
+            let ScVal::Symbol(key) = &entry.key else {
+                return false;
+            };
+            AsRef::<[u8]>::as_ref(key) == field.name.as_bytes()
+        });
+
+        match entry {
+            None => errors.push(format!(
+                "missing field `{}` (expected {})",
+                field.name, field.type_name
+            )),
+            Some(entry) => {
+                let value = EventData::new(data.env, entry.val.clone());
+                if !(field.matches)(&value) {
+                    errors.push(format!(
+                        "field `{}` expected {}, found {} (value {})",
+                        field.name,
+                        field.type_name,
+                        scval_type_name(&entry.val),
+                        data_label(data.env, &entry.val)
+                    ));
+                }
+            }
+        }
+    }
+
+    for entry in entries.iter() {
+        match &entry.key {
+            ScVal::Symbol(symbol) => {
+                let key = String::from_utf8_lossy(AsRef::<[u8]>::as_ref(&symbol));
+                if !schema.iter().any(|field| field.name == key) {
+                    errors.push(format!("unexpected field `{key}`"));
+                }
+            }
+            key => errors.push(format!(
+                "unexpected non-symbol map key {}",
+                data_label(data.env, key)
+            )),
+        }
+    }
+
+    errors
+}
+
+fn scval_type_name(value: &soroban_sdk::xdr::ScVal) -> &'static str {
+    use soroban_sdk::xdr::ScVal;
+
+    match value {
+        ScVal::Bool(_) => "bool",
+        ScVal::I128(_) => "i128",
+        ScVal::Address(_) => "Address",
+        ScVal::Symbol(_) => "Symbol",
+        ScVal::U32(_) => "u32",
+        ScVal::I32(_) => "i32",
+        ScVal::U64(_) => "u64",
+        ScVal::I64(_) => "i64",
+        ScVal::U128(_) => "u128",
+        ScVal::Void => "void",
+        ScVal::Vec(_) => "Vec",
+        ScVal::Map(_) => "Map",
+        ScVal::String(_) => "String",
+        ScVal::Bytes(_) => "Bytes",
+        _ => "other ScVal",
+    }
+}
+
 /// The data payload of an event, unwrapped from its XDR body.
 fn event_data(event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::xdr::ScVal {
     let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
@@ -436,7 +911,8 @@ mod tests {
     use super::{EventLog, EventMatcher};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{
-        contract, contractimpl, contracttype, map, symbol_short, vec, Address, Env, Symbol,
+        contract, contractevent, contractimpl, contracttype, map, symbol_short, vec, Address, Env,
+        Symbol,
     };
 
     #[contract]
@@ -616,6 +1092,16 @@ mod tests {
         pub amount: i128,
     }
 
+    #[contractevent(topics = ["schema"])]
+    #[derive(Clone)]
+    pub struct SchemaEvent {
+        pub amount: i128,
+        pub count: u64,
+        pub enabled: bool,
+        pub name: Symbol,
+        pub recipient: Address,
+    }
+
     #[contract]
     pub struct DataEmitterContract;
 
@@ -640,6 +1126,17 @@ mod tests {
             );
             env.events()
                 .publish((symbol_short!("moved"),), Moved { to, amount: 500 });
+        }
+
+        pub fn emit_schema(env: Env, recipient: Address) {
+            SchemaEvent {
+                amount: 500,
+                count: 7,
+                enabled: true,
+                name: Symbol::new(&env, "widget"),
+                recipient,
+            }
+            .publish(&env);
         }
     }
 
@@ -1030,5 +1527,402 @@ mod tests {
         log.collect();
 
         log.matcher().assert_count(3);
+    }
+
+    // `assert_event_count_range!` / `assert_event_topic_count!` and the matcher
+    // methods behind them.
+
+    #[contract]
+    pub struct BatchContract;
+
+    #[contractimpl]
+    impl BatchContract {
+        /// Publishes `n` transfers, then one `fee` event and one `audit` event,
+        /// the auxiliary events that make exact counts brittle.
+        #[allow(deprecated)]
+        pub fn batch(env: Env, to: Address, n: u32) {
+            for _ in 0..n {
+                env.events()
+                    .publish((symbol_short!("transfer"), to.clone()), 1i128);
+            }
+            env.events().publish((symbol_short!("fee"),), 1i128);
+            env.events().publish((symbol_short!("audit"),), ());
+        }
+    }
+
+    fn batch(env: &Env) -> BatchContractClient<'_> {
+        let id = env.register(BatchContract, ());
+        BatchContractClient::new(env, &id)
+    }
+
+    #[test]
+    fn count_range_accepts_every_range_shape_that_contains_the_count() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2); // 2 transfers + fee + audit = 4
+
+        crate::assert_event_count_range!(env, 4);
+        crate::assert_event_count_range!(env, 3..=5);
+        crate::assert_event_count_range!(env, 4..=4);
+        crate::assert_event_count_range!(env, 1..5);
+        crate::assert_event_count_range!(env, 4..);
+        crate::assert_event_count_range!(env, ..5);
+        crate::assert_event_count_range!(env, ..=4);
+        crate::assert_event_count_range!(env, ..);
+        crate::assert_event_count_range!(&env, 3usize..=5usize);
+        crate::assert_event_count_range!(env, 3u32..=5u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "Event count out of range: expected 5..=8 event(s), observed 4")]
+    fn count_range_fails_below_the_lower_bound() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_count_range!(env, 5..=8);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected ..=3 event(s), observed 4")]
+    fn count_range_fails_above_the_upper_bound() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_count_range!(env, ..=3);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected 1..4 event(s), observed 4")]
+    fn count_range_treats_an_exclusive_end_as_exclusive() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_count_range!(env, 1..4);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected exactly 3 event(s), observed 4")]
+    fn count_range_accepts_an_exact_count() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_count_range!(env, 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "| transfer, <address> |     2 |")]
+    fn count_range_failure_prints_a_table_of_observed_topics() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_count_range!(env, 10..);
+    }
+
+    #[test]
+    fn count_range_failure_table_lists_each_signature_in_first_seen_order() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &3);
+
+        let message = panic_message(|| crate::assert_event_count_range!(env, ..2));
+        let expected = "\
+Scope: most recent invocation
+| Observed topics     | Count |
+|---------------------|-------|
+| transfer, <address> |     3 |
+| fee                 |     1 |
+| audit               |     1 |
+| total               |     5 |
+";
+        assert!(message.ends_with(expected), "unexpected table:\n{message}");
+    }
+
+    #[test]
+    #[should_panic(expected = "| (none)          |     0 |")]
+    fn count_range_failure_on_a_silent_call_says_nothing_was_observed() {
+        let env = Env::default();
+        crate::assert_event_count_range!(env, 1..=2);
+    }
+
+    #[test]
+    fn count_range_with_from_counts_one_contract_only() {
+        let env = Env::default();
+        let first = batch(&env);
+        let other = batch(&env);
+        let to = Address::generate(&env);
+
+        first.batch(&to, &1);
+
+        crate::assert_event_count_range!(env, from = first.address, 3);
+        crate::assert_event_count_range!(env, from = other.address, 0);
+        crate::assert_event_count_range!(env, from = &first.address, 2..=3);
+    }
+
+    #[test]
+    fn count_range_honours_the_topic_filter_of_a_matcher() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &3);
+
+        EventMatcher::new(&env)
+            .with_topic("transfer")
+            .assert_count_within(2..=3);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected 4.. event(s) with topic \"transfer\", observed 3")]
+    fn count_range_names_the_topic_filter_when_it_fails() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &3);
+
+        EventMatcher::new(&env)
+            .with_topic("transfer")
+            .assert_count_within(4..);
+    }
+
+    #[test]
+    fn count_range_reads_an_event_log_across_invocations() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+        let mut log = EventLog::new(&env);
+
+        client.batch(&to, &1);
+        log.collect();
+        client.batch(&to, &2);
+        log.collect();
+
+        // 3 + 4 events collected; the latest call alone has 4.
+        crate::assert_event_count_range!(log, 7);
+        crate::assert_event_count_range!(&log, 5..=10);
+        crate::assert_event_count_range!(env, 4);
+        crate::assert_event_topic_count!(log, "transfer", 3);
+        crate::assert_event_topic_count!(log, "fee", 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Scope: event log (7 collected)")]
+    fn count_range_failure_over_a_log_names_the_log_as_its_scope() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+        let mut log = EventLog::new(&env);
+
+        client.batch(&to, &1);
+        log.collect();
+        client.batch(&to, &2);
+        log.collect();
+
+        crate::assert_event_count_range!(log, ..7);
+    }
+
+    #[test]
+    fn topic_count_matches_exact_frequencies() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_topic_count!(env, "transfer", 2);
+        crate::assert_event_topic_count!(env, "fee", 1);
+        crate::assert_event_topic_count!(env, "audit", 1);
+        crate::assert_event_topic_count!(env, "refund", 0);
+    }
+
+    #[test]
+    fn topic_count_accepts_ranges() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_topic_count!(env, "transfer", 1..=3);
+        crate::assert_event_topic_count!(env, "transfer", 2..);
+        crate::assert_event_topic_count!(env, "refund", ..1);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Event topic count mismatch: expected topic \"transfer\" exactly 3 time(s), observed 2"
+    )]
+    fn topic_count_fails_on_a_frequency_mismatch() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_topic_count!(env, "transfer", 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "observed 0 (topic \"Transfer\" was not observed)")]
+    fn topic_count_reports_a_missing_topic() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        // Symbols are case sensitive: the contract published `transfer`.
+        crate::assert_event_topic_count!(env, "Transfer", 2);
+    }
+
+    #[test]
+    fn topic_count_failure_includes_the_observed_topics_table() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &1);
+
+        let message = panic_message(|| crate::assert_event_topic_count!(env, "mint", 1));
+        assert!(message.contains("expected topic \"mint\" exactly 1 time(s), observed 0"));
+        assert!(message.contains("| transfer, <address> |     1 |"));
+        assert!(message.contains("| fee                 |     1 |"));
+        assert!(message.contains("| total               |     3 |"));
+    }
+
+    #[test]
+    #[should_panic(expected = "expected topic \"fee\" 2..=3 time(s), observed 1")]
+    fn topic_count_fails_when_a_range_is_breached() {
+        let env = Env::default();
+        let client = batch(&env);
+        let to = Address::generate(&env);
+
+        client.batch(&to, &2);
+
+        crate::assert_event_topic_count!(env, "fee", 2..=3);
+    }
+
+    #[test]
+    fn topic_count_with_from_counts_one_contract_only() {
+        let env = Env::default();
+        let first = batch(&env);
+        let other = batch(&env);
+        let to = Address::generate(&env);
+
+        first.batch(&to, &2);
+
+        crate::assert_event_topic_count!(env, from = first.address, "transfer", 2);
+        crate::assert_event_topic_count!(env, from = other.address, "transfer", 0);
+    }
+
+    #[test]
+    fn topic_count_matches_a_symbol_in_any_topic_position() {
+        let env = Env::default();
+        let client = emitter(&env);
+
+        client.emit_pair(&symbol_short!("claim"), &symbol_short!("grant"));
+
+        crate::assert_event_topic_count!(env, "claim", 1);
+        crate::assert_event_topic_count!(env, "grant", 1);
+    }
+
+    #[test]
+    fn a_negative_bound_matches_no_count() {
+        use super::EventCountBound;
+
+        assert!(!(-1i32).contains_count(0));
+        assert!(!(..-1i32).contains_count(0));
+        assert!((-5i32..=0).contains_count(0));
+        assert_eq!((..).describe(), "any number (..)");
+        assert_eq!(2usize.describe(), "exactly 2");
+    }
+
+    /// Runs `f`, which must panic, and returns its panic message.
+    fn panic_message(f: impl FnOnce()) -> String {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+            .expect_err("the assertion was expected to fail");
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn assert_event_data_schema_accepts_expected_struct_field_types() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_schema(&recipient);
+
+        crate::assert_event_data_schema!(&env, "schema", {
+            amount: i128,
+            count: u64,
+            enabled: bool,
+            name: Symbol,
+            recipient: Address,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "missing field `absent` (expected Symbol)")]
+    fn assert_event_data_schema_reports_missing_fields() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_schema(&recipient);
+
+        crate::assert_event_data_schema!(&env, "schema", {
+            absent: Symbol,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "field `amount` expected u64, found i128")]
+    fn assert_event_data_schema_reports_wrong_field_types() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_schema(&recipient);
+
+        crate::assert_event_data_schema!(&env, "schema", {
+            amount: u64,
+            count: u64,
+            enabled: bool,
+            name: Symbol,
+            recipient: Address,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "unexpected field `to`")]
+    fn assert_event_data_schema_rejects_extra_fields() {
+        let env = Env::default();
+        let client = data_emitter(&env);
+        let recipient = Address::generate(&env);
+        client.emit_shapes(&recipient);
+
+        crate::assert_event_data_schema!(&env, "moved", {
+            amount: i128,
+        });
     }
 }
