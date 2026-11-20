@@ -1950,6 +1950,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-cdp"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-counter"
 version = "0.4.1"
 dependencies = [
@@ -1984,6 +1996,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-dynamic-amm"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-flash-mint"
 version = "0.4.1"
 dependencies = [
@@ -1996,7 +2020,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-insurance"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-liquid-staking"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
+name = "soroban-testkit-example-nft"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
+name = "soroban-testkit-example-orderbook"
 version = "0.4.1"
 dependencies = [
  "proptest",
@@ -2036,7 +2096,9 @@ dependencies = [
  "k256",
  "proptest",
  "sha2",
+ "soroban-env-host",
  "soroban-sdk",
+ "soroban-testkit-core",
 ]
 
 [[package]]

@@ -88,6 +88,76 @@ Generating the *contract* form is what catches an address-format assumption — 
   <p>Every generated address carries a process-wide nonce, so two calls in one test run never collide even when their random prefixes do. The trade-off is that a value depends on generation order: judge a failing case by the bytes proptest prints rather than by replaying a seed alone.</p>
 </div>
 
+## Differential testing against a reference model
+
+A property test asserts something you can state without computing it — supply is conserved, a balance never goes negative. When you *can* compute the answer, compare against it: write the rule once as a contract and once as plain Rust, and check that every generated input makes the two agree. `DifferentialHarness` runs both sides and shrinks the first disagreement down to a small input you can paste into a regression test.
+
+```rust
+use soroban_testkit_generators::differential::DifferentialHarness;
+use soroban_testkit_generators::strategies::token_amount;
+
+let harness = DifferentialHarness::new();
+harness.compare(
+    token_amount(),
+    |amount| client.calculate_fee(&amount),
+    |amount| reference_fee_calculator(amount),
+);
+```
+
+The first closure is the contract, the second the model. Both take the generated input by value, so the contract call borrows it (`&amount`) while the model consumes it. `compare` panics on the shrunk input, naming what each side did with it:
+
+```text
+contract diverged from its reference model
+	smallest failing input: 1
+	return value: contract 1, model 0 (contract is 1 from the model)
+	tolerance: 0
+```
+
+That line is what `diff` reports without panicking, which is the form you want when the comparison is one of several checks in a test:
+
+```rust
+let report = DifferentialHarness::new()
+    .cases(64)
+    .tolerance(1)
+    .diff(token_amount(), |amount| client.calculate_fee(&amount), reference_fee_calculator);
+
+assert!(report.is_match(), "{}", report.failure().unwrap().render(1));
+```
+
+`tolerance` is how far apart two numbers may be and still count as equal — absolute units, not a percentage. A fee the contract rounds half-up and the model truncates is one unit out on every odd amount, and `.tolerance(1)` says so without also forgiving a fee computed off the wrong basis. Non-numeric results ignore the tolerance: `false` is never one unit from `true`, and a `u128` above `i128::MAX` has no signed form to diff.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Smaller, not necessarily smallest</span>
+  <p>Shrinking is <code>proptest</code>'s, and it walks down from a failing case to a smaller one that still fails, stopping at the first dead end. For a bug that only shows on odd amounts, that dead end can be a large odd number rather than <code>1</code>. Take the printed payload as the reproducer — paste it into an example-based test — or pin generation with <code>.seed(7)</code>, which replays the same inputs in the same order.</p>
+</div>
+
+### Comparing state as well as the return value
+
+A call on a ledger can return the right number and write the wrong state, which is why a side may return an `ExecutionTrace` instead of a bare value. `with_state` names a storage key the call leaves behind, and the harness compares keys the same way it compares return values:
+
+```rust
+use soroban_testkit_generators::differential::{DifferentialHarness, ExecutionTrace};
+
+let report = DifferentialHarness::new().diff(
+    token_amount(),
+    |amount| {
+        let fee = client.calculate_fee(&amount);
+        ExecutionTrace::new(fee).with_state("fee_total", client.fee_total())
+    },
+    |amount| {
+        let fee = reference_fee_calculator(amount);
+        ExecutionTrace::new(fee).with_state("fee_total", fee)
+    },
+);
+```
+
+Keys are strings you choose rather than symbols read off the ledger, which is what lets the model side record state without building an `Env`. Two consequences follow from that. A key only one side records is itself a divergence, reported against `<unset>`, so both sides have to name the same keys for the comparison to mean anything. And a contract that writes four keys needs four `with_state` calls: a trace that names one of them proves one of them.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Where to put one</span>
+  <p>Differential tests belong next to the arithmetic rather than the access control: bonding curves, fee splits, AMM invariants, interest accrual. Anywhere a second, simpler implementation is cheaper to write than the bug is to find. Every case builds a real <code>Env</code> for the contract side, so narrow the strategy with <a href="../crates/generators.html">a generator</a> before you raise the case count.</p>
+</div>
+
 ## When to use property testing
 
 <div class="tk-grid tk-grid--2">

@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -76,6 +76,7 @@ almost all of that without building a `LedgerInfo` by hand:
 | `ctx.set_timestamp(t)` | Jump to absolute time `t` |
 | `ctx.advance_time(s)` | Add `s` seconds, return the new timestamp |
 | `ctx.advance_ledger(n)` | Add `n` to the sequence, return the new height |
+| `ctx.archive_expired(n)` | Advance `n` ledgers, archive everything past its TTL, return the `ArchivalSweepSimulator` holding it |
 
 ```rust
 use soroban_testkit_fixtures::TestContext;
@@ -105,6 +106,78 @@ assert_eq!(unlocked_at, 1_702_592_000);
 Both helpers saturate instead of wrapping: advancing past `u64::MAX` or
 `u32::MAX` returns the maximum rather than panicking or rolling the clock back
 to a date in 1970.
+
+## Scripting multi-block scenarios
+
+Time-dependent contract logic — vesting, streams, bridge relays — fails under
+ledger movement a single call cannot reproduce: a missed block, a stalled
+network, a rollback that makes the clock run backwards. `ScenarioBuilder`
+scripts that movement as a chain over one `TestContext`:
+
+```rust
+use soroban_testkit_fixtures::ScenarioBuilder;
+
+let mut scenario = ScenarioBuilder::new(&ctx);
+scenario
+    .step("Open stream", |ctx| stream_client.open(&1_000))
+    .advance_blocks(100)
+    .step("Claim partial", |ctx| stream_client.claim())
+    .halt(3_600)
+    .advance_blocks(500)
+    .step("Final claim", |ctx| stream_client.claim());
+
+scenario.assert_all_passed();
+```
+
+| Method | Effect |
+|--------|--------|
+| `step(label, f)` | Runs a contract invocation and records it |
+| `check(label, f)` | Runs a `bool` state-consistency check |
+| `probe(label, f)` | Reads a contract clock/state and rejects a backwards move |
+| `advance_blocks(n)` | Closes `n` ledgers, leaving the clock alone |
+| `advance_time(s)` | Moves the clock `s` seconds, leaving the sequence alone |
+| `advance(blocks, seconds)` | Moves both |
+| `halt(s)` | A network halt: time passes, no block closes |
+| `rollback_blocks(n)` | A reorg that rewinds the sequence |
+| `set_clock(seq, t)` | Jump to an explicit ledger position |
+
+`step` and `check` run through `catch_unwind`, so a contract panic does not stop
+the script: later steps still run, and `assert_all_passed` fails with the whole
+timeline, marking the step that panicked. `format_timeline()` returns the same
+text when a test wants to assert on it:
+
+```text
+SCENARIO FAILED (1 failure(s))
+#00 seq=0 t=1700000000 start: seq=0 t=1700000000 (start)
+#01 seq=0 t=1700000000 Open stream: seq 0->0, t 1700000000->1700000000 (passed)
+#02 seq=100 t=1700000000 advance 100 block(s): seq 0->100 (passed)
+#03 seq=100 t=1700000100 Claim partial: ... (FAILED: attempt to subtract with overflow)
+  -> scenario step #3 "Claim partial": attempt to subtract with overflow
+```
+
+`probe` is the automated clock-inversion check. A contract reports the time it
+believes it is at, and a reading below the previous one is recorded as a
+failure naming both values and the subtraction that would underflow — which is
+what catches a streaming contract that computes `now - last_claim` after a
+reorg.
+
+```rust
+scenario
+    .step("Open", |_| stream.open(&1_700_000_000, &10))
+    .advance_time(100)
+    .probe("before reorg", |_| stream.clock())
+    .set_clock(0, 1_699_999_900)
+    .probe("after reorg", |_| stream.clock());
+// one failure: clock inversion in "after reorg": 1699999900 after …
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Bursts and halts are the same clock, different chain</span>
+  <p>Block production is not uniform. A scenario can close 1 then 100 then 500 blocks, or stop closing them while seconds still pass. A contract that measures progress in <code>timestamp()</code> reaches the same state either way; one that confuses heights with time does not — and the timeline shows which steps saw which heights.</p>
+</div>
+
+`blocks_elapsed()` and `seconds_elapsed()` saturate at zero, so a rollback below
+the starting height reports zero rather than wrapping into a huge number.
 
 ## Resetting the chain underneath a test
 
@@ -424,6 +497,101 @@ let (report, result) = sim.execute_with_delay(&env, || {
 });
 ```
 
+## Multi-validator consensus and ledger close jitter
+
+Stellar's SCP does not close a ledger on a fixed cadence: intervals drift between roughly three and eight seconds, and a validator only backs a close whose interval sits close to the one it nominated. Protocols that average over time — TWAP oracles, streaming rates, funding accrual, timelocks — behave differently under that jitter than they do against a metronome, and a test that closes every ledger by exactly five seconds cannot tell the two apart. `ConsensusSimulator` closes ledgers with a Gaussian-jittered interval, advances the ledger header, and counts validator votes for each round:
+
+```rust
+use soroban_sdk::Env;
+use soroban_testkit_fixtures::ConsensusSimulator;
+
+let env = Env::default();
+let mut sim = ConsensusSimulator::new()
+    .with_validators(5)
+    .with_quorum(3)
+    .with_close_interval(3_000, 8_000)
+    .with_jitter_std_ms(1_200.0)
+    .with_seed(7);                    // replay the same close sequence
+
+let round = sim.run_round(&env);
+println!(
+    "ledger {} at t={} ({} ms, {} votes for, quorum {})",
+    round.close.sequence,
+    round.close.timestamp,
+    round.close.close_interval_ms,
+    round.votes_for,
+    round.quorum,
+);
+
+// Or advance the chain and run the invocation in the block it produced:
+let (round, result) = sim.execute_with_consensus(&env, || client.try_swap(&100, &90, &deadline));
+```
+
+| Method | Effect |
+|--------|--------|
+| `close_ledger(&env)` | Close one ledger; returns a `LedgerClose` with the header values, the sampled interval and its jitter |
+| `advance_ledgers(&env, n)` | Close `n` ledgers, returning each close in order |
+| `run_round(&env)` | Close a ledger and collect every validator's vote on the interval |
+| `execute_with_consensus(&env, f)` | Run a round, then invoke `f` against the new head |
+| `next_close_interval_ms()` | Sample the next interval without touching the env |
+
+| Builder | Effect |
+|---------|--------|
+| `with_validators(n)` | Validators that vote each round (at least one) |
+| `with_quorum(n)` | Agreeing votes a round needs, clamped to `1..=validators` |
+| `with_close_interval(min, max)` | Allowed close interval range in milliseconds |
+| `with_jitter_std_ms(std)` | Standard deviation of the Gaussian jitter; zero closes on the midpoint |
+| `with_seed(seed)` | Reproducible interval and vote sequence |
+
+<div class="tk-grid tk-grid--2">
+  <div class="tk-card">
+    <span class="tk-card__kicker">Clamped, not truncated</span>
+    <h3 class="tk-card__title">The range is a promise</h3>
+    <p class="tk-card__body">Samples are drawn Gaussian around the range midpoint and then clamped, so a close never leaves the interval the test declared even when the tail of the distribution would. A zero standard deviation makes every close take the midpoint.</p>
+  </div>
+  <div class="tk-card tk-card--accent">
+    <span class="tk-card__kicker">Milliseconds in, seconds out</span>
+    <h3 class="tk-card__title">Headers store whole seconds</h3>
+    <p class="tk-card__body">The sampled interval is reported in milliseconds, but a ledger header stores seconds, so the timestamp advances by the interval rounded up. Both numbers are on <code>LedgerClose</code>, which is why a test can assert on the millisecond sample and on <code>env.ledger().timestamp()</code> independently.</p>
+  </div>
+</div>
+
+### Votes and quorum
+
+A round closes a ledger regardless of the vote outcome, which is what makes it useful for testing protocols that react to a ledger rather than to consensus itself. Each validator nominates its own interval and votes for the close when that nomination is within `acceptance_band_ms` — 1.96 standard deviations — of the closed interval:
+
+```rust
+let round = sim.run_round(&env);
+assert_eq!(round.votes_for + round.votes_against, round.validators);
+assert_eq!(round.quorum_reached, round.votes_for >= round.quorum);
+```
+
+A band that covers the jitter (the default) keeps rounds agreed. Tightening the band, or raising the quorum to every validator, produces rounds that close a ledger yet miss quorum — the shape a test needs when the contract under test is supposed to wait for agreement.
+
+### Time-weighted averages under jitter
+
+An oracle that weights a price by the time it was live must use the ledger timestamp, not the block height. `ConsensusSimulator` is what makes the difference visible:
+
+```rust
+let mut sim = ConsensusSimulator::new().with_seed(3);
+client.record(&100);
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&100);
+}
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&200);
+}
+
+// Twenty irregular closes at each price: the TWAP sits between the prices,
+// near their midpoint, instead of snapping to one of them.
+let twap = client.twap();
+assert!((100..=200).contains(&twap));
+```
+
+The fixture's own tests run that shape across a range of seeds and assert that irregular intervals never push the average outside the price range or far from the duration-weighted result.
+
 ## Extending fixtures
 
 Compose `TestContext` into project-specific fixtures so setup is written once per repo:
@@ -455,3 +623,109 @@ impl TokenTestEnv {
     <p class="tk-card__body">Registering contracts and seeding their state from the builder would turn the setup above into one line.</p>
   </div>
 </div>
+
+## Multi-contract protocol registry and upgrade proxy pattern (`ProtocolRegistryHarness`)
+
+Production DeFi protocols typically use an address registry contract (service locator pattern) and upgradeable proxy contracts to route calls to active implementation contracts. Testing dynamic service discovery, protocol-wide dependency injection, and live address swaps requires orchestrating multiple interconnected contracts.
+
+[`ProtocolRegistryHarness`] maintains a directory of registered service contracts (`Router`, `Treasury`, `Oracle`, `Vault`, and custom roles), deploys on-chain registry contracts, simulates protocol upgrades by swapping service addresses, and validates that consumer contracts seamlessly resolve updated implementations.
+
+### Coordinating multi-contract protocol topologies
+
+Initialize a harness around an [`Env`], register protocol services, and attach dependent consumer contracts:
+
+```rust
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::{ProtocolRegistryHarness, ServiceRole};
+
+let env = Env::default();
+env.mock_all_auths();
+
+let mut harness = ProtocolRegistryHarness::new(&env);
+
+// Deploy and register core protocol services
+let router_addr = Address::generate(&env);
+let treasury_addr = Address::generate(&env);
+let oracle_v1 = Address::generate(&env);
+let vault_addr = Address::generate(&env);
+
+harness.register_service(ServiceRole::Router, &router_addr).unwrap();
+harness.register_service(ServiceRole::Treasury, &treasury_addr).unwrap();
+harness.register_service(ServiceRole::Oracle, &oracle_v1).unwrap();
+harness.register_service(ServiceRole::Vault, &vault_addr).unwrap();
+
+// Register a consumer contract with its declared dependencies
+let pool_addr = Address::generate(&env);
+harness.register_consumer("LiquidityPool", &pool_addr, [ServiceRole::Oracle, ServiceRole::Vault]).unwrap();
+```
+
+### Simulating protocol upgrades
+
+Simulate a protocol upgrade by swapping a service address in the registry. The harness validates monotonic version increments, records before-and-after audit logs, and updates the on-chain registry contract:
+
+```rust
+let oracle_v2 = Address::generate(&env);
+
+// Upgrade Oracle from v1 to v2:
+let upgrade_record = harness.upgrade_service(ServiceRole::Oracle, &oracle_v2).unwrap();
+assert_eq!(upgrade_record.from_version, 1);
+assert_eq!(upgrade_record.to_version, 2);
+
+// Consumers querying the registry dynamically resolve the new implementation
+assert_eq!(harness.resolve(&ServiceRole::Oracle).unwrap(), oracle_v2);
+
+// Verify all dependent consumer contracts resolve updated services
+harness.verify_consumer_resolution("LiquidityPool", &ServiceRole::Oracle, &oracle_v2).unwrap();
+```
+
+### Upgrade proxy pattern
+
+Deploy an `UpgradeProxyContract` bound to a specific service role. The proxy dynamically resolves its implementation address via the on-chain registry, allowing calls to route to the latest implementation without consumer reconfiguration:
+
+```rust
+// Deploy an upgrade proxy pointing to the Treasury service role
+let proxy_address = harness.deploy_proxy(ServiceRole::Treasury);
+
+// Proxy dynamically resolves Treasury v1
+let active_impl = harness.resolve_from_proxy(&proxy_address);
+assert_eq!(active_impl, treasury_addr);
+
+// Upgrade treasury address in registry:
+let treasury_v2 = Address::generate(&env);
+harness.upgrade_service(ServiceRole::Treasury, &treasury_v2).unwrap();
+
+// Proxy immediately and seamlessly resolves Treasury v2
+assert_eq!(harness.resolve_from_proxy(&proxy_address), treasury_v2);
+```
+
+### Topology diagram generation
+
+Visualizing interconnected multi-contract topologies helps verify protocol dependencies and architecture in tests and documentation:
+
+```rust
+// Generate Mermaid diagram for PRs or Markdown documentation:
+println!("{}", harness.to_mermaid());
+
+// Or format a clean ASCII topology summary:
+println!("{}", harness.render_topology());
+```
+
+```mermaid
+flowchart TD
+  Registry["Registry"]
+  subgraph Services["Protocol Services"]
+    ROUTER["Router (v1)"]
+    TREASURY["Treasury (v2)"]
+    ORACLE["Oracle (v2)"]
+    VAULT["Vault (v1)"]
+  end
+  Registry --> ROUTER
+  Registry --> TREASURY
+  Registry --> ORACLE
+  Registry --> VAULT
+  subgraph Consumers["Dependent Consumers"]
+    C_0["LiquidityPool"]
+  end
+  C_0 -. resolves .-> ORACLE
+  C_0 -. resolves .-> VAULT
+```

@@ -1,10 +1,20 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
+pub use crate::cost_model::{
+    contract_cost_model, contract_cost_model_with_config, contract_cost_model_with_multipliers,
+    ContractCostComponent, ContractCostEntry, ContractCostModel, ContractCostModelConfig,
+    CostDimension, BASELINE_COST_ENTRIES,
+};
 pub use crate::crypto::{
     ed25519_signature_pair, malleated_signature, secp256k1_signature_pair, Ed25519SignaturePair,
     Secp256k1SignaturePair,
 };
 pub use crate::executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+pub use crate::storage_tier::{
+    mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
+    storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
+    MixedTierTtlAllocation, StorageTierWithTtl,
+};
 
 use proptest::prelude::*;
 use soroban_sdk::xdr::{
@@ -78,6 +88,18 @@ pub struct AddressBytes {
 }
 
 impl AddressBytes {
+    /// Build an address from its format tag and bytes.
+    ///
+    /// Crate-internal: the public API generates addresses, and a hand-built one
+    /// is only useful to a test that needs a predictable value.
+    #[cfg(test)]
+    pub(crate) fn from_parts(address_type: AddressType, bytes: [u8; 32]) -> Self {
+        Self {
+            address_type,
+            bytes,
+        }
+    }
+
     /// The format this address was generated as.
     pub fn address_type(&self) -> AddressType {
         self.address_type

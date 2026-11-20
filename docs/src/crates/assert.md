@@ -16,6 +16,10 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventMatcher::assert_not_emitted()` | No matching event exists |
 | `EventMatcher::assert_none_match(pred)` | No matching event satisfies a predicate |
 | `EventMatcher::assert_count(n)` | Exactly `n` events were emitted |
+| `EventMatcher::assert_count_within(bound)` | The number of matching events falls within a range (or equals a count) |
+| `EventMatcher::assert_topic_count(topic, bound)` | The number of events carrying `topic` falls within a range (or equals a count) |
+| `assert_event_count_range!(env, 3..=5)` | Macro form of `assert_count_within`, over an `Env` or an `EventLog` |
+| `assert_event_topic_count!(env, "Transfer", 2)` | Macro form of `assert_topic_count`, over an `Env` or an `EventLog` |
 | `EventMatcher::assert_data_matches(pred)` | One event's payload satisfies a predicate |
 | `EventMatcher::from_contract(addr)` | Restricts matches to one contract address |
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
@@ -30,6 +34,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `AuthSubInvocationMatcher::assert_matches()` | An authorized sub-call matching contract, function, and arguments appears at any depth |
+| `assert_auth_sub_invocation!(env, { .. })` | Inline sub-invocation matcher isolating intermediate contract calls at any depth |
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
 | `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
 | `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
@@ -153,6 +159,72 @@ panicked at 'Expected no events to be emitted, found 1 — unexpected event: top
   <span class="tk-callout__title">A negative assertion reads its matcher's scope</span>
   <p><code>EventMatcher::new(&amp;env).assert_not_emitted()</code> proves the <strong>most recent invocation</strong> published nothing matching. Proving a topic never appeared across a test is the <a href="#asserting-across-several-invocations"><code>EventLog</code></a> case: collect each call, then <code>log.matcher().with_topic("Refund").assert_not_emitted()</code>.</p>
 </div>
+
+## Event count ranges and topic frequencies
+
+An exact `assert_count(n)` breaks the day a batch call starts emitting one extra fee or audit event, even though the behaviour under test did not change. Two macros state what the test actually depends on instead: that the total falls in a range, and that a given topic appeared a given number of times.
+
+```rust
+use soroban_testkit_assert::{assert_event_count_range, assert_event_topic_count};
+
+client.batch_transfer(&from, &recipients); // 2 transfers + auxiliary events
+
+// Total events within a range: any standard range works.
+assert_event_count_range!(env, 3..=5);
+assert_event_count_range!(env, 2..);
+assert_event_count_range!(env, ..=10);
+
+// An exact topic frequency, or a range of them.
+assert_event_topic_count!(env, "transfer", 2);
+assert_event_topic_count!(env, "fee", 0..=1);
+assert_event_topic_count!(env, "refund", 0);
+
+// Restrict either one to the events of one contract.
+assert_event_count_range!(env, from = token_id, 3..);
+assert_event_topic_count!(env, from = token_id, "transfer", 2);
+```
+
+The bound is an exact count (`2`) or any range over integers: `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`. Integer literals need no suffix. A topic counts the same way `with_topic` matches: an event counts once when **any** of its topics is that symbol, and symbols are case sensitive.
+
+The first argument is anything that implements `EventSource`: an `Env` (the most recent invocation) or an [`EventLog`](#asserting-across-several-invocations) (every call it collected), by value or by reference. That makes the macros the natural way to bound a whole multi-step test:
+
+```rust
+let mut log = EventLog::new(&env);
+for batch in batches {
+    client.batch_transfer(&from, &batch);
+    log.collect();
+}
+assert_event_count_range!(log, 6..=12);
+assert_event_topic_count!(log, "transfer", 6);
+```
+
+Both checks also exist as matcher methods, which compose with the existing filters:
+
+```rust
+EventMatcher::new(&env)
+    .from_contract(&token_id)
+    .with_topic("transfer")
+    .assert_count_within(2..=3);
+
+EventMatcher::new(&env).assert_topic_count("fee", 1);
+```
+
+### Failure diagnostics
+
+A failure prints the bound, the observed count, the scope that was read, and a table of every topic signature in scope with how many events carried it, so you see what was emitted instead. Symbol topics are spelled out. Every other topic shows as its type (`<address>`, `<i128>`, …), so transfers to different recipients share one row:
+
+```text
+Event topic count mismatch: expected topic "Transfer" exactly 2 time(s), observed 0 (topic "Transfer" was not observed)
+Scope: most recent invocation
+| Observed topics     | Count |
+|---------------------|-------|
+| transfer, <address> |     2 |
+| fee                 |     1 |
+| audit               |     1 |
+| total               |     4 |
+```
+
+The table lists signatures in the order they first appeared. It honours `from = …` / `from_contract` but deliberately ignores the topic being counted, because the useful question on failure is "what did come out of the call?".
 
 ## Asserting on payload data
 
@@ -411,6 +483,61 @@ invoker Contract(C…1234)                                     | [0] invoker Con
 contract Contract(C…BBBB) function "route"                   | contract Contract(C…AAAA) function "swap" args [...]
 ├── contract Contract(C…CCCC) function "deposit"             | └── contract Contract(C…BBBB) function "route" args [...]
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
+```
+
+### Isolating intermediate sub-invocations
+
+When inspecting authorization trees from complex multi-contract calls, developers often only care about asserting that a specific intermediate contract properly authorized a sub-call, regardless of top-level invoker details.
+
+`assert_auth_sub_invocation!` searches recursively across all recorded authorization trees and matches any sub-invocation matching `{ contract, function, args }` at any depth:
+
+```rust
+use soroban_testkit_assert::assert_auth_sub_invocation;
+
+aggregator.swap(&user, &pool_id, &vault_id, &500i128);
+
+// Matches Vault deposit at depth 2 without naming Aggregator or Pool:
+assert_auth_sub_invocation!(env, {
+    contract: vault_id,
+    function: "deposit",
+    args: [user.clone(), 500i128],
+});
+
+// Matches intermediate Pool route without top-level wrapper details:
+assert_auth_sub_invocation!(env, {
+    contract: pool_id,
+    function: "route",
+    args: [_, vault_id, 500i128],
+});
+```
+
+All fields are optional and accept `_` as a wildcard:
+
+- `contract: addr` (or `_` / omitted): filters calls targeting `addr`.
+- `function: "name"` (or `_` / omitted): filters calls named `"name"`.
+- `args: [_, val]` (or `_` / omitted): matches arguments positionally with `_` wildcards.
+- `invoker: addr` (or `_` / omitted): restricts matches to authorization trees originating from `addr`.
+
+The same matching is available via the chainable builder `AuthSubInvocationMatcher`:
+
+```rust
+use soroban_testkit_assert::auth::{AuthArgs, AuthSubInvocationMatcher};
+
+AuthSubInvocationMatcher::new(&env)
+    .contract(&vault_id)
+    .function("deposit")
+    .args(AuthArgs::new().any().value(&env, 500i128))
+    .assert_matches();
+```
+
+When no matching sub-invocation is found, the assertion formats the full recorded authorization tree displaying all sub-invocations:
+
+```text
+panicked at 'Expected authorization sub-invocation matching { contract Contract(C…), function "deposit", args [_, 999] }, found no match in 1 recorded authorization tree(s):
+[0] invoker Contract(C…1234)
+contract Contract(C…AAAA) function "swap" args [...]
+└── contract Contract(C…BBBB) function "route" args [...]
+    └── contract Contract(C…CCCC) function "deposit" args [...]'
 ```
 
 ## Failure messages

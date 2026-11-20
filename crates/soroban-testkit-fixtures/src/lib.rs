@@ -1,20 +1,33 @@
+pub mod archival;
 pub mod builder;
 pub mod congestion;
+pub mod consensus;
 pub mod event_indexer;
 pub mod eviction;
 pub mod failure_injector;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
+pub mod protocol_registry;
 
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
 };
+pub use consensus::{
+    ConsensusRound, ConsensusSimulator, LedgerClose, DEFAULT_JITTER_STD_MS,
+    DEFAULT_MAX_CLOSE_INTERVAL_MS, DEFAULT_MIN_CLOSE_INTERVAL_MS, DEFAULT_QUORUM, DEFAULT_SEED,
+    DEFAULT_VALIDATORS, QUORUM_ACCEPTANCE_SIGMA,
+};
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use profiles::NetworkProfile;
+pub use protocol_registry::{
+    ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
+    ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
+    ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
 
-pub use failure_injector::FailureInjector;
+pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
@@ -139,6 +152,30 @@ impl TestContext {
         let next = self.sequence().saturating_add(count);
         self.env.ledger().set_sequence_number(next);
         next
+    }
+
+    /// Archive every entry this context's ledger has let expire, returning the
+    /// simulator that holds them.
+    ///
+    /// Moves the ledger `count` sequences forward first, then sweeps the whole
+    /// environment the way the network does between ledgers: persistent
+    /// entries past their TTL are archived (and can be restored), temporary
+    /// ones are evicted for good. Contract instance and code entries stay live,
+    /// so the contracts registered here remain callable while the test reads
+    /// what the sweep did to their data.
+    ///
+    /// ```rust
+    /// use soroban_testkit_fixtures::builder::TestContextBuilder;
+    ///
+    /// let mut ctx = TestContextBuilder::new().build();
+    /// // With nothing stored, the sweep has nothing to archive.
+    /// let simulator = ctx.archive_expired(10_000);
+    /// assert!(simulator.is_empty());
+    /// ```
+    pub fn archive_expired(&mut self, count: u32) -> crate::archival::ArchivalSweepSimulator {
+        let mut simulator = crate::archival::ArchivalSweepSimulator::new();
+        simulator.sweep(&self.env, count);
+        simulator
     }
 
     /// Swap in a fresh environment and keep every address this context holds.
