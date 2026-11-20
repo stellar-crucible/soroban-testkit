@@ -23,6 +23,7 @@
 - [Worked Example: Crowdfunding and Milestone Escrow](./guides/crowdfunding-example.md)
 - [Worked Example: Liquid Staking](./guides/liquid-staking-example.md)
 - [Worked Example: Synthetic Asset CDP](./guides/cdp-example.md)
+- [Worked Example: Decentralized Insurance](./guides/insurance-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 
