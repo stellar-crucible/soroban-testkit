@@ -5,8 +5,11 @@
 //! [`DEFAULT_HOST_DEPTH_LIMIT`] — `100` — in `src/budget/limits.rs`, and
 //! `Host::with_frame` in `src/host/frame.rs` refuses to open a frame when the
 //! context stack has already reached it, returning
-//! `Context/ExceededLimit`. Frames 1 through 100 are therefore accepted and the
-//! 101st nested call is the one that fails.
+//! `Context/ExceededLimit`. With an empty context stack — the case for a test
+//! environment's top-level client call — contract frames 1 through 100 are
+//! accepted and the 101st nested call is the one that fails. An entry point
+//! reached through `Host::invoke_function` pushes a host-function frame first,
+//! so it has room for 99 contract frames.
 //!
 //! [`StackDepthAuditor`] reconstructs every frame of a call chain from the
 //! diagnostic events the host records for each contract call: `fn_call`
@@ -53,12 +56,17 @@ use soroban_env_host::xdr::{ContractEventBody, ContractEventType, ScVal};
 use soroban_sdk::Env;
 use std::fmt;
 
-/// The host's contract call-stack ceiling, in frames.
+/// The host's context-stack ceiling, in frames.
 ///
 /// This is [`soroban_env_host::DEFAULT_HOST_DEPTH_LIMIT`] rather than a local
 /// guess: `soroban-env-host` 28.0.2 sets it to `100` in
 /// `src/budget/limits.rs`, and `Host::with_frame` rejects a new frame once the
 /// context stack has reached it.
+///
+/// A test environment's top-level client call starts with an empty context
+/// stack, so 100 contract frames are accepted and the 101st fails. An entry
+/// point reached through `Host::invoke_function` pushes a host-function frame
+/// first and therefore has room for 99 contract frames.
 pub const HOST_CALL_STACK_LIMIT: u32 = soroban_env_host::DEFAULT_HOST_DEPTH_LIMIT;
 
 /// The default warning threshold: 90% of [`HOST_CALL_STACK_LIMIT`].

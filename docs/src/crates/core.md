@@ -453,8 +453,11 @@ auditor.exit();
 The cap defaults to the host's own limit, not a number Testkit guessed.
 `soroban-env-host` 28.0.2 defines `DEFAULT_HOST_DEPTH_LIMIT = 100` in
 `src/budget/limits.rs`, and `Host::with_frame` in `src/host/frame.rs` returns
-`Context/ExceededLimit` when the context stack has already reached it. Frames
-1 through 100 are accepted; the 101st nested call is the one that fails. The
+`Context/ExceededLimit` when the context stack has already reached it. A test
+environment's top-level client call starts with an empty context stack, so
+contract frames 1 through 100 are accepted and the 101st nested call is the one
+that fails. An entry point reached through `Host::invoke_function` pushes a
+host-function frame first, which leaves room for 99 contract frames. The
 constant is re-exported as `HOST_CALL_STACK_LIMIT`.
 
 <div class="tk-callout tk-callout--info">
