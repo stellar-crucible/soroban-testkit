@@ -2032,6 +2032,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-nft"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
+name = "soroban-testkit-example-orderbook"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-token"
 version = "0.4.1"
 dependencies = [
