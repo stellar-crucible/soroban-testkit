@@ -13,7 +13,10 @@ pub use compatibility::{
     CompatibilityAuditor, CompatibilityGrade, CompatibilityScorecard, DeprecationItem,
     DeprecationSeverity, DEFAULT_TARGET_PROTOCOL,
 };
-pub use footprint::{FootprintSnapshot, StorageFootprint, StorageFootprintDiff};
+pub use footprint::{
+    FootprintSnapshot, RentEstimate, RentParameters, StorageFootprint, StorageFootprintDiff,
+    DEFAULT_PROJECTION_LEDGERS,
+};
 pub use namespace_auditor::{NamespaceAuditor, NamespaceReport};
 pub use stack_depth::{
     CallFrame, StackDepthAuditor, StackDepthBreach, DEFAULT_WARNING_THRESHOLD,
