@@ -1,6 +1,8 @@
 pub mod event_fuzz;
 
 #[cfg(feature = "proptest")]
+pub mod authorization;
+#[cfg(feature = "proptest")]
 pub mod cost_model;
 #[cfg(feature = "proptest")]
 pub mod crypto;
@@ -8,8 +10,6 @@ pub mod crypto;
 pub mod differential;
 #[cfg(feature = "proptest")]
 pub mod errors;
-#[cfg(feature = "proptest")]
-pub mod authorization;
 #[cfg(feature = "proptest")]
 pub mod executables;
 #[cfg(feature = "proptest")]
@@ -25,6 +25,8 @@ pub mod ttl;
 #[cfg(feature = "proptest")]
 pub mod tuples;
 
+#[cfg(feature = "proptest")]
+pub use authorization::{address_with_nonce, authorization_credential, sequential_nonces};
 #[cfg(feature = "proptest")]
 pub use cost_model::{
     contract_cost_model, contract_cost_model_with_config, contract_cost_model_with_multipliers,
@@ -43,8 +45,6 @@ pub use differential::{
 };
 #[cfg(feature = "proptest")]
 pub use errors::{host_error_code_coverage, HostError};
-#[cfg(feature = "proptest")]
-pub use authorization::{address_with_nonce, authorization_credential, sequential_nonces};
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 #[cfg(feature = "proptest")]

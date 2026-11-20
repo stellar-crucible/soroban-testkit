@@ -6,11 +6,9 @@ use crate::strategies::{address, AddressBytes};
 
 /// Generates a valid address/nonce pair from a Soroban address.
 pub fn address_with_nonce(address: AddressBytes) -> impl Strategy<Value = AddressWithNonce> {
-    (0i64..=i64::MAX).prop_map(move |nonce| {
-        AddressWithNonce {
-            address: ScAddress::from(address),
-            nonce,
-        }
+    (0i64..=i64::MAX).prop_map(move |nonce| AddressWithNonce {
+        address: ScAddress::from(address),
+        nonce,
     })
 }
 
@@ -70,10 +68,12 @@ mod tests {
     #[test]
     fn nonce_strategy_includes_small_values() {
         let mut runner = TestRunner::default();
-        runner.run(&sequential_nonces(2), |nonces| {
-            prop_assert!(nonces[0] >= 1);
-            prop_assert!(nonces[1] > nonces[0]);
-            Ok(())
-        }).unwrap();
+        runner
+            .run(&sequential_nonces(2), |nonces| {
+                prop_assert!(nonces[0] >= 1);
+                prop_assert!(nonces[1] > nonces[0]);
+                Ok(())
+            })
+            .unwrap();
     }
 }
