@@ -293,11 +293,7 @@ pub fn event_matches_topic_pattern(event: &ContractEvent, pattern: &str) -> bool
 
     // 2. Check joined colon-delimited topics
     let joined = topics.join(":");
-    if matches_topic_pattern(pattern, &joined) {
-        return true;
-    }
-
-    false
+    matches_topic_pattern(pattern, &joined)
 }
 
 type DataPredicate<'a> = Box<dyn Fn(&Env, &ScVal) -> Result<(), String> + 'a>;
