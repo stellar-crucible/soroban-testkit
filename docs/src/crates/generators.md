@@ -44,6 +44,9 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `expired_ttl(current)` | `EntryTtl` | an entry that expired before `current` |
 | `ttl_extension_delta()` | `u32` | 1 to `MAINNET_MAX_ENTRY_TTL` (3,110,400) ledgers |
 | `ttl_extension_delta_up_to(max)` | `u32` | 1 to `max` ledgers |
+| `soroban_duration(env, min_secs, max_secs)` | `Duration` | a host duration in `min_secs..=max_secs` seconds |
+| `soroban_timepoint(env, min_timestamp, max_timestamp)` | `Timepoint` | a host timepoint in `min_timestamp..=max_timestamp` unix seconds |
+| `ledger_sequence_interval()` | `(u32, u32)` | `(start, end)` with `start <= end`, both in `1..=10,000,000` |
 
 ## Usage with proptest
 
@@ -288,6 +291,55 @@ neither has a value to generate.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the expiration boundary</span>
   <p><code>entry_ttl</code> shrinks the TTL towards <code>min_threshold</code>, <code>expired_ttl</code> shrinks towards the entry that expired exactly one ledger ago, and <code>ttl_extension_delta</code> shrinks towards a single ledger. A renewal bug therefore minimises to the entry closest to dying, which is where off-by-one liveness checks fail. The module's own tests check these intervals against the host: what <code>entry_ttl</code> generates is what <code>get_ttl</code> reports, and a temporary entry is readable on <code>live_until_ledger</code> and gone on <code>expires_at()</code>.</p>
+</div>
+
+## Durations, timepoints and ledger intervals
+
+Vesting schedules, timelocks and renewal windows are all expressed in the
+SDK's two time types. Both are 64-bit unsigned second counts, but they are
+environment-backed wrappers rather than `u64`: build one with
+`Duration::from_seconds(&env, ..)` or `Timepoint::from_unix(&env, ..)` and read
+it back with `to_seconds()` or `to_unix()`. The strategies therefore take an
+`Env`, the same way `fuzzed_invocation_args` does, so the generated value
+belongs to the environment under test.
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::Env;
+use soroban_testkit_generators::{ledger_sequence_interval, soroban_duration, soroban_timepoint};
+
+proptest! {
+    #[test]
+    fn a_timelock_unlocks_after_its_start(
+        (start, duration) in {
+            let env = Env::default();
+            (
+                soroban_timepoint(&env, 1_600_000_000, 2_000_000_000),
+                soroban_duration(&env, 0, 100_000_000),
+            )
+        },
+        (first, last) in ledger_sequence_interval(),
+    ) {
+        let unlock = start.to_unix() + duration.to_seconds(); // bounded ranges
+        prop_assert!(unlock >= start.to_unix());
+        prop_assert!(first <= last);
+    }
+}
+```
+
+`ledger_sequence_interval()` returns the interval itself rather than a
+`Duration` or `Timepoint`: both ends are ordinary `u32` ledger numbers in the
+same range `ledger_sequence()` draws from, ordered so `start <= end` always
+holds.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Ranges are validated</span>
+  <p><code>soroban_duration</code> and <code>soroban_timepoint</code> panic when the minimum is above the maximum, matching the crate's existing range strategies. The whole <code>u64</code> range is accepted, including <code>u64::MAX</code>; the range strategy itself cannot overflow because it never adds to the generated value.</p>
+</div>
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the shortest span</span>
+  <p>A failing duration minimises to <code>min_secs</code>, a failing timepoint to <code>min_timestamp</code>, and a failing interval to <code>(1, 1)</code> — or to <code>(1, 2)</code> when the bug needs a non-empty span. A vesting calculation that is wrong at the end of its schedule is therefore reported at the earliest boundary that reproduces it rather than at a random year.</p>
 </div>
 
 ## Event Fuzzing

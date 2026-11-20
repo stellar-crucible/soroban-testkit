@@ -11,6 +11,8 @@ pub mod storage_tier;
 #[cfg(feature = "proptest")]
 pub mod strategies;
 #[cfg(feature = "proptest")]
+pub mod temporal;
+#[cfg(feature = "proptest")]
 pub mod ttl;
 #[cfg(feature = "proptest")]
 pub mod tuples;
@@ -31,6 +33,10 @@ pub use storage_tier::{
     MixedTierTtlAllocation, StorageTierWithTtl,
 };
 pub use strategies::fuzzed_invocation_args;
+#[cfg(feature = "proptest")]
+pub use temporal::{
+    ledger_sequence_interval, soroban_duration, soroban_timepoint, MAX_LEDGER_SEQUENCE,
+};
 #[cfg(feature = "proptest")]
 pub use ttl::{
     entry_ttl, expired_ttl, ttl_extension_delta, ttl_extension_delta_up_to, EntryTtl,
