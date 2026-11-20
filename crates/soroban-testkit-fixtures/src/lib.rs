@@ -1,9 +1,36 @@
 pub mod archival;
 pub mod builder;
+pub mod congestion;
+pub mod event_indexer;
+pub mod eviction;
+pub mod gas_exhaustion;
+pub mod migration;
+pub mod profiles;
+pub mod protocol_registry;
+
+pub use congestion::{
+    CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
+};
+
+pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
+pub use profiles::NetworkProfile;
+pub use protocol_registry::{
+    ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
+    ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
+    ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
 use soroban_sdk::{Address, Env, TryFromVal as _};
+
+pub use event_indexer::{
+    EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
+};
+pub use eviction::StateEvictionSimulator;
+pub use gas_exhaustion::{
+    ExecutionBudget, ExecutionReport, ExecutionStatus, ExhaustedResource, GasExhaustionHarness,
+};
 
 pub struct TestContext {
     pub env: Env,
@@ -15,6 +42,9 @@ pub struct TestContext {
     /// assumed policy: `new` and the builder record what they actually did,
     /// and `with_env` defaults to mocked.
     pub mock_auths: bool,
+    /// The network conditions the builder installed and [`TestContext::reset`]
+    /// re-applies to the fresh env.
+    pub network_profile: NetworkProfile,
 }
 
 impl Default for TestContext {
@@ -44,6 +74,7 @@ impl TestContext {
             admin,
             users: Vec::new(),
             mock_auths: true,
+            network_profile: NetworkProfile::Local,
         }
     }
 
@@ -161,6 +192,7 @@ impl TestContext {
         if self.mock_auths {
             env.mock_all_auths();
         }
+        self.network_profile.apply(&env);
         self.env = env;
 
         self.admin = migrated_to(&self.env, &carried[0]);

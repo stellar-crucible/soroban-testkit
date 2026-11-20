@@ -26,6 +26,16 @@ EventMatcher::new(&env)
             .and_then(|value| value.deserialize::<u32>())
             == Some(12)
     });
+
+// Validate the full shape of a contractevent payload:
+soroban_testkit_assert::assert_event_data_schema!(&env, "transfer", {
+    amount: i128,
+    from: soroban_sdk::Address,
+    to: soroban_sdk::Address,
+});
+
+// Decode failed try_* calls instead of using an opaque unwrap():
+let value = soroban_testkit_assert::assert_no_contract_error!(client.try_get());
 ```
 
 A matcher reads the invocation that just ran — what Soroban SDK v28 exposes through `env.events().all()`. Gather several calls to assert over them as one set:
@@ -41,6 +51,21 @@ log.collect();
 
 log.matcher().with_topic("Transfer").assert_count(1);
 log.matcher().with_topic("Refund").assert_not_emitted();
+```
+
+### Relative Gas Savings Comparison
+
+Compare baseline and optimized algorithm implementations and assert relative gas savings:
+
+```rust
+use soroban_testkit_assert::assert_budget_diff_within;
+
+assert_budget_diff_within!(
+    &env,
+    baseline: { client.linear_search(&items, &target) },
+    optimized: { client.binary_search(&items, &target) },
+    min_cpu_savings_percent: 20.0,
+);
 ```
 
 - Documentation: <https://stellar-crucible.github.io/soroban-testkit/crates/assert.html>
