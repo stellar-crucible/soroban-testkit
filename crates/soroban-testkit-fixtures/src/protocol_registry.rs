@@ -39,9 +39,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol};
 
 /// Canonical roles for core protocol services in a DeFi ecosystem.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -165,7 +163,10 @@ impl fmt::Display for ProtocolRegistryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProtocolRegistryError::ServiceNotRegistered(role) => {
-                write!(f, "Service '{role}' is not registered in the protocol registry")
+                write!(
+                    f,
+                    "Service '{role}' is not registered in the protocol registry"
+                )
             }
             ProtocolRegistryError::ServiceAlreadyRegistered(role) => {
                 write!(
@@ -273,7 +274,9 @@ impl ProtocolRegistryContract {
         if env.storage().instance().has(&RegistryDataKey::Admin) {
             panic!("registry already initialized");
         }
-        env.storage().instance().set(&RegistryDataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&RegistryDataKey::Admin, &admin);
     }
 
     /// Register or update a service address. Requires admin authorization.
@@ -336,7 +339,9 @@ impl UpgradeProxyContract {
         if env.storage().instance().has(&ProxyDataKey::Registry) {
             panic!("proxy already initialized");
         }
-        env.storage().instance().set(&ProxyDataKey::Registry, &registry);
+        env.storage()
+            .instance()
+            .set(&ProxyDataKey::Registry, &registry);
         env.storage().instance().set(&ProxyDataKey::Role, &role);
     }
 
@@ -679,10 +684,7 @@ impl ProtocolRegistryHarness {
                 let role_id = role.as_str().to_uppercase();
                 mermaid.push_str(&format!(
                     "    {}[\"{} (v{})<br/><code>{:?}</code>\"]\n",
-                    role_id,
-                    role,
-                    service.version,
-                    service.current_address
+                    role_id, role, service.version, service.current_address
                 ));
             }
             mermaid.push_str("  end\n");
@@ -719,9 +721,13 @@ impl ProtocolRegistryHarness {
     /// Render an ASCII / text summary of the protocol topology.
     pub fn render_topology(&self) -> String {
         let mut out = String::new();
-        out.push_str("================================================================================\n");
+        out.push_str(
+            "================================================================================\n",
+        );
         out.push_str("PROTOCOL REGISTRY TOPOLOGY\n");
-        out.push_str("================================================================================\n");
+        out.push_str(
+            "================================================================================\n",
+        );
         out.push_str(&format!("Registry Address: {:?}\n", self.registry_address));
         out.push_str(&format!("Admin Address:    {:?}\n", self.admin));
         out.push_str(&format!("Services Registered: {}\n", self.services.len()));
@@ -767,7 +773,9 @@ impl ProtocolRegistryHarness {
             }
         }
 
-        out.push_str("================================================================================\n");
+        out.push_str(
+            "================================================================================\n",
+        );
         out
     }
 
@@ -868,7 +876,9 @@ mod tests {
     #[contractimpl]
     impl MockConsumerPool {
         pub fn initialize(env: Env, registry: Address) {
-            env.storage().instance().set(&symbol_short!("reg"), &registry);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("reg"), &registry);
         }
 
         pub fn query_service_value(env: Env, role: Symbol) -> u32 {
@@ -906,7 +916,10 @@ mod tests {
 
         assert_eq!(harness.services().len(), 4);
         assert_eq!(harness.resolve(&ServiceRole::Router).unwrap(), router_addr);
-        assert_eq!(harness.resolve(&ServiceRole::Treasury).unwrap(), treasury_addr);
+        assert_eq!(
+            harness.resolve(&ServiceRole::Treasury).unwrap(),
+            treasury_addr
+        );
         assert_eq!(harness.resolve(&ServiceRole::Oracle).unwrap(), oracle_addr);
         assert_eq!(harness.resolve(&ServiceRole::Vault).unwrap(), vault_addr);
 
@@ -924,10 +937,18 @@ mod tests {
         let addr1 = Address::generate(&env);
         let addr2 = Address::generate(&env);
 
-        harness.register_service(ServiceRole::Router, &addr1).unwrap();
-        let err = harness.register_service(ServiceRole::Router, &addr2).err().unwrap();
+        harness
+            .register_service(ServiceRole::Router, &addr1)
+            .unwrap();
+        let err = harness
+            .register_service(ServiceRole::Router, &addr2)
+            .err()
+            .unwrap();
 
-        assert!(matches!(err, ProtocolRegistryError::ServiceAlreadyRegistered(_)));
+        assert!(matches!(
+            err,
+            ProtocolRegistryError::ServiceAlreadyRegistered(_)
+        ));
     }
 
     #[test]
@@ -940,10 +961,14 @@ mod tests {
         let oracle_v2 = Address::generate(&env);
         let oracle_v3 = Address::generate(&env);
 
-        harness.register_service(ServiceRole::Oracle, &oracle_v1).unwrap();
+        harness
+            .register_service(ServiceRole::Oracle, &oracle_v1)
+            .unwrap();
 
         // Upgrade v1 -> v2
-        let record1 = harness.upgrade_service(ServiceRole::Oracle, &oracle_v2).unwrap();
+        let record1 = harness
+            .upgrade_service(ServiceRole::Oracle, &oracle_v2)
+            .unwrap();
         assert_eq!(record1.from_version, 1);
         assert_eq!(record1.to_version, 2);
         assert_eq!(record1.previous_address, oracle_v1);
@@ -978,12 +1003,17 @@ mod tests {
         let v1 = Address::generate(&env);
         let v2 = Address::generate(&env);
 
-        harness.register_service_with_version(ServiceRole::Vault, &v1, 5).unwrap();
+        harness
+            .register_service_with_version(ServiceRole::Vault, &v1, 5)
+            .unwrap();
         let err = harness
             .upgrade_service_with_version(ServiceRole::Vault, &v2, 4, None::<String>)
             .unwrap_err();
 
-        assert!(matches!(err, ProtocolRegistryError::VersionRegression { .. }));
+        assert!(matches!(
+            err,
+            ProtocolRegistryError::VersionRegression { .. }
+        ));
     }
 
     #[test]
@@ -1087,10 +1117,18 @@ mod tests {
         let o_addr = Address::generate(&env);
         let v_addr = Address::generate(&env);
 
-        harness.register_service(ServiceRole::Router, &r_addr).unwrap();
-        harness.register_service(ServiceRole::Treasury, &t_addr).unwrap();
-        harness.register_service(ServiceRole::Oracle, &o_addr).unwrap();
-        harness.register_service(ServiceRole::Vault, &v_addr).unwrap();
+        harness
+            .register_service(ServiceRole::Router, &r_addr)
+            .unwrap();
+        harness
+            .register_service(ServiceRole::Treasury, &t_addr)
+            .unwrap();
+        harness
+            .register_service(ServiceRole::Oracle, &o_addr)
+            .unwrap();
+        harness
+            .register_service(ServiceRole::Vault, &v_addr)
+            .unwrap();
 
         let pool_addr = Address::generate(&env);
         harness
