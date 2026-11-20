@@ -6,15 +6,14 @@ use soroban_testkit_example_vamm::{
     liquidation_required, Position, VammContract, VammContractClient,
 };
 
-fn setup() -> (Env, VammContractClient<'static>, Address) {
+fn setup() -> (Env, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let contract = env.register(VammContract, ());
     let client = VammContractClient::new(&env, &contract);
     client.initialize(&10_000_000, &10_000_000);
     let trader = Address::generate(&env);
-    let client: VammContractClient<'static> = unsafe { std::mem::transmute(client) };
-    (env, client, trader)
+    (env, contract, trader)
 }
 
 proptest! {
@@ -25,7 +24,8 @@ proptest! {
         collateral in 1i128..=100_000,
         leverage in 1i32..=10,
     ) {
-        let (env, client, trader) = setup();
+        let (env, contract, trader) = setup();
+        let client = VammContractClient::new(&env, &contract);
         let position = client.open_position(&trader, &1, &collateral, &leverage);
         prop_assert_eq!(position.size, collateral.saturating_mul(leverage as i128));
     }
@@ -50,7 +50,8 @@ proptest! {
         collateral in 1i128..=100_000,
         leverage in 1i32..=10,
     ) {
-        let (env, client, trader) = setup();
+        let (env, contract, trader) = setup();
+        let client = VammContractClient::new(&env, &contract);
         let long = client.open_position(&trader, &1, &collateral, &leverage);
         client.move_mark(&10_000_000, &12_000_000);
         let long_pnl = soroban_testkit_example_vamm::unrealized_pnl(&long, 12_000_000);
@@ -72,7 +73,8 @@ proptest! {
         collateral in 1i128..=100_000,
         leverage in 1i32..=10,
     ) {
-        let (_env, client, trader) = setup();
+        let (env, contract, trader) = setup();
+        let client = VammContractClient::new(&env, &contract);
         client.open_position(&trader, &1, &collateral, &leverage);
         let settlement = client.close_position(&trader);
         prop_assert!(settlement >= collateral);
@@ -83,7 +85,8 @@ proptest! {
         initial in 1i128..=10_000,
         added in 1i128..=10_000,
     ) {
-        let (_env, client, trader) = setup();
+        let (env, contract, trader) = setup();
+        let client = VammContractClient::new(&env, &contract);
         let position = client.open_position(&trader, &1, &initial, &2);
         let updated = client.add_margin(&trader, &added);
         prop_assert_eq!(updated.collateral, position.collateral + added);
@@ -91,7 +94,8 @@ proptest! {
 
     #[test]
     fn liquidation_clears_the_open_position(mark in 1i128..=50_000_000) {
-        let (_env, client, trader) = setup();
+        let (env, contract, trader) = setup();
+        let client = VammContractClient::new(&env, &contract);
         client.open_position(&trader, &1, &100, &10);
         client.move_mark(&10_000_000, &mark);
         if client.is_liquidatable(trader.clone()) {

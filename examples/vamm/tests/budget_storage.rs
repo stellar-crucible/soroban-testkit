@@ -8,19 +8,19 @@ use soroban_testkit_core::budget::{BudgetBaseline, BudgetSnapshot};
 use soroban_testkit_core::storage::{StorageSnapshot, StorageTier};
 use soroban_testkit_example_vamm::{VammContract, VammContractClient};
 
-fn setup() -> (Env, Address, VammContractClient<'static>) {
+fn setup() -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let contract = env.register(VammContract, ());
     let client = VammContractClient::new(&env, &contract);
     client.initialize(&10_000_000, &10_000_000);
-    let client: VammContractClient<'static> = unsafe { std::mem::transmute(client) };
-    (env, contract, client)
+    (env, contract)
 }
 
 #[test]
 fn opening_a_position_stays_inside_budget() {
-    let (env, _, client) = setup();
+    let (env, contract) = setup();
+    let client = VammContractClient::new(&env, &contract);
     let trader = Address::generate(&env);
     soroban_testkit_core::budget_guard!(
         &env,
@@ -32,7 +32,8 @@ fn opening_a_position_stays_inside_budget() {
 
 #[test]
 fn mark_move_stays_inside_budget() {
-    let (env, _, client) = setup();
+    let (env, contract) = setup();
+    let client = VammContractClient::new(&env, &contract);
     let trader = Address::generate(&env);
     client.open_position(&trader, &1, &1_000, &3);
     soroban_testkit_core::budget_guard!(
@@ -45,7 +46,8 @@ fn mark_move_stays_inside_budget() {
 
 #[test]
 fn reading_mark_is_cheaper_than_opening() {
-    let (env, _, client) = setup();
+    let (env, contract) = setup();
+    let client = VammContractClient::new(&env, &contract);
     client.mark();
     let read = BudgetSnapshot::last_invocation(&env);
     let trader = Address::generate(&env);
@@ -56,7 +58,8 @@ fn reading_mark_is_cheaper_than_opening() {
 
 #[test]
 fn position_write_is_persistent_storage() {
-    let (env, contract, client) = setup();
+    let (env, contract) = setup();
+    let client = VammContractClient::new(&env, &contract);
     let trader = Address::generate(&env);
     client.open_position(&trader, &1, &1_000, &2);
     let snapshot = StorageSnapshot::capture(&env, &contract);
@@ -65,14 +68,15 @@ fn position_write_is_persistent_storage() {
 
 #[test]
 fn vamm_state_is_instance_storage() {
-    let (env, contract, _) = setup();
+    let (env, contract) = setup();
     let snapshot = StorageSnapshot::capture(&env, &contract);
     assert!(snapshot.in_tier(StorageTier::Instance).len() >= 1);
 }
 
 #[test]
 fn storage_snapshot_detects_a_new_position() {
-    let (env, contract, client) = setup();
+    let (env, contract) = setup();
+    let client = VammContractClient::new(&env, &contract);
     let before = StorageSnapshot::capture(&env, &contract);
     let trader = Address::generate(&env);
     client.open_position(&trader, &1, &1_000, &2);
@@ -82,7 +86,8 @@ fn storage_snapshot_detects_a_new_position() {
 
 #[test]
 fn closing_removes_position_storage() {
-    let (env, contract, client) = setup();
+    let (env, contract) = setup();
+    let client = VammContractClient::new(&env, &contract);
     let trader = Address::generate(&env);
     client.open_position(&trader, &1, &1_000, &2);
     let before = StorageSnapshot::capture(&env, &contract);
@@ -93,7 +98,8 @@ fn closing_removes_position_storage() {
 
 #[test]
 fn baseline_can_record_open_cost() {
-    let (env, _, client) = setup();
+    let (env, contract) = setup();
+    let client = VammContractClient::new(&env, &contract);
     let trader = Address::generate(&env);
     client.open_position(&trader, &1, &1_000, &2);
     let cost = BudgetSnapshot::last_invocation(&env);

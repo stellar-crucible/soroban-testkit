@@ -72,7 +72,7 @@ impl WasmSectionAnalyzer {
                 .ok_or_else(|| WasmAnalysisError("WASM section extends past end of input".into()))?;
             let payload = &wasm[cursor..payload_end];
             let (name, custom_name) = if section_id == 0 {
-                let (custom_name, content_start) = read_name(payload)?;
+                let (custom_name, _content_start) = read_name(payload)?;
                 (format!("Custom ({custom_name})"), Some(custom_name))
             } else {
                 (section_name(section_id).to_string(), None)
@@ -99,7 +99,6 @@ impl WasmSectionAnalyzer {
                         payload_len, self.string_section_threshold_bytes
                     ));
                 }
-                let _ = content_start;
             }
             cursor = payload_end;
         }
