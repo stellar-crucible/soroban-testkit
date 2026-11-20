@@ -518,6 +518,101 @@ let (report, result) = sim.execute_with_delay(&env, || {
 });
 ```
 
+## Multi-validator consensus and ledger close jitter
+
+Stellar's SCP does not close a ledger on a fixed cadence: intervals drift between roughly three and eight seconds, and a validator only backs a close whose interval sits close to the one it nominated. Protocols that average over time — TWAP oracles, streaming rates, funding accrual, timelocks — behave differently under that jitter than they do against a metronome, and a test that closes every ledger by exactly five seconds cannot tell the two apart. `ConsensusSimulator` closes ledgers with a Gaussian-jittered interval, advances the ledger header, and counts validator votes for each round:
+
+```rust
+use soroban_sdk::Env;
+use soroban_testkit_fixtures::ConsensusSimulator;
+
+let env = Env::default();
+let mut sim = ConsensusSimulator::new()
+    .with_validators(5)
+    .with_quorum(3)
+    .with_close_interval(3_000, 8_000)
+    .with_jitter_std_ms(1_200.0)
+    .with_seed(7);                    // replay the same close sequence
+
+let round = sim.run_round(&env);
+println!(
+    "ledger {} at t={} ({} ms, {} votes for, quorum {})",
+    round.close.sequence,
+    round.close.timestamp,
+    round.close.close_interval_ms,
+    round.votes_for,
+    round.quorum,
+);
+
+// Or advance the chain and run the invocation in the block it produced:
+let (round, result) = sim.execute_with_consensus(&env, || client.try_swap(&100, &90, &deadline));
+```
+
+| Method | Effect |
+|--------|--------|
+| `close_ledger(&env)` | Close one ledger; returns a `LedgerClose` with the header values, the sampled interval and its jitter |
+| `advance_ledgers(&env, n)` | Close `n` ledgers, returning each close in order |
+| `run_round(&env)` | Close a ledger and collect every validator's vote on the interval |
+| `execute_with_consensus(&env, f)` | Run a round, then invoke `f` against the new head |
+| `next_close_interval_ms()` | Sample the next interval without touching the env |
+
+| Builder | Effect |
+|---------|--------|
+| `with_validators(n)` | Validators that vote each round (at least one) |
+| `with_quorum(n)` | Agreeing votes a round needs, clamped to `1..=validators` |
+| `with_close_interval(min, max)` | Allowed close interval range in milliseconds |
+| `with_jitter_std_ms(std)` | Standard deviation of the Gaussian jitter; zero closes on the midpoint |
+| `with_seed(seed)` | Reproducible interval and vote sequence |
+
+<div class="tk-grid tk-grid--2">
+  <div class="tk-card">
+    <span class="tk-card__kicker">Clamped, not truncated</span>
+    <h3 class="tk-card__title">The range is a promise</h3>
+    <p class="tk-card__body">Samples are drawn Gaussian around the range midpoint and then clamped, so a close never leaves the interval the test declared even when the tail of the distribution would. A zero standard deviation makes every close take the midpoint.</p>
+  </div>
+  <div class="tk-card tk-card--accent">
+    <span class="tk-card__kicker">Milliseconds in, seconds out</span>
+    <h3 class="tk-card__title">Headers store whole seconds</h3>
+    <p class="tk-card__body">The sampled interval is reported in milliseconds, but a ledger header stores seconds, so the timestamp advances by the interval rounded up. Both numbers are on <code>LedgerClose</code>, which is why a test can assert on the millisecond sample and on <code>env.ledger().timestamp()</code> independently.</p>
+  </div>
+</div>
+
+### Votes and quorum
+
+A round closes a ledger regardless of the vote outcome, which is what makes it useful for testing protocols that react to a ledger rather than to consensus itself. Each validator nominates its own interval and votes for the close when that nomination is within `acceptance_band_ms` — 1.96 standard deviations — of the closed interval:
+
+```rust
+let round = sim.run_round(&env);
+assert_eq!(round.votes_for + round.votes_against, round.validators);
+assert_eq!(round.quorum_reached, round.votes_for >= round.quorum);
+```
+
+A band that covers the jitter (the default) keeps rounds agreed. Tightening the band, or raising the quorum to every validator, produces rounds that close a ledger yet miss quorum — the shape a test needs when the contract under test is supposed to wait for agreement.
+
+### Time-weighted averages under jitter
+
+An oracle that weights a price by the time it was live must use the ledger timestamp, not the block height. `ConsensusSimulator` is what makes the difference visible:
+
+```rust
+let mut sim = ConsensusSimulator::new().with_seed(3);
+client.record(&100);
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&100);
+}
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&200);
+}
+
+// Twenty irregular closes at each price: the TWAP sits between the prices,
+// near their midpoint, instead of snapping to one of them.
+let twap = client.twap();
+assert!((100..=200).contains(&twap));
+```
+
+The fixture's own tests run that shape across a range of seeds and assert that irregular intervals never push the average outside the price range or far from the duration-weighted result.
+
 ## Extending fixtures
 
 Compose `TestContext` into project-specific fixtures so setup is written once per repo:
