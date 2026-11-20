@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -76,6 +76,7 @@ almost all of that without building a `LedgerInfo` by hand:
 | `ctx.set_timestamp(t)` | Jump to absolute time `t` |
 | `ctx.advance_time(s)` | Add `s` seconds, return the new timestamp |
 | `ctx.advance_ledger(n)` | Add `n` to the sequence, return the new height |
+| `ctx.archive_expired(n)` | Advance `n` ledgers, archive everything past its TTL, return the `ArchivalSweepSimulator` holding it |
 
 ```rust
 use soroban_testkit_fixtures::TestContext;
@@ -496,6 +497,101 @@ let (report, result) = sim.execute_with_delay(&env, || {
 });
 ```
 
+## Multi-validator consensus and ledger close jitter
+
+Stellar's SCP does not close a ledger on a fixed cadence: intervals drift between roughly three and eight seconds, and a validator only backs a close whose interval sits close to the one it nominated. Protocols that average over time — TWAP oracles, streaming rates, funding accrual, timelocks — behave differently under that jitter than they do against a metronome, and a test that closes every ledger by exactly five seconds cannot tell the two apart. `ConsensusSimulator` closes ledgers with a Gaussian-jittered interval, advances the ledger header, and counts validator votes for each round:
+
+```rust
+use soroban_sdk::Env;
+use soroban_testkit_fixtures::ConsensusSimulator;
+
+let env = Env::default();
+let mut sim = ConsensusSimulator::new()
+    .with_validators(5)
+    .with_quorum(3)
+    .with_close_interval(3_000, 8_000)
+    .with_jitter_std_ms(1_200.0)
+    .with_seed(7);                    // replay the same close sequence
+
+let round = sim.run_round(&env);
+println!(
+    "ledger {} at t={} ({} ms, {} votes for, quorum {})",
+    round.close.sequence,
+    round.close.timestamp,
+    round.close.close_interval_ms,
+    round.votes_for,
+    round.quorum,
+);
+
+// Or advance the chain and run the invocation in the block it produced:
+let (round, result) = sim.execute_with_consensus(&env, || client.try_swap(&100, &90, &deadline));
+```
+
+| Method | Effect |
+|--------|--------|
+| `close_ledger(&env)` | Close one ledger; returns a `LedgerClose` with the header values, the sampled interval and its jitter |
+| `advance_ledgers(&env, n)` | Close `n` ledgers, returning each close in order |
+| `run_round(&env)` | Close a ledger and collect every validator's vote on the interval |
+| `execute_with_consensus(&env, f)` | Run a round, then invoke `f` against the new head |
+| `next_close_interval_ms()` | Sample the next interval without touching the env |
+
+| Builder | Effect |
+|---------|--------|
+| `with_validators(n)` | Validators that vote each round (at least one) |
+| `with_quorum(n)` | Agreeing votes a round needs, clamped to `1..=validators` |
+| `with_close_interval(min, max)` | Allowed close interval range in milliseconds |
+| `with_jitter_std_ms(std)` | Standard deviation of the Gaussian jitter; zero closes on the midpoint |
+| `with_seed(seed)` | Reproducible interval and vote sequence |
+
+<div class="tk-grid tk-grid--2">
+  <div class="tk-card">
+    <span class="tk-card__kicker">Clamped, not truncated</span>
+    <h3 class="tk-card__title">The range is a promise</h3>
+    <p class="tk-card__body">Samples are drawn Gaussian around the range midpoint and then clamped, so a close never leaves the interval the test declared even when the tail of the distribution would. A zero standard deviation makes every close take the midpoint.</p>
+  </div>
+  <div class="tk-card tk-card--accent">
+    <span class="tk-card__kicker">Milliseconds in, seconds out</span>
+    <h3 class="tk-card__title">Headers store whole seconds</h3>
+    <p class="tk-card__body">The sampled interval is reported in milliseconds, but a ledger header stores seconds, so the timestamp advances by the interval rounded up. Both numbers are on <code>LedgerClose</code>, which is why a test can assert on the millisecond sample and on <code>env.ledger().timestamp()</code> independently.</p>
+  </div>
+</div>
+
+### Votes and quorum
+
+A round closes a ledger regardless of the vote outcome, which is what makes it useful for testing protocols that react to a ledger rather than to consensus itself. Each validator nominates its own interval and votes for the close when that nomination is within `acceptance_band_ms` — 1.96 standard deviations — of the closed interval:
+
+```rust
+let round = sim.run_round(&env);
+assert_eq!(round.votes_for + round.votes_against, round.validators);
+assert_eq!(round.quorum_reached, round.votes_for >= round.quorum);
+```
+
+A band that covers the jitter (the default) keeps rounds agreed. Tightening the band, or raising the quorum to every validator, produces rounds that close a ledger yet miss quorum — the shape a test needs when the contract under test is supposed to wait for agreement.
+
+### Time-weighted averages under jitter
+
+An oracle that weights a price by the time it was live must use the ledger timestamp, not the block height. `ConsensusSimulator` is what makes the difference visible:
+
+```rust
+let mut sim = ConsensusSimulator::new().with_seed(3);
+client.record(&100);
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&100);
+}
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&200);
+}
+
+// Twenty irregular closes at each price: the TWAP sits between the prices,
+// near their midpoint, instead of snapping to one of them.
+let twap = client.twap();
+assert!((100..=200).contains(&twap));
+```
+
+The fixture's own tests run that shape across a range of seeds and assert that irregular intervals never push the average outside the price range or far from the duration-weighted result.
+
 ## Extending fixtures
 
 Compose `TestContext` into project-specific fixtures so setup is written once per repo:
@@ -633,3 +729,45 @@ flowchart TD
   C_0 -. resolves .-> ORACLE
   C_0 -. resolves .-> VAULT
 ```
+
+## Failure injection for mock dependencies (`FailureInjector`)
+
+A resilient contract has to survive a dependency that fails: an oracle out of budget, a vault whose storage expired, a token that traps. `FailureInjector` decides, per contract and per function, when a mock dependency fails and with which error, without writing a separate crashing contract for each case.
+
+The injection point is one call at the top of each mock function:
+
+```rust
+use soroban_testkit_fixtures::{failure_point, FailureInjector, InjectedFailure};
+
+#[contractimpl]
+impl MockOracle {
+    pub fn get_price(env: Env) -> i128 {
+        failure_point(&env, "get_price");
+        100
+    }
+}
+
+let injector = FailureInjector::attach(&env);
+
+injector.fail_function(&oracle_id, "get_price", InjectedFailure::BudgetExceeded); // permanent crash
+assert_eq!(dex.try_quote(&oracle_id, &2), Err(Ok(DexError::OracleUnavailable)));
+
+injector.fail_times(&oracle_id, "get_price", InjectedFailure::StorageNotFound, 2); // temporary outage
+injector.fail_on_call(&oracle_id, "get_price", InjectedFailure::InternalError, 3); // only call 3 fails
+
+injector.clear(); // normal execution again (also happens on drop)
+```
+
+| Failure | Raised as |
+| --- | --- |
+| `OutOfMemory` | `Error(WasmVm, ExceededLimit)` |
+| `BudgetExceeded` | `Error(Budget, ExceededLimit)` (the out-of-gas case) |
+| `StorageNotFound` | a genuine host trap: a TTL extension on a missing entry, as an archived or never-written entry would cause |
+| `InternalError` | `Error(Context, InternalError)` |
+| `Contract(code)` | a contract error with that code |
+
+**What the caller sees.** A `Contract(code)` failure reaches a `try_*` caller unchanged. Every host-level failure reaches it as `Error(Context, InvalidAction)`, because the host never forwards a callee's host error verbatim. That is also exactly what a caller sees when a real dependency traps. Without a `try_*` call, the failure aborts the caller.
+
+**One difference from a live network.** On a network, exhausting the CPU or memory budget aborts the *whole transaction* and no caller can catch it. The injected `BudgetExceeded` and `OutOfMemory` fail only the dependency's invocation, modelling a dependency that runs out and reports it, so the caller's fallback path is testable. To test transaction-wide exhaustion, run the call under real limits (`NetworkProfile`, or `env.cost_estimate().budget().reset_limits`).
+
+Rules are scoped to the test thread and to the injector that installed them, so one test cannot leak a failure into the next. `injector.calls(&id, "fn")` reports how many calls the injection point has seen.
