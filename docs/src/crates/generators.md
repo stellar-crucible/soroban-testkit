@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl · storage_tier</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl · storage_tier · cost_model</span></div>
 </div>
 
 ## Available strategies
@@ -47,6 +47,9 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `soroban_duration(env, min_secs, max_secs)` | `Duration` | a host duration in `min_secs..=max_secs` seconds |
 | `soroban_timepoint(env, min_timestamp, max_timestamp)` | `Timepoint` | a host timepoint in `min_timestamp..=max_timestamp` unix seconds |
 | `ledger_sequence_interval()` | `(u32, u32)` | `(start, end)` with `start <= end`, both in `1..=10,000,000` |
+| `contract_cost_model()` | `ContractCostModel` | valid host cost schedule covering all `ContractCostType` variants, shrinking to baseline |
+| `contract_cost_model_with_multipliers(cpu, mem)` | `ContractCostModel` | cost schedule with custom CPU and Memory fee multipliers (percentage) |
+| `contract_cost_model_with_config(config)` | `ContractCostModel` | cost schedule with per-dimension and per-cost-type multiplier overrides |
 
 ## Usage with proptest
 
@@ -529,6 +532,105 @@ proptest! {
     }
 }
 ```
+
+## Host cost models and budget threshold fuzzing
+
+Soroban meters contract execution across granular [`ContractCostType`](https://docs.rs/soroban-env-host/latest/soroban_env_host/xdr/enum.ContractCostType.html)
+categories — including `WasmInsnExec`, `MemAlloc`, `MemCpy`, `MemCmp`, `ValSer`,
+`ValDeser`, `ComputeSha256Hash`, `VerifyEd25519Sig`, `VmInstantiation`, and elliptic curve arithmetic.
+Simulating resource cost fluctuations allows contracts to be stress-tested against
+future protocol parameter adjustments and network fee shifts.
+
+`contract_cost_model()` generates a realistic [`ContractCostModel`] covering all standard
+`ContractCostType` enumerations. It generates valid host cost schedules (`ContractCostParams`)
+directly compatible with `soroban-env-host`, supports configuring custom fee multipliers
+for individual cost dimensions (`CostDimension::Cpu` and `CostDimension::Memory`), and
+shrinks towards the baseline protocol fee schedule.
+
+```rust
+use proptest::prelude::*;
+use soroban_env_host::xdr::ContractCostType;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn contract_execution_fits_under_fee_shifts(
+        model in strategies::contract_cost_model(),
+    ) {
+        // Construct a soroban-env-host Budget loaded with the generated schedule
+        let budget = model.try_into_budget(10_000_000, 10_000_000).unwrap();
+
+        // Meter operations or invoke contract functions
+        budget.charge(ContractCostType::WasmInsnExec, None).unwrap();
+        budget.charge(ContractCostType::MemAlloc, Some(1024)).unwrap();
+
+        assert!(budget.get_cpu_insns_remaining().unwrap() > 0);
+    }
+}
+```
+
+### Configuring fee multipliers
+
+Use `contract_cost_model_with_multipliers` to supply percentage ranges for CPU and Memory
+fee multipliers (where `100` represents 100% / 1.0x baseline):
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies;
+
+proptest! {
+    #[test]
+    fn test_tight_cpu_headroom(
+        // Stress-test 1.5x - 4.0x CPU shifts and 1.0x - 2.0x Memory shifts
+        model in strategies::contract_cost_model_with_multipliers(150..=400, 100..=200),
+    ) {
+        let (cpu_cost, mem_cost) = model.evaluate_cost(
+            soroban_env_host::xdr::ContractCostType::ComputeSha256Hash,
+            1,
+            Some(256),
+        );
+        assert!(cpu_cost > 0);
+        assert_eq!(mem_cost, 0);
+    }
+}
+```
+
+For fine-grained control, configure individual cost dimensions or specific `ContractCostType`
+discriminants using `ContractCostModelConfig`:
+
+```rust
+use proptest::prelude::*;
+use soroban_env_host::xdr::ContractCostType;
+use soroban_testkit_generators::cost_model::{
+    ContractCostModelConfig, CostDimension,
+};
+use soroban_testkit_generators::strategies;
+
+let config = ContractCostModelConfig::new()
+    .with_cpu_multiplier_range(100..=200)
+    .with_mem_multiplier_range(100..=150)
+    // Target a specific crypto primitive for severe cost surge
+    .with_cost_type_multiplier_range(
+        ContractCostType::VerifyEd25519Sig,
+        CostDimension::Cpu,
+        300..=1000,
+    );
+
+proptest! {
+    #[test]
+    fn ed25519_heavy_contract_tolerates_signature_cost_spike(
+        model in strategies::contract_cost_model_with_config(config.clone()),
+    ) {
+        let budget = model.try_into_budget(5_000_000, 5_000_000).unwrap();
+        budget.charge(ContractCostType::VerifyEd25519Sig, Some(64)).unwrap();
+    }
+}
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to the baseline protocol fee schedule</span>
+  <p>proptest shrinks integer offsets towards zero. <code>contract_cost_model()</code> generates fee shifts as offsets relative to 100% baseline, so failing runs simplify towards the standard on-chain protocol fee schedule (<code>100%</code> / <code>1.0x</code>) rather than stopping at an arbitrary random multiplier.</p>
+</div>
 
 ## Custom strategies
 
