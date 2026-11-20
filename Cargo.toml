@@ -14,7 +14,9 @@ members = [
     "examples/crowdfunding",
     "examples/liquid_staking",
     "examples/cdp",
-    "examples/insurance",
+    "examples/dynamic_amm",
+    "examples/orderbook",
+    "examples/nft",
 ]
 
 [workspace.package]

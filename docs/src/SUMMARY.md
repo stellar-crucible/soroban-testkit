@@ -23,7 +23,9 @@
 - [Worked Example: Crowdfunding and Milestone Escrow](./guides/crowdfunding-example.md)
 - [Worked Example: Liquid Staking](./guides/liquid-staking-example.md)
 - [Worked Example: Synthetic Asset CDP](./guides/cdp-example.md)
-- [Worked Example: Decentralized Insurance](./guides/insurance-example.md)
+- [Worked Example: Dynamic AMM with Volatility Fees](./guides/dynamic-amm-example.md)
+- [Worked Example: Order Book DEX](./guides/orderbook-example.md)
+- [Worked Example: Non-Fungible Token (NFT)](./guides/nft-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 
