@@ -5,6 +5,8 @@ pub mod crypto;
 #[cfg(feature = "proptest")]
 pub mod errors;
 #[cfg(feature = "proptest")]
+pub mod authorization;
+#[cfg(feature = "proptest")]
 pub mod executables;
 #[cfg(feature = "proptest")]
 pub mod strategies;
@@ -20,6 +22,8 @@ pub use crypto::{
 };
 #[cfg(feature = "proptest")]
 pub use errors::{host_error_code_coverage, HostError};
+#[cfg(feature = "proptest")]
+pub use authorization::{address_with_nonce, authorization_credential, sequential_nonces};
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 #[cfg(feature = "proptest")]
