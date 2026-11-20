@@ -514,10 +514,6 @@ impl NftContract {
         }
 
         // Check operator approval for all
-        if Self::is_approved_for_all(env.clone(), owner.clone(), caller.clone()) {
-            return true;
-        }
-
-        false
+        Self::is_approved_for_all(env.clone(), owner.clone(), caller.clone())
     }
 }
