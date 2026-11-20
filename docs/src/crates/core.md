@@ -1,10 +1,10 @@
 # soroban-testkit-core
 
-Budget tracking, error decoding and storage inspection — the primitives the rest of Testkit is built on.
+Budget tracking, error decoding, storage inspection and contract dependency graphs — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · footprint</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -26,8 +26,12 @@ Budget tracking, error decoding and storage inspection — the primitives the re
 | `StorageSnapshot` | Every live entry of one contract, captured at a point in time |
 | `StorageDiff`, `StorageChange` | Keys added, removed and rewritten between two snapshots |
 | `FootprintSnapshot` | XDR byte size of every live storage key of one contract, by tier |
+| `RentParameters`, `RentEstimate` | Protocol fee parameters and the Stroop cost of keeping a footprint alive for N ledgers |
 | `StorageFootprint` | Footprints for several contracts, loaded from and saved to a JSON artifact |
 | `StorageFootprintDiff` | Base vs head footprints: growing keys, a Markdown report, a growth threshold |
+| `DependencyGraph` | Directed graph of inter-contract calls, built from an invocation's `fn_call` diagnostics |
+| `DependencyEdge` | One caller → callee edge with its call count and functions |
+| `DependencyCycle` | A closed call chain such as `A -> B -> C -> A`, with self-recursion as `A -> A` |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
 | `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
 | `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
@@ -147,6 +151,64 @@ readable diff. A file whose `version` is newer than the loader is refused with
   <span class="tk-callout__title">Recording a baseline</span>
   <p><code>record()</code> and <code>save()</code> write the file; what refreshes it is a policy choice. Committing the file and failing on drift keeps the numbers honest, so most projects regenerate it in one deliberate commit rather than on every test run — <a href="../guides/budget-testing.html">Budget-Aware Testing</a> walks through both. The pattern is applied in this repository: <code>examples/counter/budget.json</code> holds the counter's two hot paths, two <code>#[ignore]</code>d tests record and check it, and the <code>Budget baseline</code> workflow runs the check on one pinned runner and reports the numbers on the pull request.</p>
 </div>
+
+## Storage leaks
+
+A contract that opens an order, escrow or position allocates keys for it and is
+supposed to remove them when the entity closes. A forgotten `remove` does not
+fail the call that forgot it — it quietly keeps paying rent. `StorageLeakDetector`
+captures the contract's storage before a lifecycle and reports the persistent and
+temporary keys that are still live at teardown.
+
+```rust
+use soroban_testkit_core::leak_detector::StorageLeakDetector;
+
+let mut detector = StorageLeakDetector::start(&ctx.env, &contract_id);
+// ... open escrow, fund, cancel ...
+detector.checkpoint("cancel");
+
+let leaks = detector.detect_orphaned_keys();
+assert!(leaks.is_empty(), "Storage leak detected: {leaks:?}");
+```
+
+`detect_orphaned_keys()` returns a `Vec<StorageLeak>`, each carrying the key,
+the storage tier, an estimated byte size (the rendered key and value) and the
+label of the first checkpoint that saw the key. A leak renders as one readable
+diagnostic:
+
+```text
+storage leak: temporary:quote (12 bytes, allocated at open escrow)
+```
+
+`assert_no_orphaned_keys()` fails with every leak on its own line, and
+`report(&leaks)` returns the same text for a custom assertion message.
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Only new, non-instance keys are leaks</span>
+  <p>Keys present in the baseline snapshot are never reported: the detector judges what the lifecycle allocated, not what the contract already owned. Instance storage is the contract's singleton configuration and is always exempt. A key whose value was rewritten is not a leak either — the comparison is key identity.</p>
+</div>
+
+Permanent records a contract is supposed to keep — a config record, a factory
+registry, a fee cache — are exempted by name or wildcard:
+
+```rust
+use soroban_testkit_core::StorageLeakDetector;
+
+let detector = StorageLeakDetector::start(&env, &contract)
+    .ignoring_key("config")          // exact key, any tier
+    .ignoring_key("persistent:fees") // tier-qualified exact key
+    .ignoring_pattern("order:*")     // a family of keys
+    .ignoring_pattern("*:cache");    // a suffix on the qualified name
+
+assert!(detector.detect_orphaned_keys().is_empty());
+```
+
+`checkpoint(label)` records the current storage as a phase of the lifecycle. The
+first checkpoint containing a leaked key becomes its allocation site, so a
+failure points at the step that should have released it instead of only naming
+the key. Without a checkpoint a leak is still detected; its site reads as
+unobserved. `detect_orphaned_keys_in(&snapshot)` runs the same analysis against
+a snapshot the test captured itself.
 
 ## Error decoding
 
@@ -380,6 +442,91 @@ extracts:
 Post `footprint.md` as the pull-request comment the same way the `Budget
 baseline` workflow posts its numbers. `run_diff_cli(args)` is the same binary
 as a function, for embedding it in an `xtask` without spawning a process.
+
+## Rent projection and the summary table
+
+Byte counts answer "how much state is there". The question a deployer actually
+asks is "what does keeping it cost", and the two differ by the entry writes and
+the rent term the network charges per TTL bump. `FootprintSnapshot` projects
+forward, and renders itself as a table.
+
+`StorageFootprint::measure` captures one contract without going through an
+artifact, which is what you want inside a test that just deployed something:
+
+```rust
+use soroban_testkit_core::{DEFAULT_PROJECTION_LEDGERS, StorageFootprint};
+
+let snapshot = StorageFootprint::measure(&ctx.env, &contract_id);
+
+// Bytes, and the Stroops to hold them for another 518,400 ledgers.
+let bytes = snapshot.total_bytes();
+let stroops = snapshot.projected_rent(DEFAULT_PROJECTION_LEDGERS);
+```
+
+The arithmetic is the network's own: each entry is priced through
+`soroban_env_host::fees::compute_rent_fee`, the function core calls, so a
+projection agrees with what the protocol charges rather than with a restatement
+of the formula here. A projection is the cost of one TTL bump from zero, which
+means it is rent *plus* the per-entry write *plus* the 48-byte `TtlEntry` the
+bump itself writes. Doubling the horizon therefore adds rent without adding a
+second entry write.
+
+`rent_estimate` breaks the same number up per tier, and `RentParameters` is
+where you override the fee set:
+
+```rust
+use soroban_testkit_core::{RentParameters, StorageFootprint};
+
+let params = RentParameters::default()
+    // Re-price rent per KB for a network holding more state than the target,
+    // following core's own curve instead of the floor.
+    .with_soroban_state_size(6_000_000_000);
+let estimate = StorageFootprint::measure(&ctx.env, &contract_id)
+    .rent_estimate(&params, 518_400);
+
+let persistent = estimate.persistent_stroops;
+assert!(estimate.total_stroops() >= persistent);
+```
+
+`to_markdown` renders the entries and the projection as one table, for a PR
+comment or a docs page:
+
+```rust
+print!("{}", snapshot.to_markdown());
+```
+
+```markdown
+### Entries
+
+| Key | Bytes |
+|-----|--------:|
+| `instance:admin` | 24 |
+| `instance:paused` | 24 |
+| `persistent:count` | 80 |
+| `persistent:owner` | 80 |
+| `temporary:nonce` | 80 |
+
+| Tier | Entries | Bytes | Rent for 518400 ledgers |
+|------|--------:|------:|----------------------:|
+| instance | 2 | 48 | 40047 |
+| persistent | 2 | 160 | 106762 |
+| temporary | 1 | 80 | 36714 |
+| **Total** | **5** | **288** | **183523** |
+
+<sub>Sizes are XDR-encoded bytes. Rent is priced by `soroban-env-host`'s
+`compute_rent_fee` at the protocol 23 fee parameters, entry write and
+`TtlEntry` included.</sub>
+```
+
+Two things about those numbers are worth reading carefully. The tier rows are
+not three copies of the same arithmetic: persistent and temporary keys are each
+their own ledger entry, so each pays its own entry write, while every key in
+instance storage lives inside one `ContractData` entry and is priced as that
+single map. That is why two 24-byte instance keys rent for less than one 80-byte
+persistent key. And because the snapshot records the key-plus-value map entries
+of instance storage rather than the envelope around them, the instance column is
+a floor. `StorageFootprint::to_markdown` does the same for every contract in the
+artifact, one section each, under a `## \`label\`` heading.
 
 ## Storage fragmentation analyzer
 
