@@ -1,3 +1,5 @@
+extern crate self as soroban_testkit_fixtures;
+
 pub mod archival;
 pub mod branching;
 pub mod builder;
@@ -9,6 +11,7 @@ pub mod eviction;
 pub mod failure_injector;
 pub mod gas_exhaustion;
 pub mod migration;
+pub mod mock;
 pub mod profiles;
 pub mod protocol_registry;
 pub mod topology;
@@ -26,6 +29,7 @@ pub use consensus::{
 };
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
+pub use mock::{MockContract, MockContractBuilder, MockContractType};
 pub use profiles::NetworkProfile;
 pub use protocol_registry::{
     ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
@@ -36,6 +40,7 @@ pub use topology::{
     AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
     TopologyReport, TopologyValidator, UninitializedLink,
 };
+pub use soroban_testkit_fixtures_macros::mock_contract;
 
 pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
 
