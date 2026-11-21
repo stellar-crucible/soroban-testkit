@@ -231,6 +231,68 @@ covers both the check and an in-test guard.
   <p>The metering the SDK reports belongs to the top-level invocation that has just finished, so a closure that makes two calls is judged on the second one. Give each call its own guard, and name the case after the call you care about.</p>
 </div>
 
+## Diffing two baselines
+
+The counter example records one file; a pull request has two — the baseline on
+the base branch and the one the branch records. `budget-diff` compares them,
+prints a table, and exits non-zero when a case grew past a percentage.
+
+```bash
+cargo run -p soroban-testkit-core --bin budget-diff -- \
+    budget-main.json budget-pr.json \
+    --threshold 5 \
+    --output-markdown budget-comment.md
+```
+
+```text
+### Soroban budget diff
+
+Threshold: `5%`. 2 case(s) compared, 1 regression(s).
+
+| Case | CPU instructions | Δ CPU | Memory bytes | Δ memory | |
+|------|------------------|-------|--------------|----------|---|
+| `get` | 7861 | 0 | 1320 | 0 | 🟢 |
+| `increment` | 32669 → 35000 | +2331 (+7.14%) | 5252 | 0 | 🔴 |
+
+**1** case(s) grew past the 5% threshold.
+```
+
+| Option | Meaning |
+|--------|---------|
+| `BASE.json` / `HEAD.json` | The two baseline files, or `--base` / `--head` by name |
+| `--threshold PCT` | How far a case may grow; `--fail-on-regression` is the same flag |
+| `--output-markdown FILE` | Also write the table to a file for a PR comment (`--output` is an alias) |
+| `--allow-missing-base` | Treat a base branch that has no baseline yet as empty |
+
+Exit codes are the contract: `0` no case grew past the threshold, `1` at least
+one did, `2` a usage error. A case that only exists in one of the two files is
+reported as new or removed and never fails the run — there was nothing to grow
+from. Growth is measured per metric against its own base, so a case that costs
+more CPU and the same memory is one regression, not two.
+
+### A reusable workflow
+
+`.github/workflows/templates/budget-check.yml` is a `workflow_call` template: it
+takes the baseline path and the command that records it, lifts the base branch's
+copy with `git show`, runs the comparison, writes the table into the job summary,
+and posts it as a sticky comment keyed on a marker so reruns replace the previous
+one rather than stacking.
+
+```yaml
+jobs:
+  budget:
+    uses: ./.github/workflows/budget-check.yml
+    with:
+      baseline: tests/budget.json
+      test-command: cargo test -p my-contract -- --ignored --nocapture record_baseline
+      threshold: "5"
+```
+
+The job needs `contents: read` and `pull-requests: write`; a run from a fork
+cannot comment, so that step is allowed to fail while the comparison step is the
+one that decides the build. Set `allow-missing-base` on the first pull request
+that introduces a baseline.
+
 <hr class="tk-divider" />
 
 <p class="tk-muted">Related: <a href="./property-testing.html">Property testing</a> for inputs, <a href="../crates/core.html">soroban-testkit-core</a> for the full budget API.</p>

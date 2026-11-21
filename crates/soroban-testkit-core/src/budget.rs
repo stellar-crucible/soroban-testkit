@@ -424,11 +424,425 @@ impl BudgetBaseline {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Comparing two baseline files
+// ---------------------------------------------------------------------------
+
+/// How one case differs between the base file and the head file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaseChange {
+    /// The head file records the case and the base file does not.
+    Added,
+    /// The base file records the case and the head file does not.
+    Removed,
+    /// Both files record the case and at least one metric moved.
+    Changed,
+    /// Both files record the case and both metrics are identical.
+    Unchanged,
+}
+
+/// One case, as the base file and the head file each describe it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BudgetCaseDiff {
+    case: String,
+    base: Option<BudgetSnapshot>,
+    head: Option<BudgetSnapshot>,
+}
+
+impl BudgetCaseDiff {
+    pub fn case(&self) -> &str {
+        &self.case
+    }
+
+    pub fn base(&self) -> Option<BudgetSnapshot> {
+        self.base
+    }
+
+    pub fn head(&self) -> Option<BudgetSnapshot> {
+        self.head
+    }
+
+    pub fn change(&self) -> CaseChange {
+        match (self.base, self.head) {
+            (None, Some(_)) => CaseChange::Added,
+            (Some(_), None) => CaseChange::Removed,
+            (Some(base), Some(head)) if base == head => CaseChange::Unchanged,
+            _ => CaseChange::Changed,
+        }
+    }
+
+    /// Instructions the case gained, or lost when negative.
+    ///
+    /// `None` when the case exists in only one of the two files: a case that was
+    /// added or removed has no delta to report, only an absolute cost.
+    pub fn cpu_delta(&self) -> Option<i128> {
+        Some(delta(self.base?.cpu_insns, self.head?.cpu_insns))
+    }
+
+    /// Bytes the case gained, or lost when negative. Same rule as [`Self::cpu_delta`].
+    pub fn mem_delta(&self) -> Option<i128> {
+        Some(delta(self.base?.mem_bytes, self.head?.mem_bytes))
+    }
+
+    /// The CPU cost of the head run as a signed percentage of the base run.
+    ///
+    /// A base of zero grows by an unbounded percentage once the head records
+    /// anything, which reads as `inf`; a case that stays at zero did not grow.
+    pub fn cpu_growth_percent(&self) -> Option<f64> {
+        growth(self.base?.cpu_insns, self.head?.cpu_insns)
+    }
+
+    pub fn mem_growth_percent(&self) -> Option<f64> {
+        growth(self.base?.mem_bytes, self.head?.mem_bytes)
+    }
+
+    /// Whether either metric grew by more than `threshold_percent`.
+    ///
+    /// A case that is new has nothing to grow from, and a case that was removed
+    /// cannot regress, so neither is a regression. Losing a case is still
+    /// visible in the table — it is just not a reason to fail a build.
+    pub fn exceeds(&self, threshold_percent: f64) -> bool {
+        [self.cpu_growth_percent(), self.mem_growth_percent()]
+            .into_iter()
+            .flatten()
+            .any(|percent| percent > threshold_percent)
+    }
+}
+
+/// Every case of two baseline files, side by side.
+///
+/// This is what the `budget-diff` binary prints: the numbers a pull request
+/// comment needs, and the verdict a CI step exits on. Cases are ordered by
+/// name so two runs of the same pair of files produce the same report.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BudgetDiff {
+    rows: Vec<BudgetCaseDiff>,
+}
+
+impl BudgetDiff {
+    pub fn compare(base: &BudgetBaseline, head: &BudgetBaseline) -> Self {
+        let mut names: Vec<&str> = base.cases().map(|(name, _)| name).collect();
+        for (name, _) in head.cases() {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names.sort_unstable();
+
+        let rows = names
+            .into_iter()
+            .map(|name| BudgetCaseDiff {
+                case: name.to_string(),
+                base: base.get(name),
+                head: head.get(name),
+            })
+            .collect();
+        Self { rows }
+    }
+
+    pub fn rows(&self) -> &[BudgetCaseDiff] {
+        &self.rows
+    }
+
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// The cases that grew past `threshold_percent`, in report order.
+    pub fn exceeding(&self, threshold_percent: f64) -> Vec<&BudgetCaseDiff> {
+        self.rows
+            .iter()
+            .filter(|row| row.exceeds(threshold_percent))
+            .collect()
+    }
+
+    /// A GitHub-flavoured Markdown report, ready to be posted as a PR comment.
+    ///
+    /// Every row carries an indicator: 🔴 for a case past the threshold, 🟢 for
+    /// one that stayed inside it, and a note in the last column when a case is
+    /// new or gone — those are not regressions, but a reviewer should see them.
+    pub fn to_markdown(&self, threshold_percent: f64) -> String {
+        let regressions = self.exceeding(threshold_percent);
+        let mut report = String::new();
+        report.push_str("### Soroban budget diff\n\n");
+        report.push_str(&format!(
+            "Threshold: `{}%`. {} case(s) compared, {} regression(s).\n\n",
+            trim(threshold_percent),
+            self.rows.len(),
+            regressions.len()
+        ));
+
+        if self.rows.is_empty() {
+            report.push_str("No case is recorded in either baseline file.\n");
+            return report;
+        }
+
+        report.push_str("| Case | CPU instructions | Δ CPU | Memory bytes | Δ memory | |\n");
+        report.push_str("|------|------------------|-------|--------------|----------|---|\n");
+        for row in &self.rows {
+            report.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} | {} |\n",
+                row.case,
+                cell(
+                    row.base.map(|cost| cost.cpu_insns),
+                    row.head.map(|cost| cost.cpu_insns)
+                ),
+                delta_cell(row.cpu_delta(), row.cpu_growth_percent()),
+                cell(
+                    row.base.map(|cost| cost.mem_bytes),
+                    row.head.map(|cost| cost.mem_bytes)
+                ),
+                delta_cell(row.mem_delta(), row.mem_growth_percent()),
+                status_cell(row, threshold_percent),
+            ));
+        }
+
+        if !regressions.is_empty() {
+            report.push('\n');
+            report.push_str(&format!(
+                "**{}** case(s) grew past the {}% threshold.\n",
+                regressions.len(),
+                trim(threshold_percent)
+            ));
+        }
+        report
+    }
+
+    /// One `BUDGET_DIFF` line per case for a job log or a step summary.
+    pub fn to_summary_lines(&self, threshold_percent: f64) -> String {
+        if self.rows.is_empty() {
+            return String::new();
+        }
+        let mut lines = String::new();
+        for row in &self.rows {
+            let verdict = if row.exceeds(threshold_percent) {
+                "regressed"
+            } else {
+                "ok"
+            };
+            lines.push_str(&format!(
+                "BUDGET_DIFF case={} change={} cpu_base={} cpu_head={} cpu_drift={} mem_base={} mem_head={} mem_drift={} verdict={}\n",
+                row.case,
+                change_name(row.change()),
+                optional(row.base.map(|cost| cost.cpu_insns)),
+                optional(row.head.map(|cost| cost.cpu_insns)),
+                percent_cell(row.cpu_growth_percent()),
+                optional(row.base.map(|cost| cost.mem_bytes)),
+                optional(row.head.map(|cost| cost.mem_bytes)),
+                percent_cell(row.mem_growth_percent()),
+                verdict,
+            ));
+        }
+        lines
+    }
+}
+
+/// Where the `budget-diff` binary writes its report and what it exits on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BudgetDiffCliOutcome {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: u8,
+}
+
+pub const BUDGET_DIFF_USAGE: &str = "\
+usage: budget-diff BASE.json HEAD.json [options]
+
+  --base FILE              baseline file (alternative to the first path)
+  --head FILE              file measured on this run (alternative to the second path)
+  --threshold PCT          how far a case may grow before it fails the run (default 0)
+  --fail-on-regression PCT alias for --threshold
+  --output-markdown FILE   also write the Markdown report to FILE
+  --output FILE            alias for --output-markdown
+  --allow-missing-base     treat a missing BASE file as an empty baseline
+  -h, --help               print this message
+
+exits 0 when no case grew past the threshold, 1 when one did, 2 on a usage error
+";
+
+/// Parse the `budget-diff` arguments and produce its report and exit code.
+pub fn run_budget_diff_cli(args: impl IntoIterator<Item = String>) -> BudgetDiffCliOutcome {
+    match budget_diff_cli(args.into_iter().collect()) {
+        Ok(outcome) => outcome,
+        Err(message) => BudgetDiffCliOutcome {
+            stdout: String::new(),
+            stderr: format!("budget-diff: {message}\n\n{BUDGET_DIFF_USAGE}"),
+            exit_code: 2,
+        },
+    }
+}
+
+fn budget_diff_cli(args: Vec<String>) -> Result<BudgetDiffCliOutcome, String> {
+    let mut paths = Vec::new();
+    let mut base_path = None;
+    let mut head_path = None;
+    let mut threshold = 0.0f64;
+    let mut output = None;
+    let mut allow_missing_base = false;
+
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                return Ok(BudgetDiffCliOutcome {
+                    stdout: BUDGET_DIFF_USAGE.to_string(),
+                    stderr: String::new(),
+                    exit_code: 0,
+                })
+            }
+            "--base" => base_path = Some(args.next().ok_or("--base needs a file path")?),
+            "--head" => head_path = Some(args.next().ok_or("--head needs a file path")?),
+            "--threshold" | "--fail-on-regression" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| format!("{arg} needs a percentage"))?;
+                threshold = parse_threshold(&value)?;
+            }
+            "--output-markdown" | "--output" => {
+                output = Some(args.next().ok_or("--output-markdown needs a file path")?)
+            }
+            "--allow-missing-base" => allow_missing_base = true,
+            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            _ => paths.push(arg),
+        }
+    }
+
+    let base_path = match (base_path, paths.first()) {
+        (Some(path), _) => path,
+        (None, Some(path)) => path.clone(),
+        (None, None) => return Err("missing the BASE baseline file".to_string()),
+    };
+    let head_path = match (head_path, paths.get(1)) {
+        (Some(path), _) => path,
+        (None, Some(path)) => path.clone(),
+        (None, None) => return Err("missing the HEAD baseline file".to_string()),
+    };
+
+    let base_path = std::path::Path::new(&base_path);
+    let base = if allow_missing_base && !base_path.exists() {
+        BudgetBaseline::new()
+    } else {
+        BudgetBaseline::load(base_path)
+            .map_err(|error| format!("{}: {error}", base_path.display()))?
+    };
+    let head = BudgetBaseline::load(std::path::Path::new(&head_path))
+        .map_err(|error| format!("{head_path}: {error}"))?;
+
+    let diff = BudgetDiff::compare(&base, &head);
+    let markdown = diff.to_markdown(threshold);
+    if let Some(output) = output {
+        std::fs::write(&output, markdown.as_bytes())
+            .map_err(|error| format!("cannot write {output}: {error}"))?;
+    }
+
+    let regressions = diff.exceeding(threshold).len();
+    let mut stdout = markdown;
+    stdout.push('\n');
+    stdout.push_str(&diff.to_summary_lines(threshold));
+    Ok(BudgetDiffCliOutcome {
+        stdout,
+        stderr: if regressions > 0 {
+            format!(
+                "budget-diff: {regressions} case(s) grew past the {}% threshold\n",
+                trim(threshold)
+            )
+        } else {
+            String::new()
+        },
+        exit_code: u8::from(regressions > 0),
+    })
+}
+
+fn parse_threshold(value: &str) -> Result<f64, String> {
+    let parsed: f64 = value
+        .trim_end_matches('%')
+        .trim()
+        .parse()
+        .map_err(|_| format!("--threshold expects a number, got {value:?}"))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err(format!(
+            "--threshold must be a non-negative number, got {value:?}"
+        ));
+    }
+    Ok(parsed)
+}
+
+fn delta(base: u64, head: u64) -> i128 {
+    i128::from(head) - i128::from(base)
+}
+
+fn growth(base: u64, head: u64) -> Option<f64> {
+    if base == 0 {
+        return Some(if head == 0 { 0.0 } else { f64::INFINITY });
+    }
+    Some((i128::from(head) - i128::from(base)) as f64 / base as f64 * 100.0)
+}
+
+fn change_name(change: CaseChange) -> &'static str {
+    match change {
+        CaseChange::Added => "added",
+        CaseChange::Removed => "removed",
+        CaseChange::Changed => "changed",
+        CaseChange::Unchanged => "unchanged",
+    }
+}
+
+fn cell(base: Option<u64>, head: Option<u64>) -> String {
+    match (base, head) {
+        (Some(base), Some(head)) if base == head => head.to_string(),
+        (base, head) => format!("{} → {}", optional(base), optional(head)),
+    }
+}
+
+fn delta_cell(delta: Option<i128>, growth: Option<f64>) -> String {
+    match (delta, growth) {
+        (Some(0), Some(_)) => "0".to_string(),
+        (Some(delta), Some(growth)) => signed(delta, growth),
+        _ => "–".to_string(),
+    }
+}
+
+fn status_cell(row: &BudgetCaseDiff, threshold: f64) -> String {
+    match row.change() {
+        CaseChange::Added => "🟢 new case".to_string(),
+        CaseChange::Removed => "🟢 removed".to_string(),
+        _ if row.exceeds(threshold) => "🔴".to_string(),
+        _ => "🟢".to_string(),
+    }
+}
+
+fn signed(delta: i128, growth: f64) -> String {
+    let sign = if delta > 0 { "+" } else { "-" };
+    format!("{sign}{} ({sign}{}%)", delta.abs(), trim(growth.abs()))
+}
+
+fn optional(value: Option<u64>) -> String {
+    value.map_or_else(|| "–".to_string(), |value| value.to_string())
+}
+
+fn percent_cell(growth: Option<f64>) -> String {
+    match growth {
+        Some(growth) if growth.is_infinite() => "inf".to_string(),
+        Some(growth) => format!("{}{}%", if growth > 0.0 { "+" } else { "" }, trim(growth)),
+        None => "-".to_string(),
+    }
+}
+
+/// `10`, `2.5` and `33.33` rather than `10.00`.
+fn trim(value: f64) -> String {
+    let text = format!("{value:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        allowed, BaselineError, BudgetBaseline, BudgetGuard, BudgetMetric, BudgetSnapshot,
-        ViolationKind, BASELINE_VERSION,
+        allowed, run_budget_diff_cli, BaselineError, BudgetBaseline, BudgetDiff, BudgetGuard,
+        BudgetMetric, BudgetSnapshot, CaseChange, ViolationKind, BASELINE_VERSION,
     };
     use soroban_env_host::{budget::Budget, xdr::ContractCostType};
     use soroban_sdk::{contract, contractimpl, Env, Symbol};
@@ -906,5 +1320,225 @@ mod tests {
             { baseline: Some(cost(1, 1)), tolerance: 0 },
             || { client.bump(); }
         );
+    }
+
+    fn snapshot(cpu_insns: u64, mem_bytes: u64) -> BudgetSnapshot {
+        BudgetSnapshot {
+            cpu_insns,
+            mem_bytes,
+        }
+    }
+
+    fn baseline(cases: &[(&str, u64, u64)]) -> BudgetBaseline {
+        let mut baseline = BudgetBaseline::new();
+        for (case, cpu, mem) in cases {
+            baseline.record(*case, snapshot(*cpu, *mem));
+        }
+        baseline
+    }
+
+    fn diff_base_and_head() -> BudgetDiff {
+        let base = baseline(&[("increment", 1_000, 500), ("gone", 40, 20)]);
+        let head = baseline(&[
+            ("increment", 1_500, 500),
+            ("new_path", 900, 100),
+            ("clean", 700, 300),
+        ]);
+        BudgetDiff::compare(&base, &head)
+    }
+
+    #[test]
+    fn the_diff_orders_cases_and_names_every_change() {
+        let diff = diff_base_and_head();
+        let rows: Vec<(&str, CaseChange)> = diff
+            .rows()
+            .iter()
+            .map(|row| (row.case(), row.change()))
+            .collect();
+
+        assert_eq!(
+            rows,
+            vec![
+                ("clean", CaseChange::Added),
+                ("gone", CaseChange::Removed),
+                ("increment", CaseChange::Changed),
+                ("new_path", CaseChange::Added),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_delta_is_signed_and_only_exists_on_both_sides() {
+        let diff = diff_base_and_head();
+        let increment = &diff.rows()[2];
+        let gone = &diff.rows()[1];
+
+        assert_eq!(increment.cpu_delta(), Some(500));
+        assert_eq!(increment.mem_delta(), Some(0));
+        assert_eq!(increment.cpu_growth_percent(), Some(50.0));
+        assert_eq!(gone.cpu_delta(), None);
+        assert_eq!(gone.cpu_growth_percent(), None);
+    }
+
+    #[test]
+    fn growth_is_measured_against_a_zero_baseline_as_infinite() {
+        let diff = BudgetDiff::compare(&baseline(&[("cold", 0, 0)]), &baseline(&[("cold", 10, 0)]));
+        let row = &diff.rows()[0];
+
+        assert_eq!(row.cpu_growth_percent(), Some(f64::INFINITY));
+        assert_eq!(row.mem_growth_percent(), Some(0.0));
+        assert!(row.exceeds(100.0));
+    }
+
+    #[test]
+    fn only_growth_past_the_threshold_is_a_regression() {
+        let diff = diff_base_and_head();
+
+        assert!(diff.exceeding(10.0).is_empty() || diff.exceeding(10.0)[0].case() == "increment");
+        assert_eq!(diff.exceeding(50.0).len(), 0, "50% is not past 50%");
+        assert_eq!(diff.exceeding(49.9).len(), 1);
+        assert_eq!(diff.exceeding(49.9)[0].case(), "increment");
+    }
+
+    #[test]
+    fn the_markdown_report_marks_regressions_in_red() {
+        let report = diff_base_and_head().to_markdown(10.0);
+
+        assert!(report.starts_with("### Soroban budget diff"));
+        assert!(report.contains("Threshold: `10%`"));
+        assert!(report.contains("1 regression(s)"));
+        assert!(report.contains("| `increment` | 1000 → 1500 | +500 (+50%) |"));
+        assert!(report.contains("🔴"), "the grown case must be red");
+        assert!(report.contains("🟢 new case"));
+        assert!(report.contains("🟢 removed"));
+        assert!(
+            !report.contains("🔴 removed"),
+            "a removed case is not a regression"
+        );
+    }
+
+    #[test]
+    fn a_clean_report_says_so_and_has_no_red_marker() {
+        let diff = BudgetDiff::compare(&baseline(&[("a", 1, 2)]), &baseline(&[("a", 1, 2)]));
+        let report = diff.to_markdown(0.0);
+
+        assert!(report.contains("0 regression(s)"));
+        assert!(report.contains("🟢"));
+        assert!(!report.contains("🔴"));
+        assert!(!report.contains("grew past"));
+    }
+
+    #[test]
+    fn the_summary_lines_carry_the_verdict_for_ci() {
+        let lines = diff_base_and_head().to_summary_lines(10.0);
+        let increment = lines
+            .lines()
+            .find(|line| line.contains("case=increment"))
+            .unwrap();
+
+        assert!(increment.contains("change=changed"));
+        assert!(increment.contains("cpu_drift=+50%"));
+        assert!(increment.contains("mem_drift=0%"));
+        assert!(increment.contains("verdict=regressed"));
+        assert!(lines.contains("case=gone change=removed"));
+        assert!(lines.contains("verdict=ok"));
+    }
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "testkit-budget-diff-{}-{label}-{nonce}.json",
+            std::process::id()
+        ))
+    }
+
+    fn cli(args: &[&str]) -> super::BudgetDiffCliOutcome {
+        run_budget_diff_cli(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn the_cli_fails_ci_past_the_threshold_and_writes_the_report() {
+        let (base, head, report) = (temp_path("base"), temp_path("head"), temp_path("report"));
+        baseline(&[("increment", 1_000, 500)]).save(&base).unwrap();
+        baseline(&[("increment", 1_250, 500)]).save(&head).unwrap();
+        let (b, h, r) = (
+            base.to_str().unwrap(),
+            head.to_str().unwrap(),
+            report.to_str().unwrap(),
+        );
+
+        let pass = cli(&[b, h, "--threshold", "30"]);
+        let fail = cli(&[b, h, "--fail-on-regression", "10%", "--output-markdown", r]);
+        let written = std::fs::read_to_string(&report);
+        for path in [&base, &head, &report] {
+            let _ = std::fs::remove_file(path);
+        }
+
+        assert_eq!(pass.exit_code, 0, "{}", pass.stderr);
+        assert!(pass.stdout.contains("**Pass**") || pass.stdout.contains("0 regression(s)"));
+        assert_eq!(fail.exit_code, 1);
+        assert!(fail
+            .stderr
+            .contains("1 case(s) grew past the 10% threshold"));
+        assert_eq!(
+            written.unwrap().trim_end(),
+            fail.stdout
+                .split("\n\nBUDGET_DIFF")
+                .next()
+                .unwrap()
+                .trim_end()
+        );
+    }
+
+    #[test]
+    fn the_cli_accepts_the_named_base_and_head_flags() {
+        let (base, head) = (temp_path("named-base"), temp_path("named-head"));
+        baseline(&[("increment", 10, 10)]).save(&base).unwrap();
+        baseline(&[("increment", 10, 10)]).save(&head).unwrap();
+        let (b, h) = (base.to_str().unwrap(), head.to_str().unwrap());
+
+        let outcome = cli(&["--base", b, "--head", h, "--threshold", "0"]);
+        for path in [&base, &head] {
+            let _ = std::fs::remove_file(path);
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{}", outcome.stderr);
+        assert!(outcome.stdout.contains("| `increment` | 10 | 0 | 10 | 0 |"));
+    }
+
+    #[test]
+    fn the_cli_reports_usage_errors_with_status_2() {
+        assert_eq!(cli(&[]).exit_code, 2);
+        assert!(cli(&["only-one.json"])
+            .stderr
+            .contains("missing the HEAD baseline file"));
+        assert!(cli(&["a", "b", "--threshold", "lots"])
+            .stderr
+            .contains("expects a number"));
+        assert!(cli(&["a", "b", "--frobnicate"])
+            .stderr
+            .contains("unknown option --frobnicate"));
+        assert!(cli(&["missing-base.json", "missing-head.json"])
+            .stderr
+            .contains("missing-base.json"));
+        assert_eq!(cli(&["--help"]).exit_code, 0);
+    }
+
+    #[test]
+    fn a_missing_base_can_be_allowed_on_the_first_run() {
+        let head = temp_path("first-head");
+        baseline(&[("increment", 500, 50)]).save(&head).unwrap();
+        let h = head.to_str().unwrap();
+
+        let refused = cli(&["does-not-exist.json", h]);
+        let allowed = cli(&["does-not-exist.json", h, "--allow-missing-base"]);
+        let _ = std::fs::remove_file(&head);
+
+        assert_eq!(refused.exit_code, 2);
+        assert_eq!(allowed.exit_code, 0, "{}", allowed.stderr);
+        assert!(allowed.stdout.contains("🟢 new case"));
     }
 }
