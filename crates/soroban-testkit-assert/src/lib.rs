@@ -11,8 +11,8 @@ pub mod regex_matcher;
 pub mod storage;
 
 pub use auth::{
-    AuthArgs, AuthMatcher, AuthSubInvocationMatcher, AuthSubTree, AuthSubTreeMatcher,
-    SubInvocations,
+    AuthArgs, AuthMatcher, AuthStrictMatcher, AuthSubInvocationMatcher, AuthSubTree,
+    AuthSubTreeMatcher, SubInvocations,
 };
 pub use auth_tree::AuthTreeMockBuilder;
 pub use balance::{

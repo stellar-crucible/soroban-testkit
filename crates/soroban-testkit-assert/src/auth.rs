@@ -571,6 +571,197 @@ macro_rules! assert_auth_matches {
     }};
 }
 
+/// Asserts that the recorded authorizations are exactly the expected patterns.
+///
+/// Every expected pattern must match one distinct recorded authorization, and
+/// every recorded authorization must be used. Matching is one-to-one, so
+/// overlapping argument patterns cannot accidentally accept duplicate or
+/// unexpected authorizations.
+pub struct AuthStrictMatcher<'a> {
+    env: &'a Env,
+    expected: Vec<AuthMatcher<'a>>,
+}
+
+impl<'a> AuthStrictMatcher<'a> {
+    pub fn new(env: &'a Env) -> Self {
+        Self {
+            env,
+            expected: Vec::new(),
+        }
+    }
+
+    /// Adds one expected authorization pattern.
+    pub fn expect(mut self, expected: AuthMatcher<'a>) -> Self {
+        self.expected.push(expected);
+        self
+    }
+
+    /// Fails unless the expected patterns and recorded authorizations form a
+    /// complete one-to-one match, with a side-by-side diagnostic on failure.
+    pub fn assert_matches(&self) {
+        let auths = self.env.auths();
+        let mut observed_to_expected = vec![None; auths.len()];
+
+        for expected_index in 0..self.expected.len() {
+            let mut visited = vec![false; auths.len()];
+            assign_auth_pattern(
+                expected_index,
+                &self.expected,
+                &auths,
+                &mut visited,
+                &mut observed_to_expected,
+            );
+        }
+
+        let mut expected_to_observed = vec![None; self.expected.len()];
+        for (observed_index, expected_index) in observed_to_expected.iter().enumerate() {
+            if let Some(expected_index) = expected_index {
+                expected_to_observed[*expected_index] = Some(observed_index);
+            }
+        }
+
+        if self.expected.len() == auths.len() && expected_to_observed.iter().all(Option::is_some) {
+            return;
+        }
+
+        let expected_lines = self
+            .expected
+            .iter()
+            .enumerate()
+            .map(|(index, expected)| format!("[{index}] {}", expected.describe()))
+            .collect::<Vec<_>>();
+        let observed_lines = auths
+            .iter()
+            .enumerate()
+            .map(|(index, (invoker, invocation))| {
+                format!("[{index}] {}", describe_auth(self.env, invoker, invocation))
+            })
+            .collect::<Vec<_>>();
+        let comparison = format_side_by_side(
+            "Expected authorization(s)",
+            &expected_lines,
+            "Observed authorization(s)",
+            &observed_lines,
+        );
+        let missing = expected_to_observed
+            .iter()
+            .enumerate()
+            .filter(|(_, observed)| observed.is_none())
+            .map(|(index, _)| format!("  [{index}] {}", self.expected[index].describe()))
+            .collect::<Vec<_>>();
+        let unexpected = observed_to_expected
+            .iter()
+            .enumerate()
+            .filter(|(_, expected)| expected.is_none())
+            .map(|(index, _)| {
+                let (invoker, invocation) = &auths[index];
+                format!(
+                    "  [{index}] {}",
+                    describe_auth(self.env, invoker, invocation)
+                )
+            })
+            .collect::<Vec<_>>();
+        let missing = if missing.is_empty() {
+            "  (none)".to_string()
+        } else {
+            missing.join("\n")
+        };
+        let unexpected = if unexpected.is_empty() {
+            "  (none)".to_string()
+        } else {
+            unexpected.join("\n")
+        };
+
+        panic!(
+            "Strict authorization assertion failed: expected {} authorization(s), observed {}\n{}\nMissing expected authorization(s):\n{}\nUnexpected observed authorization(s):\n{}",
+            self.expected.len(),
+            auths.len(),
+            comparison,
+            missing,
+            unexpected,
+        );
+    }
+}
+
+fn assign_auth_pattern(
+    expected_index: usize,
+    expected: &[AuthMatcher<'_>],
+    auths: &[(Address, AuthorizedInvocation)],
+    visited: &mut [bool],
+    observed_to_expected: &mut [Option<usize>],
+) -> bool {
+    for (observed_index, (invoker, invocation)) in auths.iter().enumerate() {
+        if visited[observed_index] || !expected[expected_index].matches(invoker, invocation) {
+            continue;
+        }
+        visited[observed_index] = true;
+
+        let previous_expected = observed_to_expected[observed_index];
+        if previous_expected.is_none()
+            || assign_auth_pattern(
+                previous_expected.unwrap(),
+                expected,
+                auths,
+                visited,
+                observed_to_expected,
+            )
+        {
+            observed_to_expected[observed_index] = Some(expected_index);
+            return true;
+        }
+    }
+    false
+}
+
+/// Asserts that the recorded authorizations are exactly the listed patterns.
+///
+/// Each entry requires a `function` and may include an `invoker` and
+/// position-by-position `args` pattern. `_` in `args` accepts any value at that
+/// position. Unlike [`assert_auth_matches!`], this macro fails for both missing
+/// expected authorizations and any unlisted recorded authorization.
+///
+/// ```text
+/// assert_auth_strict!(env, [
+///     {
+///         invoker: admin,
+///         function: "set_admin",
+///         args: [new_admin],
+///     },
+/// ]);
+/// ```
+///
+/// Failures include a side-by-side list of expected and observed
+/// authorizations, followed by any unmatched expectations and extra records.
+#[macro_export]
+macro_rules! assert_auth_strict {
+    ($env:expr, [
+        $(
+            {
+                $(invoker: $invoker:expr,)?
+                function: $function:expr
+                $(, args: [$($args:tt)*])?
+                $(,)?
+            }
+        ),* $(,)?
+    ]) => {{
+        let env = &$env;
+        let matcher = $crate::auth::AuthStrictMatcher::new(env);
+        $(
+            let matcher = matcher.expect({
+                let expected = $crate::auth::AuthMatcher::new(env).function($function);
+                $(let expected = expected.invoker(&$invoker);)?
+                $(let expected = expected.args($crate::__assert_auth_args!(
+                    env;
+                    $crate::auth::AuthArgs::new();
+                    $($args)*
+                ));)?
+                expected
+            });
+        )*
+        matcher.assert_matches()
+    }};
+}
+
 /// Builds an [`AuthArgs`] from the token list a user wrote inside `args: [..]`.
 ///
 /// Both the empty list and a trailing comma end in the same rule, because the
@@ -1542,6 +1733,76 @@ mod tests {
     fn assert_auth_count_reports_the_observed_total() {
         let env = Env::default();
         AuthMatcher::new(&env).assert_auth_count(2);
+    }
+
+    #[test]
+    fn strict_auth_matches_the_expected_multiset() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        crate::assert_auth_strict!(env, [
+            {
+                function: "joint",
+                args: [_, _],
+            },
+            {
+                invoker: first,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+        ]);
+    }
+
+    #[test]
+    fn strict_auth_rejects_surplus_authorizations() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::assert_auth_strict!(env, [
+                {
+                    invoker: first,
+                    function: "joint",
+                },
+            ]);
+        }))
+        .expect_err("surplus authorization must fail");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("strict auth failure should have a text diagnostic");
+
+        assert!(message.contains("Expected authorization(s)"));
+        assert!(message.contains("Observed authorization(s)"));
+        assert!(message.contains("Unexpected observed authorization(s)"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Missing expected authorization(s)")]
+    fn strict_auth_rejects_missing_authorizations() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let signer = Address::generate(&env);
+        let stranger = Address::generate(&env);
+
+        client.guarded(&signer, &5u32);
+
+        crate::assert_auth_strict!(env, [
+            {
+                invoker: stranger,
+                function: "guarded",
+                args: [signer, 5u32],
+            },
+        ]);
     }
 
     #[test]
