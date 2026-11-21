@@ -14,8 +14,13 @@ rust-version.workspace = true
 
 [dependencies]
 soroban-sdk = { workspace = true }
+soroban-env-host = { workspace = true, optional = true }
+soroban-testkit-core = { path = "../soroban-testkit-core", version = "0.4.1", optional = true }
 proptest = { workspace = true, optional = true }
+ed25519-dalek = { version = "2.2.0", default-features = false, optional = true }
+k256 = { version = "0.13.4", default-features = false, features = ["ecdsa", "arithmetic"], optional = true }
+sha2 = { version = "0.10.9", default-features = false, optional = true }
 
 [features]
 default = ["proptest"]
-proptest = ["dep:proptest"]
+proptest = ["dep:proptest", "dep:ed25519-dalek", "dep:k256", "dep:sha2", "dep:soroban-testkit-core", "dep:soroban-env-host"]

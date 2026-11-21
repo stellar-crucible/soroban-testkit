@@ -4,7 +4,7 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · auth · storage</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -16,11 +16,18 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `EventMatcher::assert_not_emitted()` | No matching event exists |
 | `EventMatcher::assert_none_match(pred)` | No matching event satisfies a predicate |
 | `EventMatcher::assert_count(n)` | Exactly `n` events were emitted |
+| `EventMatcher::assert_count_within(bound)` | The number of matching events falls within a range (or equals a count) |
+| `EventMatcher::assert_topic_count(topic, bound)` | The number of events carrying `topic` falls within a range (or equals a count) |
+| `assert_event_count_range!(env, 3..=5)` | Macro form of `assert_count_within`, over an `Env` or an `EventLog` |
+| `assert_event_topic_count!(env, "Transfer", 2)` | Macro form of `assert_topic_count`, over an `Env` or an `EventLog` |
 | `EventMatcher::assert_data_matches(pred)` | One event's payload satisfies a predicate |
 | `EventMatcher::from_contract(addr)` | Restricts matches to one contract address |
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
+| `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
+| `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
+| `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
@@ -31,6 +38,12 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `assert_storage_key_deleted!(env, contract, key, tier)` | A key is gone from one named tier |
 | `assert_storage_empty!(env, contract)` | No live storage entry survives in any tier |
 | `assert_storage_empty!(env, contract, tier)` | A named tier holds no live entry |
+| `AuthSubInvocationMatcher::assert_matches()` | An authorized sub-call matching contract, function, and arguments appears at any depth |
+| `assert_auth_sub_invocation!(env, { .. })` | Inline sub-invocation matcher isolating intermediate contract calls at any depth |
+| `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
+| `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
+| `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
+| `assert_budget_diff_within!(..)` | Asserts relative gas savings between baseline and optimized closures with side-by-side failure diff table |
 
 ## Event matching
 
@@ -151,6 +164,72 @@ panicked at 'Expected no events to be emitted, found 1 — unexpected event: top
   <p><code>EventMatcher::new(&amp;env).assert_not_emitted()</code> proves the <strong>most recent invocation</strong> published nothing matching. Proving a topic never appeared across a test is the <a href="#asserting-across-several-invocations"><code>EventLog</code></a> case: collect each call, then <code>log.matcher().with_topic("Refund").assert_not_emitted()</code>.</p>
 </div>
 
+## Event count ranges and topic frequencies
+
+An exact `assert_count(n)` breaks the day a batch call starts emitting one extra fee or audit event, even though the behaviour under test did not change. Two macros state what the test actually depends on instead: that the total falls in a range, and that a given topic appeared a given number of times.
+
+```rust
+use soroban_testkit_assert::{assert_event_count_range, assert_event_topic_count};
+
+client.batch_transfer(&from, &recipients); // 2 transfers + auxiliary events
+
+// Total events within a range: any standard range works.
+assert_event_count_range!(env, 3..=5);
+assert_event_count_range!(env, 2..);
+assert_event_count_range!(env, ..=10);
+
+// An exact topic frequency, or a range of them.
+assert_event_topic_count!(env, "transfer", 2);
+assert_event_topic_count!(env, "fee", 0..=1);
+assert_event_topic_count!(env, "refund", 0);
+
+// Restrict either one to the events of one contract.
+assert_event_count_range!(env, from = token_id, 3..);
+assert_event_topic_count!(env, from = token_id, "transfer", 2);
+```
+
+The bound is an exact count (`2`) or any range over integers: `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`. Integer literals need no suffix. A topic counts the same way `with_topic` matches: an event counts once when **any** of its topics is that symbol, and symbols are case sensitive.
+
+The first argument is anything that implements `EventSource`: an `Env` (the most recent invocation) or an [`EventLog`](#asserting-across-several-invocations) (every call it collected), by value or by reference. That makes the macros the natural way to bound a whole multi-step test:
+
+```rust
+let mut log = EventLog::new(&env);
+for batch in batches {
+    client.batch_transfer(&from, &batch);
+    log.collect();
+}
+assert_event_count_range!(log, 6..=12);
+assert_event_topic_count!(log, "transfer", 6);
+```
+
+Both checks also exist as matcher methods, which compose with the existing filters:
+
+```rust
+EventMatcher::new(&env)
+    .from_contract(&token_id)
+    .with_topic("transfer")
+    .assert_count_within(2..=3);
+
+EventMatcher::new(&env).assert_topic_count("fee", 1);
+```
+
+### Failure diagnostics
+
+A failure prints the bound, the observed count, the scope that was read, and a table of every topic signature in scope with how many events carried it, so you see what was emitted instead. Symbol topics are spelled out. Every other topic shows as its type (`<address>`, `<i128>`, …), so transfers to different recipients share one row:
+
+```text
+Event topic count mismatch: expected topic "Transfer" exactly 2 time(s), observed 0 (topic "Transfer" was not observed)
+Scope: most recent invocation
+| Observed topics     | Count |
+|---------------------|-------|
+| transfer, <address> |     2 |
+| fee                 |     1 |
+| audit               |     1 |
+| total               |     4 |
+```
+
+The table lists signatures in the order they first appeared. It honours `from = …` / `from_contract` but deliberately ignores the topic being counted, because the useful question on failure is "what did come out of the call?".
+
 ## Asserting on payload data
 
 Topics say which event fired; the data says what happened. `assert_data_matches` hands the predicate one `EventData` per event in scope, after the contract and topic filters:
@@ -214,6 +293,55 @@ panicked at 'Expected an event whose data matches, checked 1 event(s) with data 
 ```
 
 Scalars print their values, maps and vectors print their entries, an address prints as its strkey (abbreviated above, printed whole in a real message), and a shape too rare to spell out falls back to its XDR debug form, so the message never hides the value it rejected. When no event is in scope the message says so instead of claiming the data was wrong.
+
+### Checking an event payload schema
+
+`assert_event_data_schema!` validates the complete map payload of every event
+matching the topic. It reports missing or mistyped fields individually and
+rejects extra keys, which helps catch accidental indexer schema changes:
+
+```rust
+use soroban_testkit_assert::assert_event_data_schema;
+use soroban_sdk::Address;
+
+client.transfer(&from, &to, &100);
+
+assert_event_data_schema!(&env, "transfer", {
+    amount: i128,
+    from: Address,
+    to: Address,
+});
+```
+
+Types are checked by Soroban value deserialization, including `i128`, `u64`,
+`Address`, `Symbol`, and `bool`. A failure names each offending field and shows
+the expected type and observed type/value. The assertion requires at least one
+event matching the topic.
+
+## Successful contract calls
+
+Use the generated client's `try_*` call with these macros instead of a bare
+`unwrap()`. A host failure is decoded into its category, code, and known name
+(for example `storage/3: MissingValue`); contract-specific errors retain their
+code and are identified as unregistered unless decoded separately:
+
+```rust
+use soroban_testkit_assert::{
+    assert_call_success_with_value, assert_no_contract_error,
+};
+
+// Assert success and keep the returned value for further checks.
+let balance = assert_no_contract_error!(client.try_balance(&account));
+assert!(balance > 0);
+
+// Assert that a successful invocation returned exactly the expected value.
+assert_call_success_with_value!(client.try_transfer(&from, &to, &100), ());
+```
+
+Both macros evaluate the call once and distinguish a returned contract/host
+error from an invocation failure. `assert_no_contract_error!` returns the
+successful value; `assert_call_success_with_value!` compares it with the
+expected value.
 
 ## Authorization matching
 
@@ -361,6 +489,62 @@ contract Contract(C…BBBB) function "route"                   | contract Contra
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
 ```
 
+### Isolating intermediate sub-invocations
+
+When inspecting authorization trees from complex multi-contract calls, developers often only care about asserting that a specific intermediate contract properly authorized a sub-call, regardless of top-level invoker details.
+
+`assert_auth_sub_invocation!` searches recursively across all recorded authorization trees and matches any sub-invocation matching `{ contract, function, args }` at any depth:
+
+```rust
+use soroban_testkit_assert::assert_auth_sub_invocation;
+
+aggregator.swap(&user, &pool_id, &vault_id, &500i128);
+
+// Matches Vault deposit at depth 2 without naming Aggregator or Pool:
+assert_auth_sub_invocation!(env, {
+    contract: vault_id,
+    function: "deposit",
+    args: [user.clone(), 500i128],
+});
+
+// Matches intermediate Pool route without top-level wrapper details:
+assert_auth_sub_invocation!(env, {
+    contract: pool_id,
+    function: "route",
+    args: [_, vault_id, 500i128],
+});
+```
+
+All fields are optional and accept `_` as a wildcard:
+
+- `contract: addr` (or `_` / omitted): filters calls targeting `addr`.
+- `function: "name"` (or `_` / omitted): filters calls named `"name"`.
+- `args: [_, val]` (or `_` / omitted): matches arguments positionally with `_` wildcards.
+- `invoker: addr` (or `_` / omitted): restricts matches to authorization trees originating from `addr`.
+
+The same matching is available via the chainable builder `AuthSubInvocationMatcher`:
+
+```rust
+use soroban_testkit_assert::auth::{AuthArgs, AuthSubInvocationMatcher};
+
+AuthSubInvocationMatcher::new(&env)
+    .contract(&vault_id)
+    .function("deposit")
+    .args(AuthArgs::new().any().value(&env, 500i128))
+    .assert_matches();
+```
+
+When no matching sub-invocation is found, the assertion formats the full recorded authorization tree displaying all sub-invocations:
+
+```text
+panicked at 'Expected authorization sub-invocation matching { contract Contract(C…), function "deposit", args [_, 999] }, found no match in 1 recorded authorization tree(s):
+[0] invoker Contract(C…1234)
+contract Contract(C…AAAA) function "swap" args [...]
+└── contract Contract(C…BBBB) function "route" args [...]
+    └── contract Contract(C…CCCC) function "deposit" args [...]'
+```
+
+
 ## Storage assertions
 
 Closing an account, burning a balance or cancelling an escrow should leave no storage behind. `assert_storage_key_deleted!` and `assert_storage_empty!` prove entries are gone from the ledger rather than merely rewritten:
@@ -412,6 +596,173 @@ Assertions fail with the counts they observed, which is what makes them worth us
 assertion `left == right` failed: Expected 3 events, found 1
 ```
 
+## Storage tier quota assertions
+
+Protocols must keep storage tier entry counts within bounded budgets: instance storage is reserved for small singleton configuration, persistent storage holds durable state, and temporary storage manages short-lived queues. `assert_storage_tier_count!` validates entry count quotas per tier:
+
+```rust
+use soroban_testkit_assert::assert_storage_tier_count;
+
+// Enforce quotas using block syntax:
+assert_storage_tier_count!(env, contract_id, {
+    instance: 1,           // Exactly 1 instance entry
+    max_persistent: 10,    // At most 10 persistent entries
+    temporary: 0,          // No temporary storage entries
+});
+
+// Or concise assignment syntax:
+assert_storage_tier_count!(env, contract_id, max_instance = 3, max_persistent = 10);
+```
+
+When a quota is breached, the assertion prints an informative breakdown table listing all stored keys per tier:
+
+```text
+Storage allocation quota exceeded for contract:
+Breached tiers: persistent (found 12, expected max 10)
+
+| Tier        | Count | Quota          | Status | Keys                                       |
+|-------------|-------|----------------|--------|--------------------------------------------|
+| instance    | 1     | max 5          | PASS   | "cfg"                                      |
+| persistent  | 12    | max 10         | BREACH | "u_1", "u_2", "u_3", ... (total 12)        |
+| temporary   | 0     | exact 0        | PASS   | (none)                                     |
+```
+
+## Multi-party balance conservation
+
+Asserting balance conservation across multi-user operations (e.g., swaps, multi-hop routes, fee splits, or batch transfers) commonly leads to repetitive boilerplate when querying balances before and after calls. The `assert_balance_conserved!` macro captures pre-invocation balances, runs the operation, verifies that total tokens across all tracked participants plus reserves are conserved, and accounts for explicit external mints or burns:
+
+```rust
+use soroban_testkit_assert::assert_balance_conserved;
+
+// Standard 2-party transfer:
+assert_balance_conserved!(
+    accounts: [&alice, &bob],
+    balance: |addr| token_client.balance(addr),
+    call: {
+        token_client.transfer(&alice, &bob, &100);
+    }
+);
+
+// Multi-party swap with fees, liquidity pool reserve, and custom labels:
+assert_balance_conserved!(
+    accounts: [
+        (&alice, "Alice (Trader)"),
+        (&bob, "Bob (Recipient)"),
+        (&pool, "AMM Liquidity Pool"),
+        (&treasury, "Protocol Fee Vault")
+    ],
+    balance: |addr| token_client.balance(addr),
+    call: {
+        router.swap(&alice, &bob, &1000);
+    }
+);
+
+// Invocations involving external mints or burns:
+assert_balance_conserved!(
+    accounts: [&alice, &vault],
+    balance: |addr| token_client.balance(addr),
+    mint: 500,
+    burn: 100,
+    call: {
+        token_client.mint(&alice, &500);
+        token_client.burn(&vault, &100);
+    }
+);
+```
+
+When an invariant is violated (for example, if a fee calculation suffers from fractional token loss or round-off leakage), `assert_balance_conserved!` panics with a formatted debit/credit reconciliation table:
+
+```text
+Balance Conservation Breach: Discrepancy = -1 (LEAK DETECTED)
+Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
+
+------------------------------------------------------------------------------------------------------
+| Account / Reserve            |    Pre-Balance |   Post-Balance |     Delta (Debit/Credit) |
+------------------------------------------------------------------------------------------------------
+| Alice                        |           1000 |            900 |                     -100 |
+| Bob                          |              0 |             97 |                      +97 |
+| Fee Collector                |              0 |              2 |                       +2 |
+------------------------------------------------------------------------------------------------------
+| Total Tracked                |           1000 |            999 |                       -1 |
+| External Mints (+)           |                |                |                       +0 |
+| External Burns (-)           |                |                |                       -0 |
+------------------------------------------------------------------------------------------------------
+| Discrepancy                  |                |                |       -1 (LEAK DETECTED) |
+------------------------------------------------------------------------------------------------------
+```
+
+## Comparative budget differential and relative gas savings
+
+When refactoring code paths or evaluating alternative algorithm implementations (such as linear scan vs binary search, or unindexed vs indexed storage queries), smart contract engineers need to assert that an optimized branch achieves relative gas savings without regressing on CPU instruction or memory consumption.
+
+The `assert_budget_diff_within!` macro executes baseline and optimized closures, measures the differential CPU instructions and memory bytes consumed, and asserts that relative savings targets are met.
+
+### Basic comparison
+
+In default mode, the optimized branch must consume strictly fewer instructions or memory bytes than baseline and cannot regress in either dimension:
+
+```rust
+use soroban_testkit_assert::assert_budget_diff_within;
+
+assert_budget_diff_within!(
+    &env,
+    baseline: {
+        client.linear_search(&items, &target);
+    },
+    optimized: {
+        client.binary_search(&items, &target);
+    },
+);
+```
+
+### Enforcing relative and absolute savings
+
+Specify target percentage reductions (`min_cpu_savings_percent`, `min_mem_savings_percent`, `min_savings_percent`) or absolute thresholds (`min_cpu_savings`, `min_mem_savings`):
+
+```rust
+assert_budget_diff_within!(
+    env: &env,
+    baseline: || client.unindexed_scan(&key),
+    optimized: || client.indexed_lookup(&key),
+    min_cpu_savings_percent: 25.0, // At least 25% CPU instruction reduction
+    min_mem_savings_percent: 10.0, // At least 10% memory byte reduction
+);
+```
+
+### Space-time tradeoffs and dual environments
+
+For operations that modify contract state or trade slight memory increases for massive CPU reductions:
+
+```rust
+// Separate environments ensure identical initial state:
+assert_budget_diff_within!(
+    baseline: (&env1, { client1.bubble_sort(&data) }),
+    optimized: (&env2, { client2.radix_sort(&data) }),
+    min_cpu_savings_percent: 50.0,
+    allow_mem_regression: true, // Permit memory increase for large CPU reduction
+);
+```
+
+### Side-by-side consumption table on failure
+
+When an optimized branch regresses or fails to reach the required savings target, `assert_budget_diff_within!` panics with a formatted side-by-side consumption table:
+
+```text
+Budget Differential Assertion Failed!
+Optimized branch failed to achieve required gas savings or exceeded baseline limits.
+
+======================================================================================================================================
+| Metric             |         Baseline |        Optimized |   Delta (Opt-Base) |          Savings (%) | Target           |  Status  |
+======================================================================================================================================
+| CPU Instructions   |          100,000 |           85,000 |            -15,000 |      +15.00% savings | >= 25.00%        |   FAIL   |
+--------------------------------------------------------------------------------------------------------------------------------------
+| Memory (Bytes)     |            4,096 |            3,840 |               -256 |       +6.25% savings | <= baseline      |   PASS   |
+======================================================================================================================================
+
+Failure Summary:
+  • Failed to achieve target CPU savings: achieved 15.00%, expected at least 25.00%
+```
+
 <div class="tk-grid tk-grid--2">
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">Next step</span>
@@ -424,3 +775,40 @@ assertion `left == right` failed: Expected 3 events, found 1
     <p class="tk-card__body">See <a href="../guides/testing-patterns.html">Testing Patterns</a> for event and auth assertions in multi-contract suites.</p>
   </div>
 </div>
+
+## Budget ranges and ceilings (`assert_budget_consumed!`)
+
+`assert_budget_consumed!` bounds what the most recent top-level invocation cost (`BudgetSnapshot::last_invocation`), without manual snapshot arithmetic. Each metric takes either a range or an inclusive ceiling:
+
+```rust
+use soroban_testkit_assert::assert_budget_consumed;
+
+client.swap(&user, &100);
+
+assert_budget_consumed!(env, {
+    max_cpu: 150_000,
+    max_mem: 50_000,
+});
+
+assert_budget_consumed!(env, {
+    cpu: 10_000..=15_000, // any range: a..b, a..=b, a.., ..b, ..=b
+    mem: 1_000..,
+});
+```
+
+| Key | Value | Meaning |
+| --- | --- | --- |
+| `cpu` | `u64` range | CPU instructions must fall inside the range |
+| `max_cpu` | `u64` | CPU instructions must not exceed it (inclusive) |
+| `mem` | `u64` range | memory bytes must fall inside the range |
+| `max_mem` | `u64` | memory bytes must not exceed it (inclusive) |
+
+An unknown key is a compile error. On failure every breached metric is reported at once, with the observed value, the expected bound, the miss, and the miss as a percentage of the crossed bound:
+
+```text
+assert_budget_consumed! failed:
+  cpu_insns: observed 1_650, expected ..=1_500 — over the upper bound by 150 (+10.00%)
+  observed totals: cpu_insns=1_650 mem_bytes=812
+```
+
+The same check is available without the macro: build a `BudgetBounds` (`.cpu(..)`, `.max_cpu(..)`, `.mem(..)`, `.max_mem(..)`) and call `check(&snapshot)` or `assert_within(&snapshot)` on any `BudgetSnapshot`.

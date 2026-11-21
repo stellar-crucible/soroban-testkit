@@ -13,6 +13,13 @@
 //!    table for a pull-request comment, and reports whether any contract grew
 //!    past a percentage threshold.
 //!
+//! A footprint also projects forward: [`FootprintSnapshot::projected_rent`]
+//! prices keeping those bytes on the ledger for another N ledgers, and
+//! [`FootprintSnapshot::to_markdown`] renders the entry sizes and that projection
+//! as one summary table. The arithmetic is the network's own — it delegates to
+//! `soroban_env_host::fees::compute_rent_fee`, so a projection agrees with what
+//! core charges rather than with a restatement of the formula here.
+//!
 //! Sizes are XDR-encoded bytes, the unit rent and read/write fees are charged
 //! in: the whole ledger entry for a persistent or temporary key, and the
 //! key-plus-value map entry for each key inside instance storage.
@@ -239,6 +246,271 @@ impl StorageFootprint {
         };
         // A version integer and nested string-to-u64 maps always serialise.
         serde_json::to_string_pretty(&file).unwrap_or_default()
+    }
+
+    /// Measure one contract without assembling an artifact around it.
+    ///
+    /// [`StorageFootprint::capture`] does the same work in order to *record* a
+    /// snapshot under a label; this is for a test that only wants to read the
+    /// sizes and the rent of a single contract.
+    pub fn measure(env: &Env, contract: &Address) -> FootprintSnapshot {
+        FootprintSnapshot::capture(env, contract)
+    }
+}
+
+/// Horizon [`FootprintSnapshot::to_markdown`] projects rent over when the caller
+/// does not name one: 30 days at the network's ~5 second ledger cadence.
+pub const DEFAULT_PROJECTION_LEDGERS: u32 = 518_400;
+
+/// The state size at which `fee_per_rent_1kb` reaches its high value.
+const PROTOCOL_23_STATE_TARGET_SIZE_BYTES: i64 = 3_000_000_000;
+/// `fee_per_rent_1kb` extrapolated to an empty Soroban state; the host floors
+/// the result at `MINIMUM_RENT_WRITE_FEE_PER_1KB`.
+const PROTOCOL_23_RENT_FEE_1KB_STATE_SIZE_LOW: i64 = -17_000;
+/// `fee_per_rent_1kb` once the Soroban state reaches the target size.
+const PROTOCOL_23_RENT_FEE_1KB_STATE_SIZE_HIGH: i64 = 10_000;
+/// Multiplier applied to the growth of `fee_per_rent_1kb` past the target size.
+const PROTOCOL_23_STATE_SIZE_RENT_FEE_GROWTH_FACTOR: u32 = 1;
+/// The floor the host clamps `fee_per_rent_1kb` to, whatever the state size.
+const MINIMUM_RENT_WRITE_FEE_PER_1KB: i64 = 1_000;
+
+/// The fee parameters a rent projection is priced with.
+///
+/// The defaults are the values `stellar-core` writes into the ledger at the
+/// protocol 23 upgrade — `Protcol23UpgradedConfig` in `src/ledger/NetworkConfig.h`
+/// — which that header notes are "calibrated for the pubnet, but they are also
+/// suitable for the smaller test networks", so mainnet and testnet price a byte
+/// of rent identically today.
+///
+/// Two of them move with the network rather than with the protocol:
+/// `fee_per_rent_1kb` follows the live Soroban state size, which
+/// [`RentParameters::with_soroban_state_size`] applies with core's own curve, and
+/// `fee_per_write_1kb` follows the bucket list size. Both default to the floor
+/// the respective curve returns while the network is smaller than its target,
+/// which keeps a projection a lower bound rather than a guess.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RentParameters {
+    /// Stroops per 1 KB of ledger state written, including a TTL bump.
+    pub fee_per_write_1kb: i64,
+    /// Stroops per 1 KB of rented ledger state per day.
+    pub fee_per_rent_1kb: i64,
+    /// Stroops per ledger entry written.
+    pub fee_per_write_entry: i64,
+    /// Ledgers one `fee_per_rent_1kb` payment covers for a persistent entry.
+    pub persistent_rent_rate_denominator: i64,
+    /// The same for a temporary entry, which the network rents more cheaply.
+    pub temporary_rent_rate_denominator: i64,
+}
+
+impl Default for RentParameters {
+    fn default() -> Self {
+        Self {
+            fee_per_write_1kb: MINIMUM_RENT_WRITE_FEE_PER_1KB,
+            fee_per_rent_1kb: MINIMUM_RENT_WRITE_FEE_PER_1KB,
+            fee_per_write_entry: 20_000,
+            persistent_rent_rate_denominator: 1_215,
+            temporary_rent_rate_denominator: 2_430,
+        }
+    }
+}
+
+impl RentParameters {
+    /// Re-derive `fee_per_rent_1kb` for a network holding `bytes` of Soroban
+    /// state, using the curve `stellar-core` itself applies.
+    ///
+    /// Pass the `sorobanStateSize` a `getNetworkSettings` call reports to price
+    /// against the live network instead of the floor.
+    pub fn with_soroban_state_size(mut self, bytes: i64) -> Self {
+        self.fee_per_rent_1kb = soroban_env_host::fees::compute_rent_write_fee_per_1kb(
+            bytes,
+            &soroban_env_host::fees::RentWriteFeeConfiguration {
+                state_target_size_bytes: PROTOCOL_23_STATE_TARGET_SIZE_BYTES,
+                rent_fee_1kb_state_size_low: PROTOCOL_23_RENT_FEE_1KB_STATE_SIZE_LOW,
+                rent_fee_1kb_state_size_high: PROTOCOL_23_RENT_FEE_1KB_STATE_SIZE_HIGH,
+                state_size_rent_fee_growth_factor: PROTOCOL_23_STATE_SIZE_RENT_FEE_GROWTH_FACTOR,
+            },
+        );
+        self
+    }
+
+    fn host_config(&self) -> soroban_env_host::fees::RentFeeConfiguration {
+        soroban_env_host::fees::RentFeeConfiguration {
+            fee_per_write_1kb: self.fee_per_write_1kb,
+            fee_per_rent_1kb: self.fee_per_rent_1kb,
+            fee_per_write_entry: self.fee_per_write_entry,
+            persistent_rent_rate_denominator: self.persistent_rent_rate_denominator,
+            temporary_rent_rate_denominator: self.temporary_rent_rate_denominator,
+        }
+    }
+}
+
+/// Stroops one footprint projects to over a horizon, per storage tier.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RentEstimate {
+    /// Ledgers of lifetime the entries are priced for.
+    pub ledgers: u32,
+    /// Instance storage, priced as the single ledger entry that holds it.
+    pub instance_stroops: u64,
+    pub persistent_stroops: u64,
+    pub temporary_stroops: u64,
+}
+
+impl RentEstimate {
+    pub fn total_stroops(&self) -> u64 {
+        self.instance_stroops
+            .saturating_add(self.persistent_stroops)
+            .saturating_add(self.temporary_stroops)
+    }
+
+    fn tier(&self, tier: StorageTier) -> u64 {
+        match tier {
+            StorageTier::Instance => self.instance_stroops,
+            StorageTier::Persistent => self.persistent_stroops,
+            StorageTier::Temporary => self.temporary_stroops,
+        }
+    }
+}
+
+impl FootprintSnapshot {
+    /// Stroops it costs to hold every byte of this footprint for `ledgers` more
+    /// ledgers, at the protocol 23 fee parameters.
+    pub fn projected_rent(&self, ledgers: u32) -> u64 {
+        self.rent_estimate(&RentParameters::default(), ledgers)
+            .total_stroops()
+    }
+
+    /// The same projection against caller-chosen fee parameters.
+    ///
+    /// Each entry is priced the way core prices a TTL bump: `ledgers` of rent at
+    /// the entry's size, plus one entry write, plus the 48-byte `TtlEntry` the
+    /// bump itself writes. So the figure is what keeping the state alive costs,
+    /// not just the rent term of it.
+    ///
+    /// Instance storage is one `ContractData` ledger entry holding a map, so its
+    /// bytes are priced as a single persistent entry rather than one per key. The
+    /// snapshot records the key-plus-value map entries and not the entry envelope
+    /// around them, which makes the instance column a floor.
+    pub fn rent_estimate(&self, params: &RentParameters, ledgers: u32) -> RentEstimate {
+        let mut estimate = RentEstimate {
+            ledgers,
+            ..RentEstimate::default()
+        };
+        let instance: Vec<u64> = self
+            .entries_with_tier(StorageTier::Instance)
+            .map(|(_, bytes)| bytes)
+            .collect();
+        if !instance.is_empty() {
+            estimate.instance_stroops = entry_rent(params, true, instance.iter().sum(), ledgers);
+        }
+        for (tier, is_persistent) in [
+            (StorageTier::Persistent, true),
+            (StorageTier::Temporary, false),
+        ] {
+            for (_, bytes) in self.entries_with_tier(tier) {
+                let stroops = entry_rent(params, is_persistent, bytes, ledgers);
+                let total = match tier {
+                    StorageTier::Persistent => &mut estimate.persistent_stroops,
+                    _ => &mut estimate.temporary_stroops,
+                };
+                *total = total.saturating_add(stroops);
+            }
+        }
+        estimate
+    }
+
+    fn entries_with_tier(&self, tier: StorageTier) -> impl Iterator<Item = (&str, u64)> {
+        self.entries()
+            .filter(move |(key, _)| tier_of(key) == Some(tier))
+    }
+
+    /// A Markdown summary of what this contract stores and what it costs to keep.
+    ///
+    /// One row per entry with its XDR size, then the tier subtotals with the
+    /// [`DEFAULT_PROJECTION_LEDGERS`] rent each tier projects to.
+    pub fn to_markdown(&self) -> String {
+        self.to_markdown_with(&RentParameters::default(), DEFAULT_PROJECTION_LEDGERS)
+    }
+
+    /// [`FootprintSnapshot::to_markdown`] over a caller-named horizon and fee set.
+    pub fn to_markdown_with(&self, params: &RentParameters, ledgers: u32) -> String {
+        let estimate = self.rent_estimate(params, ledgers);
+        let mut out = String::from("### Entries\n\n");
+        out.push_str("| Key | Bytes |\n|-----|--------:|\n");
+        for (key, bytes) in self.entries() {
+            let _ = writeln!(out, "| `{key}` | {bytes} |");
+        }
+        if self.is_empty() {
+            let _ = writeln!(out, "| _none_ | 0 |");
+        }
+
+        let _ = writeln!(
+            out,
+            "\n| Tier | Entries | Bytes | Rent for {ledgers} ledgers |\n\
+             |------|--------:|------:|----------------------:|"
+        );
+        for tier in TIERS {
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} |",
+                tier.as_str(),
+                self.entries_with_tier(tier).count(),
+                self.tier_bytes(tier),
+                estimate.tier(tier)
+            );
+        }
+        let _ = writeln!(
+            out,
+            "| **Total** | **{}** | **{}** | **{}** |",
+            self.len(),
+            self.total_bytes(),
+            estimate.total_stroops()
+        );
+        out.push_str(
+            "\n<sub>Sizes are XDR-encoded bytes. Rent is priced by \
+             `soroban-env-host`'s `compute_rent_fee` at the protocol 23 fee \
+             parameters, entry write and `TtlEntry` included.</sub>\n",
+        );
+        out
+    }
+}
+
+/// Price one ledger entry of `bytes` for `ledgers`, through the host's own
+/// fee function.
+fn entry_rent(params: &RentParameters, is_persistent: bool, bytes: u64, ledgers: u32) -> u64 {
+    let size = u32::try_from(bytes).unwrap_or(u32::MAX);
+    // An unchanged size and a `0 -> ledgers` lifetime is how core spells "buy
+    // this entry `ledgers` more of them": `old_size == new_size` leaves the
+    // top-up term at zero and the whole horizon lands in the extension.
+    let change = soroban_env_host::fees::LedgerEntryRentChange {
+        is_persistent,
+        is_code_entry: false,
+        old_size_bytes: size,
+        new_size_bytes: size,
+        old_live_until_ledger: 0,
+        new_live_until_ledger: ledgers,
+    };
+    soroban_env_host::fees::compute_rent_fee(&[change], &params.host_config(), 0).max(0) as u64
+}
+
+impl StorageFootprint {
+    /// Stroops every recorded contract costs to hold for `ledgers` more ledgers.
+    pub fn projected_rent(&self, ledgers: u32) -> u64 {
+        self.contracts
+            .values()
+            .map(|snapshot| snapshot.projected_rent(ledgers))
+            .sum()
+    }
+
+    /// Every recorded contract as one Markdown report: [`FootprintSnapshot`]
+    /// tables back to back under a contract heading.
+    pub fn to_markdown(&self) -> String {
+        let mut out = String::new();
+        for (label, snapshot) in self.contracts() {
+            let _ = writeln!(out, "## `{label}`\n");
+            out.push_str(&snapshot.to_markdown());
+            out.push('\n');
+        }
+        out
     }
 }
 
@@ -643,8 +915,8 @@ fn trim(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        FootprintError, FootprintSnapshot, StorageFootprint, StorageFootprintDiff,
-        FOOTPRINT_VERSION,
+        FootprintError, FootprintSnapshot, RentParameters, StorageFootprint, StorageFootprintDiff,
+        DEFAULT_PROJECTION_LEDGERS, FOOTPRINT_VERSION,
     };
     use crate::storage::StorageTier;
     use soroban_sdk::{contract, contractimpl, symbol_short, Bytes, Env, Symbol};
@@ -958,5 +1230,239 @@ mod tests {
         assert_eq!(refused.exit_code, 2);
         assert_eq!(allowed.exit_code, 0, "{}", allowed.stderr);
         assert!(allowed.stdout.contains("| new |"));
+    }
+
+    /// One entry of every tier, with sizes chosen so no two tiers share a total.
+    fn priced() -> FootprintSnapshot {
+        let mut snapshot = FootprintSnapshot::default();
+        snapshot
+            .insert(StorageTier::Instance, "admin", 40)
+            .insert(StorageTier::Instance, "config", 60)
+            .insert(StorageTier::Persistent, "count", 100)
+            .insert(StorageTier::Persistent, "blob", 300)
+            .insert(StorageTier::Temporary, "nonce", 80);
+        snapshot
+    }
+
+    fn ceil_div(numerator: i128, denominator: i128) -> i128 {
+        (numerator + denominator - 1) / denominator
+    }
+
+    /// The protocol's rent arithmetic, restated here independently of
+    /// [`super::entry_rent`]: sharing a helper with the implementation would let a
+    /// wrong denominator or a missing entry write cancel out in the test.
+    fn protocol_rent(bytes: u64, ledgers: u32, denominator: i64) -> i128 {
+        let params = RentParameters::default();
+        let rent = ceil_div(
+            i128::from(bytes) * i128::from(params.fee_per_rent_1kb) * i128::from(ledgers),
+            1024 * i128::from(denominator),
+        );
+        let ttl_bytes = ceil_div(
+            i128::from(soroban_env_host::fees::TTL_ENTRY_SIZE)
+                * i128::from(params.fee_per_write_1kb),
+            1024,
+        );
+        rent + i128::from(params.fee_per_write_entry) + ttl_bytes
+    }
+
+    /// The rent term alone: what one more ledger of a horizon costs once the
+    /// entry write and `TtlEntry` have been paid for.
+    fn rent_only(bytes: u64, ledgers: u32, denominator: i64) -> i128 {
+        let params = RentParameters::default();
+        ceil_div(
+            i128::from(bytes) * i128::from(params.fee_per_rent_1kb) * i128::from(ledgers),
+            1024 * i128::from(denominator),
+        )
+    }
+
+    #[test]
+    fn a_footprint_without_entries_rents_as_nothing() {
+        let snapshot = FootprintSnapshot::default();
+
+        assert_eq!(snapshot.projected_rent(518_400), 0);
+        assert_eq!(
+            snapshot
+                .rent_estimate(&RentParameters::default(), 1)
+                .ledgers,
+            1
+        );
+    }
+
+    #[test]
+    fn each_persistent_entry_pays_its_own_entry_write() {
+        let estimate = priced().rent_estimate(&RentParameters::default(), 518_400);
+
+        // `count` and `blob` are two ledger keys, so the network charges two entry
+        // writes and two `TtlEntry` writes on top of the two rent terms.
+        let expected =
+            u64::try_from(protocol_rent(100, 518_400, 1_215) + protocol_rent(300, 518_400, 1_215))
+                .unwrap();
+        assert_eq!(estimate.persistent_stroops, expected);
+    }
+
+    #[test]
+    fn instance_storage_rents_once_for_the_entry_that_holds_the_whole_map() {
+        let estimate = priced().rent_estimate(&RentParameters::default(), 518_400);
+
+        // `admin` and `config` are keys of one `ContractInstance`, not two ledger
+        // entries: the tier is priced as one persistent entry of 40 + 60 bytes.
+        let once = u64::try_from(protocol_rent(100, 518_400, 1_215)).unwrap();
+        let per_key =
+            u64::try_from(protocol_rent(40, 518_400, 1_215) + protocol_rent(60, 518_400, 1_215))
+                .unwrap();
+        assert_eq!(estimate.instance_stroops, once);
+        assert!(
+            estimate.instance_stroops < per_key,
+            "pricing the instance map per key double-charges the entry write"
+        );
+    }
+
+    #[test]
+    fn temporary_entries_are_rented_more_cheaply_than_persistent_ones() {
+        let params = RentParameters::default();
+        let snapshot = {
+            let mut snapshot = FootprintSnapshot::default();
+            snapshot.insert(StorageTier::Temporary, "nonce", 100);
+            snapshot.insert(StorageTier::Persistent, "count", 100);
+            snapshot
+        };
+
+        let estimate = snapshot.rent_estimate(&params, 518_400);
+
+        assert!(
+            estimate.temporary_stroops < estimate.persistent_stroops,
+            "temporary {} should rent below persistent {}",
+            estimate.temporary_stroops,
+            estimate.persistent_stroops
+        );
+        assert_eq!(
+            estimate.temporary_stroops,
+            u64::try_from(protocol_rent(100, 518_400, 2_430)).unwrap()
+        );
+    }
+
+    #[test]
+    fn doubling_the_horizon_adds_the_rent_but_not_the_entry_write() {
+        let params = RentParameters::default();
+        let snapshot = priced();
+
+        let a_day = snapshot.rent_estimate(&params, 17_280).persistent_stroops;
+        let two_days = snapshot.rent_estimate(&params, 34_560).persistent_stroops;
+
+        // Both entries were written once in either projection, so the difference is
+        // exactly the second horizon's rent and nothing else.
+        let expected =
+            u64::try_from(rent_only(100, 17_280, 1_215) + rent_only(300, 17_280, 1_215)).unwrap();
+        assert_eq!(two_days - a_day, expected);
+        assert!(two_days < a_day * 2, "the fixed write fee must not double");
+    }
+
+    #[test]
+    fn the_rent_estimate_totals_across_every_tier() {
+        let estimate = priced().rent_estimate(&RentParameters::default(), 518_400);
+
+        assert_eq!(
+            estimate.total_stroops(),
+            estimate.instance_stroops + estimate.persistent_stroops + estimate.temporary_stroops
+        );
+        assert!(estimate.total_stroops() > 0);
+    }
+
+    #[test]
+    fn the_rent_write_fee_floors_at_the_protocol_minimum() {
+        assert_eq!(RentParameters::default().fee_per_rent_1kb, 1_000);
+        assert_eq!(
+            RentParameters::default()
+                .with_soroban_state_size(0)
+                .fee_per_rent_1kb,
+            1_000,
+            "an empty Soroban state still pays the floor, not the negative low value"
+        );
+    }
+
+    #[test]
+    fn the_rent_write_fee_reaches_its_high_value_at_the_target_state_size() {
+        let at_target = RentParameters::default()
+            .with_soroban_state_size(3_000_000_000)
+            .fee_per_rent_1kb;
+        let past_target = RentParameters::default()
+            .with_soroban_state_size(6_000_000_000)
+            .fee_per_rent_1kb;
+
+        assert_eq!(at_target, 10_000);
+        assert!(past_target > at_target);
+    }
+
+    #[test]
+    fn measure_captures_one_contract_without_an_artifact() {
+        let env = Env::default();
+        let id = env.register(Store, ());
+        StoreClient::new(&env, &id).seed();
+
+        let measured = StorageFootprint::measure(&env, &id);
+
+        assert_eq!(measured, FootprintSnapshot::capture(&env, &id));
+        assert_eq!(measured.len(), 3);
+        // One entry per tier, each carrying its own entry write.
+        assert_eq!(
+            u64::try_from(
+                protocol_rent(measured.tier_bytes(StorageTier::Instance), 518_400, 1_215)
+                    + protocol_rent(measured.get("persistent:count").unwrap(), 518_400, 1_215)
+                    + protocol_rent(measured.get("temporary:nonce").unwrap(), 518_400, 2_430)
+            )
+            .unwrap(),
+            measured.projected_rent(518_400)
+        );
+    }
+
+    #[test]
+    fn the_summary_table_lists_every_entry_and_subtotals_each_tier() {
+        let markdown = priced().to_markdown();
+
+        assert!(markdown.contains("| Key | Bytes |"));
+        for key in [
+            "instance:admin",
+            "instance:config",
+            "persistent:count",
+            "persistent:blob",
+            "temporary:nonce",
+        ] {
+            assert!(
+                markdown.contains(&format!("| `{key}` |")),
+                "missing a row for {key}:\n{markdown}"
+            );
+        }
+        let estimate =
+            priced().rent_estimate(&RentParameters::default(), DEFAULT_PROJECTION_LEDGERS);
+        assert!(markdown.contains(&format!(
+            "| **Total** | **5** | **580** | **{}** |",
+            estimate.total_stroops()
+        )));
+        assert!(markdown
+            .lines()
+            .any(|line| line.starts_with("| persistent |") && line.ends_with('|')));
+    }
+
+    #[test]
+    fn the_summary_table_of_an_empty_contract_still_has_a_row() {
+        let markdown = FootprintSnapshot::default().to_markdown();
+
+        assert!(markdown.contains("| _none_ | 0 |"));
+        assert!(markdown.contains("| **Total** | **0** | **0** | **0** |"));
+    }
+
+    #[test]
+    fn a_footprint_renders_one_section_per_contract_and_sums_its_rent() {
+        let one = priced();
+        let total = one.projected_rent(518_400);
+        let mut footprint = StorageFootprint::new();
+        footprint.record("store", one.clone());
+        footprint.record("mirror", one);
+
+        assert_eq!(footprint.projected_rent(518_400), total * 2);
+        let markdown = footprint.to_markdown();
+        assert!(markdown.contains("## `store`"));
+        assert!(markdown.contains("## `mirror`"));
+        assert_eq!(markdown.matches("### Entries").count(), 2);
     }
 }

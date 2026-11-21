@@ -42,9 +42,9 @@ Testkit fills these gaps with domain-specific tooling that complements (not repl
 
 | Crate | Description |
 |-------|-------------|
-| [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, storage inspection |
+| [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, memory pressure profiles, storage inspection |
 | [`soroban-testkit-assert`](crates/soroban-testkit-assert) | Ergonomic assertion matchers for events and authorizations |
-| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder and setup framework |
+| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder, ledger control and archival sweeps |
 | [`soroban-testkit-generators`](crates/soroban-testkit-generators) | Soroban-aware property testing strategies for proptest |
 
 ## Quick Start
@@ -178,7 +178,8 @@ soroban-testkit/
 │   ├── counter/        # Contract + integration tests using every crate
 │   │                   # + budget.json: the costs CI holds them to
 │   ├── token/          # ERC-20 style contract, one test file per crate
-│   └── bounty_escrow/  # Bounty escrow with multi-signature release
+│   ├── bounty_escrow/  # Bounty escrow with multi-signature release
+│   └── multisig_vault/ # Timelocked M-of-N treasury, one test file per crate
 ├── docs/                     # mdBook documentation source (theme/custom.css)
 ├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
 ├── Cargo.toml                # Workspace root
@@ -188,7 +189,7 @@ soroban-testkit/
 ## Development
 
 ```bash
-cargo test --workspace --locked      # 389 tests: all four crates + all three examples
+cargo test --workspace --locked      # 470 tests: all four crates + all four examples
                                      # 2 more are #[ignore]d — CI checks them against a pinned SDK
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check

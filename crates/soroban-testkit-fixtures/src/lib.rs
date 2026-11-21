@@ -1,11 +1,45 @@
+pub mod archival;
 pub mod builder;
+pub mod congestion;
+pub mod consensus;
+pub mod event_indexer;
+pub mod eviction;
+pub mod failure_injector;
+pub mod gas_exhaustion;
 pub mod migration;
+pub mod profiles;
+pub mod protocol_registry;
+
+pub use congestion::{
+    CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
+};
+pub use consensus::{
+    ConsensusRound, ConsensusSimulator, LedgerClose, DEFAULT_JITTER_STD_MS,
+    DEFAULT_MAX_CLOSE_INTERVAL_MS, DEFAULT_MIN_CLOSE_INTERVAL_MS, DEFAULT_QUORUM, DEFAULT_SEED,
+    DEFAULT_VALIDATORS, QUORUM_ACCEPTANCE_SIGMA,
+};
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
+pub use profiles::NetworkProfile;
+pub use protocol_registry::{
+    ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
+    ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
+    ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
+
+pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
 use soroban_sdk::{Address, Env, TryFromVal as _};
+
+pub use event_indexer::{
+    EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
+};
+pub use eviction::StateEvictionSimulator;
+pub use gas_exhaustion::{
+    ExecutionBudget, ExecutionReport, ExecutionStatus, ExhaustedResource, GasExhaustionHarness,
+};
 
 pub struct TestContext {
     pub env: Env,
@@ -17,6 +51,9 @@ pub struct TestContext {
     /// assumed policy: `new` and the builder record what they actually did,
     /// and `with_env` defaults to mocked.
     pub mock_auths: bool,
+    /// The network conditions the builder installed and [`TestContext::reset`]
+    /// re-applies to the fresh env.
+    pub network_profile: NetworkProfile,
 }
 
 impl Default for TestContext {
@@ -46,6 +83,7 @@ impl TestContext {
             admin,
             users: Vec::new(),
             mock_auths: true,
+            network_profile: NetworkProfile::Local,
         }
     }
 
@@ -116,6 +154,30 @@ impl TestContext {
         next
     }
 
+    /// Archive every entry this context's ledger has let expire, returning the
+    /// simulator that holds them.
+    ///
+    /// Moves the ledger `count` sequences forward first, then sweeps the whole
+    /// environment the way the network does between ledgers: persistent
+    /// entries past their TTL are archived (and can be restored), temporary
+    /// ones are evicted for good. Contract instance and code entries stay live,
+    /// so the contracts registered here remain callable while the test reads
+    /// what the sweep did to their data.
+    ///
+    /// ```rust
+    /// use soroban_testkit_fixtures::builder::TestContextBuilder;
+    ///
+    /// let mut ctx = TestContextBuilder::new().build();
+    /// // With nothing stored, the sweep has nothing to archive.
+    /// let simulator = ctx.archive_expired(10_000);
+    /// assert!(simulator.is_empty());
+    /// ```
+    pub fn archive_expired(&mut self, count: u32) -> crate::archival::ArchivalSweepSimulator {
+        let mut simulator = crate::archival::ArchivalSweepSimulator::new();
+        simulator.sweep(&self.env, count);
+        simulator
+    }
+
     /// Swap in a fresh environment and keep every address this context holds.
     ///
     /// The new env starts at ledger 0 with no events, no recorded
@@ -139,6 +201,7 @@ impl TestContext {
         if self.mock_auths {
             env.mock_all_auths();
         }
+        self.network_profile.apply(&env);
         self.env = env;
 
         self.admin = migrated_to(&self.env, &carried[0]);
