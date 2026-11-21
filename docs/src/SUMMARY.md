@@ -18,6 +18,7 @@
 - [Worked Example: Counter](./guides/counter-example.md)
 - [Worked Example: Token](./guides/token-example.md)
 - [Worked Example: Bounty Escrow](./guides/bounty-escrow-example.md)
+- [Worked Example: Vesting Escrow](./guides/vesting-escrow-example.md)
 - [Worked Example: Multisig Vault](./guides/multisig-vault-example.md)
 - [Worked Example: Flash Mint](./guides/flash-mint-example.md)
 - [Worked Example: Crowdfunding and Milestone Escrow](./guides/crowdfunding-example.md)

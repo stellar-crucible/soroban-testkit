@@ -118,6 +118,38 @@ proptest! {
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
 </div>
 
+## Strkeys (account, contract, corrupted)
+
+Soroban strkeys are 56-character base32 strings carrying a version byte and a
+CRC-16 checksum. The generators module provides strategies that produce valid
+account (`G...`) and contract (`C...`) strkeys, plus corrupted variants that
+flip a checksum bit:
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies::{
+    account_strkey, contract_strkey, corrupted_strkey, Strkey,
+};
+
+proptest! {
+    #[test]
+    fn round_trips(s in account_strkey()) {
+        let decoded = Strkey::decode(&s).unwrap();
+        assert_eq!(decoded.encoded(), s);
+    }
+
+    #[test]
+    fn corrupted_is_rejected(s in corrupted_strkey()) {
+        assert!(Strkey::decode(&s).is_err());
+    }
+}
+```
+
+`Strkey` exposes `new`, `zero`, `encoded`, `decode`, `to_address`, and
+`StrkeyKind`/`StrkeyError` for direct parsing tests. Valid inputs shrink toward
+the canonical all-zero strkey; corrupted inputs shrink toward a single-bit
+checksum flip.
+
 ## Fuzzing invocation argument types
 
 `fuzzed_invocation_args` takes the host environment, a vector of valid
