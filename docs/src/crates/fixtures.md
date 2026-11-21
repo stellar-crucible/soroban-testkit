@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · deterministic_deployer · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -885,6 +885,34 @@ topology.assert_valid(); // panics with the full report on any violation
 `TopologyValidator::validate` returns a `TopologyReport` whose `is_valid`,
 `violations`, `to_mermaid`, and `render_topology` helpers support non-fatal
 assertions and diagram generation for documentation.
+
+## Deterministic deployer and address prediction (`DeterministicDeployer`)
+
+Factory contracts deploy children with `env.deployer().with_address(..., salt)`
+or `with_current_contract(salt)`. `DeterministicDeployer` computes the
+predicted contract address before deployment and can deploy+assert the address
+matches.
+
+```rust
+use soroban_sdk::{BytesN, Env};
+use soroban_testkit_fixtures::{DeterministicDeployer, SaltHierarchy};
+
+let env = Env::default();
+let wasm_hash = env.upload(MyContract);
+let deployer = env.current_contract_address();
+let salt = BytesN::from_array(&env, &[1u8; 32]);
+
+let predicted = DeterministicDeployer::predicted_address(&env, &deployer, &salt);
+let deployed = DeterministicDeployer::deploy_checked(&env, &deployer, &salt, &wasm_hash);
+assert_eq!(predicted, deployed);
+
+let salts = SaltHierarchy::from_namespace(7);
+let child_salt = salts.derive_bytesn(&env, &[0, 1]);
+let child = DeterministicDeployer::deploy(&env, &deployer, &child_salt, &wasm_hash);
+```
+
+`SaltHierarchy` provides deterministic, path-sensitive salt derivation for test
+suites that deploy multiple related contracts.
 
 ## Failure injection for mock dependencies (`FailureInjector`)
 

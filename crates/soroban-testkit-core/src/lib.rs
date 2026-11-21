@@ -2,6 +2,7 @@ pub mod budget;
 pub mod compatibility;
 pub mod conservation;
 pub mod coverage;
+pub mod diagnostic_event;
 pub mod error;
 pub mod footprint;
 pub mod namespace_auditor;
@@ -20,6 +21,10 @@ pub use conservation::{ConservationReport, ConservationVerifier, ReconciliationR
 pub use coverage::{
     ClientDefinition, ContractCoverageReport, CoverageAuditor, CoverageError, CoverageReport,
     FunctionCoverageRecord, FunctionCoverageStatus,
+};
+pub use diagnostic_event::{
+    assert_clean_diagnostics, diagnostic_log, diagnostics_contain_address, DiagnosticEventAuditor,
+    DiagnosticEventCategory, DiagnosticEventRecord, DiagnosticEventReport, SensitivePayloadFinding,
 };
 pub use footprint::{
     FootprintSnapshot, RentEstimate, RentParameters, StorageFootprint, StorageFootprintDiff,

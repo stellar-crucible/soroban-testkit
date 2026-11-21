@@ -3,6 +3,7 @@ pub mod branching;
 pub mod builder;
 pub mod congestion;
 pub mod consensus;
+pub mod deterministic_deployer;
 pub mod event_indexer;
 pub mod eviction;
 pub mod failure_injector;
@@ -23,6 +24,7 @@ pub use consensus::{
     DEFAULT_MAX_CLOSE_INTERVAL_MS, DEFAULT_MIN_CLOSE_INTERVAL_MS, DEFAULT_QUORUM, DEFAULT_SEED,
     DEFAULT_VALIDATORS, QUORUM_ACCEPTANCE_SIGMA,
 };
+pub use deterministic_deployer::{DeterministicDeployer, SaltHierarchy};
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use profiles::NetworkProfile;
