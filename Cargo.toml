@@ -17,6 +17,7 @@ members = [
     "examples/dynamic_amm",
     "examples/orderbook",
     "examples/nft",
+    "examples/amm",
 ]
 
 [workspace.package]
