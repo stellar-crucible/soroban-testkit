@@ -15,6 +15,8 @@ pub mod executables;
 #[cfg(feature = "proptest")]
 pub mod multisig;
 #[cfg(feature = "proptest")]
+pub mod state_machine;
+#[cfg(feature = "proptest")]
 pub mod storage_tier;
 #[cfg(feature = "proptest")]
 pub mod strategies;
@@ -50,12 +52,20 @@ pub use executables::{contract_executable, contract_executable_wasm_hash, deploy
 #[cfg(feature = "proptest")]
 pub use multisig::{multisig_policy, MultisigPolicy, Signer};
 #[cfg(feature = "proptest")]
+pub use state_machine::{
+    SorobanStateMachine, SorobanStateMachineRunner, prop_state_machine_test,
+};
+#[cfg(feature = "proptest")]
 pub use storage_tier::{
     mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
     storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
     MixedTierTtlAllocation, StorageTierWithTtl,
 };
 pub use strategies::fuzzed_invocation_args;
+#[cfg(feature = "proptest")]
+pub use strategies::{
+    soroban_map, soroban_vec, soroban_bytes, soroban_string, soroban_ascii_string,
+};
 #[cfg(feature = "proptest")]
 pub use temporal::{
     ledger_sequence_interval, soroban_duration, soroban_timepoint, MAX_LEDGER_SEQUENCE,

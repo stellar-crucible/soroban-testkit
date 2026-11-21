@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 55258c872cdf970260aea15f287fd46896fd1a9c653ce1b998625df06f9b227f # shrinks to allocations = MixedTierAllocation { entries: [("___", Instance), ("___", Instance), ("aaa", Temporary), ("A_a", Temporary), ("0_A", Temporary), ("_a0", Temporary), ("0Aa", Temporary), ("_Aa", Temporary), ("AA_", Temporary), ("0A_", Temporary), ("a0A", Temporary), ("Aaa", Temporary), ("Aa_", Temporary), ("aAA", Temporary), ("Aaa", Temporary)] }, val_seed = 1

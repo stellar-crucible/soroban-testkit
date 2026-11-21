@@ -223,6 +223,95 @@ restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
 
+`reset_full` exists because SDK v28 mints test addresses from a counter that
+restarts at 1 in every `Env`. Generating straight away would hand back exactly
+the addresses you replaced, so it first walks the new env's counter past the
+range the old identities occupied.
+
+## Checkpointing and rollback
+
+Complex integration tests frequently require branching multiple test paths from a shared heavy setup (e.g. deploy protocol, seed 50 accounts, mint initial liquidity) or testing speculative execution and failure rollbacks without completely rebuilding the environment from scratch. `TestContext` provides checkpointing and rollback:
+
+| Method | Effect |
+|--------|--------|
+| `ctx.checkpoint()` | Captures the current environment state (storage, ledger, events, auth) and returns an opaque `ContextCheckpoint` |
+| `ctx.rollback_to(&checkpoint)` | Restores the environment to the exact state at the checkpoint |
+| `ctx.checkpoint_count()` | Returns the number of checkpoints in the stack |
+| `ctx.clear_checkpoints()` | Clears all checkpoints |
+
+```rust
+use soroban_testkit_fixtures::{TestContext, TestContextBuilder};
+use soroban_testkit_core::storage::StorageSnapshot;
+
+let mut ctx = TestContextBuilder::new().with_users(5).build();
+
+// ... deploy protocols and seed state ...
+let checkpoint = ctx.checkpoint();
+
+// Branch A: successful transfer
+client.transfer(&ctx.user(0), &ctx.user(1), &100);
+assert_eq!(client.balance(&ctx.user(0)), 900);
+
+// Rollback to clean setup
+ctx.rollback_to(&checkpoint);
+assert_eq!(client.balance(&ctx.user(0)), 1000);
+
+// Branch B: test different path
+client.transfer(&ctx.user(1), &ctx.user(2), &50);
+// ... verify different behavior ...
+```
+
+### What a checkpoint captures
+
+A `ContextCheckpoint` captures the complete environment state:
+
+- **Contract storage** — Instance, persistent, and temporary entries for all registered contracts
+- **Ledger state** — Sequence number and timestamp
+- **Auth configuration** — Whether `mock_all_auths` was active
+- **Network profile** — The active network conditions
+- **Events** — All events emitted up to the checkpoint (discarded on rollback)
+
+### Multiple checkpoints and nested rollback
+
+Checkpoints form a stack. You can create multiple checkpoints and rollback to any of them:
+
+```rust
+let mut ctx = TestContextBuilder::new().with_users(5).build();
+
+// Checkpoint 1: after protocol deployment
+let cp1 = ctx.checkpoint();
+
+// ... seed initial state ...
+let cp2 = ctx.checkpoint();
+
+// Branch A: test scenario 1
+ctx.rollback_to(&cp2);
+assert_eq!(ctx.checkpoint_count(), 2); // cp2 is still in stack
+
+// Branch B: test scenario 2  
+ctx.rollback_to(&cp1);
+assert_eq!(ctx.checkpoint_count(), 1); // cp2 was removed
+```
+
+After rollback, all checkpoints created after the target are discarded. The checkpoint stack maintains proper nesting semantics.
+
+### What rollback restores
+
+| State | Restored |
+|-------|----------|
+| Contract storage (instance, persistent, temporary) | ✅ |
+| Ledger sequence & timestamp | ✅ |
+| Mock auth configuration | ✅ |
+| Network profile | ✅ |
+| Events | ✅ (events after checkpoint are discarded) |
+| Auth invocations | ✅ (cleared after checkpoint) |
+
+### Limitations
+
+- **Instance storage restoration** is partially implemented — persistent and temporary storage are fully restored, while instance storage restoration is best-effort
+- Checkpoints are scoped to the `TestContext` that created them; rolling back to a checkpoint from a different context will panic
+- The checkpoint stack is not persisted across `reset()` or `reset_full()` calls
+
 ## Persistent storage eviction
 
 `StateEvictionSimulator` creates a short-lived persistent entry, advances its

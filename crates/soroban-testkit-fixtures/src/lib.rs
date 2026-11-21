@@ -1,5 +1,6 @@
 pub mod archival;
 pub mod builder;
+pub mod checkpoint;
 pub mod congestion;
 pub mod consensus;
 pub mod event_indexer;
@@ -9,6 +10,8 @@ pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 pub mod protocol_registry;
+
+pub use checkpoint::ContextCheckpoint;
 #[cfg(test)]
 mod ttl_tests;
 
@@ -58,6 +61,8 @@ pub struct TestContext {
     /// The network conditions the builder installed and [`TestContext::reset`]
     /// re-applies to the fresh env.
     pub network_profile: NetworkProfile,
+    /// Stack of checkpoints for nested rollback support.
+    checkpoint_stack: Vec<ContextCheckpoint>,
 }
 
 impl Default for TestContext {
@@ -88,6 +93,7 @@ impl TestContext {
             users: Vec::new(),
             mock_auths: true,
             network_profile: NetworkProfile::Local,
+            checkpoint_stack: Vec::new(),
         }
     }
 
@@ -396,6 +402,82 @@ impl TestContext {
         self.users = (0..user_count)
             .map(|_| Address::generate(&self.env))
             .collect();
+    }
+
+    /// Create a checkpoint of the current environment state.
+    ///
+    /// This captures:
+    /// - Storage for all contracts (instance, persistent, temporary)
+    /// - Ledger sequence and timestamp
+    /// - Mock auth configuration
+    /// - Network profile
+    /// - Events
+    ///
+    /// Returns an opaque [`ContextCheckpoint`] that can be used with
+    /// [`TestContext::rollback_to`] to restore this exact state.
+    ///
+    /// Multiple checkpoints can be created and they form a stack.
+    /// Use [`TestContext::rollback_to`] to restore to a specific checkpoint.
+    pub fn checkpoint(&mut self) -> ContextCheckpoint {
+        let checkpoint = crate::checkpoint::ContextCheckpoint::capture(
+            &self.env,
+            self.mock_auths,
+            self.network_profile,
+        );
+        self.checkpoint_stack.push(checkpoint.clone());
+        checkpoint
+    }
+
+    /// Roll back the environment to a previously created checkpoint.
+    ///
+    /// This restores:
+    /// - All contract storage (instance, persistent, temporary)
+    /// - Ledger sequence and timestamp
+    /// - Mock auth configuration
+    /// - Network profile
+    /// - Events (discards events generated after the checkpoint)
+    ///
+    /// The checkpoint must have been created by this context's [`checkpoint`] method.
+    /// After rollback, all checkpoints created after the target are discarded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the checkpoint was not created by this context.
+    pub fn rollback_to(&mut self, checkpoint: &ContextCheckpoint) {
+        // Find the checkpoint in our stack
+        let idx = self.checkpoint_stack.iter().position(|c| {
+            c.ledger_sequence == checkpoint.ledger_sequence
+                && c.ledger_timestamp == checkpoint.ledger_timestamp
+                && c.mock_auths == checkpoint.mock_auths
+        });
+        
+        let Some(idx) = idx else {
+            panic!("Attempted to rollback to a checkpoint not created by this context");
+        };
+        
+        // Restore the checkpoint
+        checkpoint.restore(&self.env);
+        
+        // Restore auth mocking
+        if checkpoint.mock_auths {
+            self.env.mock_all_auths();
+        }
+        
+        // Restore network profile
+        checkpoint.network_profile.apply(&self.env);
+        
+        // Truncate the checkpoint stack to remove checkpoints after the target
+        self.checkpoint_stack.truncate(idx + 1);
+    }
+
+    /// Get the number of checkpoints in the stack.
+    pub fn checkpoint_count(&self) -> usize {
+        self.checkpoint_stack.len()
+    }
+
+    /// Clear all checkpoints.
+    pub fn clear_checkpoints(&mut self) {
+        self.checkpoint_stack.clear();
     }
 }
 
