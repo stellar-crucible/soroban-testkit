@@ -8,8 +8,8 @@ pub mod invocation;
 pub mod storage;
 
 pub use auth::{
-    AuthArgs, AuthMatcher, AuthSubInvocationMatcher, AuthSubTree, AuthSubTreeMatcher,
-    SubInvocations,
+    AuthArgs, AuthMatcher, AuthStrictMatcher, AuthSubInvocationMatcher, AuthSubTree,
+    AuthSubTreeMatcher, SubInvocations,
 };
 pub use balance::{
     assert_balance_conserved_internal, AccountBalanceEntry, BalanceConservationReport,
