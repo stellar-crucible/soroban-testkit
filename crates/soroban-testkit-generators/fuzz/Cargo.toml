@@ -1,0 +1,34 @@
+# cargo-fuzz project for soroban-testkit-generators.
+#
+# It is deliberately outside the main workspace: libFuzzer needs a nightly
+# toolchain and a C++ compiler, and neither belongs on the stable CI path.
+# The same harness runs on stable as the `arbitrary_fuzz_harness` integration
+# test, so `cargo test --workspace` exercises it on every pull request.
+#
+#   cargo install cargo-fuzz
+#   cd crates/soroban-testkit-generators
+#   cargo +nightly fuzz run arbitrary_values
+[package]
+name = "soroban-testkit-generators-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = "1.3.2"
+libfuzzer-sys = "0.4"
+soroban-sdk = { version = "28", features = ["testutils"] }
+soroban-testkit-generators = { path = "..", default-features = false, features = ["arbitrary"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "arbitrary_values"
+path = "fuzz_targets/arbitrary_values.rs"
+test = false
+doc = false
+bench = false

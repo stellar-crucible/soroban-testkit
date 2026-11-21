@@ -16,12 +16,14 @@ pub use crate::storage_tier::{
     MixedTierTtlAllocation, StorageTierWithTtl,
 };
 
-use proptest::prelude::*;
-use soroban_sdk::xdr::{
-    AccountId, ContractId, Hash, Limits, PublicKey, ScAddress, ScMap, ScMapEntry, ScVal, ScVec,
-    Uint256, VecM, WriteXdr as _,
+pub use crate::types::{
+    AddressBytes, AddressType, LEDGER_SEQUENCE_MAX, LEDGER_SEQUENCE_MIN, TIMESTAMP_MAX,
+    TIMESTAMP_MIN, TOKEN_AMOUNT_MAX,
 };
-use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol, TryFromVal as _, Val};
+use proptest::prelude::*;
+
+use soroban_sdk::xdr::{Limits, ScMap, ScMapEntry, ScVal, ScVec, VecM, WriteXdr as _};
+use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol, Val};
 
 /// Generate arbitrary Soroban invocation arguments, including values whose
 /// object handles are owned by `env`. `typed` contains valid arguments for a
@@ -65,74 +67,6 @@ pub fn fuzzed_invocation_args(
         })
 }
 
-/// The two address formats Soroban accepts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AddressType {
-    /// An ed25519 account, the `G...` form.
-    Account,
-    /// A contract id, the `C...` form.
-    Contract,
-}
-
-/// A generated Soroban address: 32 raw bytes tagged with the format they
-/// belong to.
-///
-/// Both formats are opaque 32-byte values on the wire, so the tag is what
-/// separates an ed25519 public key from a contract id. Turn it into a host
-/// [`Address`] with [`AddressBytes::to_address`], or into its XDR form with
-/// `ScAddress::from`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct AddressBytes {
-    address_type: AddressType,
-    bytes: [u8; 32],
-}
-
-impl AddressBytes {
-    /// Build an address from its format tag and bytes.
-    ///
-    /// Crate-internal: the public API generates addresses, and a hand-built one
-    /// is only useful to a test that needs a predictable value.
-    #[cfg(test)]
-    pub(crate) fn from_parts(address_type: AddressType, bytes: [u8; 32]) -> Self {
-        Self {
-            address_type,
-            bytes,
-        }
-    }
-
-    /// The format this address was generated as.
-    pub fn address_type(&self) -> AddressType {
-        self.address_type
-    }
-
-    /// The raw 32 bytes, as an ed25519 public key or a contract id.
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.bytes
-    }
-
-    /// The raw 32 bytes, consuming the address.
-    pub fn into_bytes(self) -> [u8; 32] {
-        self.bytes
-    }
-
-    /// Rebuild the address as a host value owned by `env`.
-    pub fn to_address(self, env: &Env) -> Address {
-        Address::try_from_val(env, &ScAddress::from(self))
-            .expect("a 32-byte address is a valid ScAddress")
-    }
-}
-
-impl From<AddressBytes> for ScAddress {
-    fn from(address: AddressBytes) -> Self {
-        match address.address_type {
-            AddressType::Account => ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(
-                Uint256(address.bytes),
-            ))),
-            AddressType::Contract => ScAddress::Contract(ContractId(Hash(address.bytes))),
-        }
-    }
-}
-
 /// Hands every generated address a distinct suffix, so two cases in one run
 /// cannot collide even if their random prefixes do.
 static NEXT_ADDRESS_NONCE: AtomicU64 = AtomicU64::new(1);
@@ -157,23 +91,23 @@ pub fn address_of_type(address_type: AddressType) -> impl Strategy<Value = Addre
     any::<[u8; 32]>().prop_map(move |mut bytes| {
         let nonce = NEXT_ADDRESS_NONCE.fetch_add(1, Ordering::Relaxed);
         bytes[24..].copy_from_slice(&nonce.to_be_bytes());
-        AddressBytes {
-            address_type,
-            bytes,
-        }
+        AddressBytes::new(address_type, bytes)
     })
 }
 
+/// Generates a token amount in `0..=TOKEN_AMOUNT_MAX`.
 pub fn token_amount() -> impl Strategy<Value = i128> {
-    0i128..=1_000_000_000_000_000i128
+    0i128..=TOKEN_AMOUNT_MAX
 }
 
+/// Generates a ledger sequence in `LEDGER_SEQUENCE_MIN..=LEDGER_SEQUENCE_MAX`.
 pub fn ledger_sequence() -> impl Strategy<Value = u32> {
-    1u32..=10_000_000u32
+    LEDGER_SEQUENCE_MIN..=LEDGER_SEQUENCE_MAX
 }
 
+/// Generates a unix timestamp in `TIMESTAMP_MIN..=TIMESTAMP_MAX`.
 pub fn timestamp() -> impl Strategy<Value = u64> {
-    1_600_000_000u64..=2_000_000_000u64
+    TIMESTAMP_MIN..=TIMESTAMP_MAX
 }
 
 /// The entry budget [`fuzzed_scval_map`] and [`fuzzed_scval_vec`] use when the

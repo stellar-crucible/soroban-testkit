@@ -1,4 +1,8 @@
 pub mod event_fuzz;
+pub mod types;
+
+#[cfg(feature = "arbitrary")]
+pub mod arbitrary;
 
 #[cfg(feature = "proptest")]
 pub mod authorization;
@@ -24,6 +28,8 @@ pub mod temporal;
 pub mod ttl;
 #[cfg(feature = "proptest")]
 pub mod tuples;
+#[cfg(feature = "proptest")]
+pub mod xdr;
 
 #[cfg(feature = "proptest")]
 pub use authorization::{address_with_nonce, authorization_credential, sequential_nonces};
@@ -57,6 +63,7 @@ pub use storage_tier::{
     storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
     MixedTierTtlAllocation, StorageTierWithTtl,
 };
+#[cfg(feature = "proptest")]
 pub use strategies::fuzzed_invocation_args;
 #[cfg(feature = "proptest")]
 pub use temporal::{
@@ -70,4 +77,9 @@ pub use ttl::{
 #[cfg(feature = "proptest")]
 pub use tuples::{
     byte_array, byte_array_32, byte_array_64, soroban_tuple_2, soroban_tuple_3, ByteArrayStrategy,
+};
+pub use types::{AddressBytes, AddressType};
+#[cfg(feature = "proptest")]
+pub use xdr::{
+    xdr_bytes, xdr_map, xdr_string, xdr_symbol, xdr_val, xdr_value, xdr_vec, XdrBounds, XdrValue,
 };
