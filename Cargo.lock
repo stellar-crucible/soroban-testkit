@@ -2095,6 +2095,8 @@ dependencies = [
 name = "soroban-testkit-fixtures"
 version = "0.4.1"
 dependencies = [
+ "ed25519-dalek",
+ "rand_core 0.6.4",
  "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",

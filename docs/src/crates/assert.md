@@ -1089,6 +1089,65 @@ Failure Summary:
   • Failed to achieve target CPU savings: achieved 15.00%, expected at least 25.00%
 ```
 
+## Event Sequence Assertions
+
+While `EventLog` collects events across multiple invocations, verifying that events occurred in an exact sequence—or that a specific sequence occurred with allowed interleaving—is streamlined by `assert_event_sequence!`.
+
+### Strict and Relaxed Sequence Modes
+
+`assert_event_sequence!` supports two modes:
+- **`Strict`** (`exact_sequence`): Every expected event must match consecutively 1:1 in length and order without unexpected or interleaved intermediate events.
+- **`Relaxed`** (`ordered_subsequence`): Expected events must appear in order, allowing intermediate unrelated events between them.
+
+```rust
+use soroban_testkit_assert::assert_event_sequence;
+use soroban_testkit_assert::sequence::{Relaxed, Strict};
+
+// Relaxed mode: allows intermediate noise/transfer events
+assert_event_sequence!(event_log, [
+    { topic: "Deposit", contract: vault_id },
+    { topic: "Mint", contract: token_id },
+    { topic: "Transfer", contract: token_id },
+], mode = Relaxed);
+
+// Strict mode: exact 1:1 sequence match
+assert_event_sequence!(event_log, [
+    { topic: "Deposit", contract: vault_id },
+    { topic: "Mint", contract: token_id },
+], mode = Strict);
+```
+
+### Matching Payload Data Predicates
+
+You can match topics, contract IDs, and payload data predicates:
+
+```rust
+assert_event_sequence!(event_log, [
+    {
+        topic: "Deposit",
+        contract: vault_id,
+        data: |data| data.deserialize::<u64>() == Some(500)
+    },
+    { topic: "Transfer", contract: token_id },
+], mode = Relaxed);
+```
+
+### Detailed Failure Diagnostics
+
+When an event sequence fails, `assert_event_sequence!` outputs detailed diagnostics showing matched events, divergence points, and missing expectations:
+
+```text
+Event sequence diverged at index 1 (mode = Strict / exact_sequence):
+Expected event: { topic: "Mint", contract: CAAA... }
+Observed event: topics: [Noise], contract: CAAA...
+
+Full sequence breakdown:
+  [ 0] ✓ MATCHED  | Expected: { topic: "Deposit" } | Observed: topics: [Deposit]
+  [ 1] ✗ DIVERGED | Expected: { topic: "Mint" }    | Observed: topics: [Noise]
+  [ 2]   PENDING  | Expected: { topic: "Transfer" }| Observed: topics: [Transfer]
+```
+
+
 <div class="tk-grid tk-grid--2">
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">Next step</span>

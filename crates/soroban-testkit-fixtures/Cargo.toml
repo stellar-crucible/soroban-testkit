@@ -16,3 +16,6 @@ rust-version.workspace = true
 soroban-sdk = { workspace = true }
 soroban-env-host = { workspace = true }
 soroban-testkit-core = { path = "../soroban-testkit-core", version = "0.4.1" }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["rand_core"] }
+rand_core = { version = "0.6.4", default-features = false, features = ["getrandom"] }
+
