@@ -23,4 +23,7 @@ pub use contract_error::{
     check_contract_error, check_host_error, HostErrorExpectation, ReceivedError, TryCallResult,
 };
 pub use events::{EventCountBound, EventSource};
-pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};
+pub use storage::{
+    ExpectedAdded, ExpectedModified, ExpectedRemoved, ExpectedUnchanged, ExpectedValue,
+    StorageDiffMatcher, StorageQuotaMatcher, TierInspection, TierQuota,
+};
