@@ -11,7 +11,7 @@ use soroban_sdk::{Address, Env, TryFromVal};
 pub struct EventMatcher<'a> {
     env: &'a Env,
     contract: Option<Address>,
-    topic: Option<String>,
+    topics: Vec<String>,
     events: Option<&'a [soroban_sdk::xdr::ContractEvent]>,
 }
 
@@ -20,7 +20,7 @@ impl<'a> EventMatcher<'a> {
         Self {
             env,
             contract: None,
-            topic: None,
+            topics: Vec::new(),
             events: None,
         }
     }
@@ -39,7 +39,18 @@ impl<'a> EventMatcher<'a> {
     }
 
     pub fn with_topic(mut self, topic: impl Into<String>) -> Self {
-        self.topic = Some(topic.into());
+        self.topics.push(topic.into());
+        self
+    }
+
+    pub fn with_topics<I, S>(mut self, topics: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for topic in topics {
+            self.topics.push(topic.into());
+        }
         self
     }
 
@@ -68,7 +79,7 @@ impl<'a> EventMatcher<'a> {
     /// is the latest invocation or an [`EventLog`].
     pub(crate) fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
         let mut events = self.scoped();
-        if let Some(topic) = &self.topic {
+        for topic in &self.topics {
             events.retain(|event| has_topic(event, topic));
         }
         events
@@ -170,9 +181,14 @@ impl<'a> EventMatcher<'a> {
     pub fn assert_data_schema(&self, schema: &[EventFieldSchema]) {
         let events = self.matched();
         if events.is_empty() {
+            let topic_desc = if self.topics.is_empty() {
+                "<any>".to_string()
+            } else {
+                self.topics.join(", ")
+            };
             panic!(
                 "Expected an event matching topic {:?} for schema validation, but no event was emitted",
-                self.topic.as_deref().unwrap_or("<any>")
+                topic_desc
             );
         }
 
@@ -186,9 +202,14 @@ impl<'a> EventMatcher<'a> {
         }
 
         if !failures.is_empty() {
+            let topic_desc = if self.topics.is_empty() {
+                "<any>".to_string()
+            } else {
+                self.topics.join(", ")
+            };
             panic!(
                 "Event data schema mismatch for topic {:?}:\n{}",
-                self.topic.as_deref().unwrap_or("<any>"),
+                topic_desc,
                 failures.join("\n")
             );
         }
@@ -206,9 +227,10 @@ impl<'a> EventMatcher<'a> {
     pub fn assert_count_within(&self, bound: impl EventCountBound) {
         let count = self.matched().len();
         if !bound.contains_count(count) {
-            let what = match &self.topic {
-                Some(topic) => format!("event(s) with topic \"{topic}\""),
-                None => "event(s)".to_string(),
+            let what = if self.topics.is_empty() {
+                "event(s)".to_string()
+            } else {
+                format!("event(s) with topic \"{}\"", self.topics.join(", "))
             };
             panic!(
                 "Event count out of range: expected {} {what}, observed {count}\n{}",
@@ -555,6 +577,332 @@ macro_rules! assert_event_data_schema {
     }};
 }
 
+#[doc(hidden)]
+pub fn __as_env(env: &Env) -> &Env {
+    env
+}
+
+#[doc(hidden)]
+pub fn __as_contract(contract: &Address) -> &Address {
+    contract
+}
+
+/// A human-readable line for an emitted event in assertion failure messages.
+pub(crate) fn format_event(
+    env: &Env,
+    index: usize,
+    event: &soroban_sdk::xdr::ContractEvent,
+) -> String {
+    let contract_str = match &event.contract_id {
+        Some(id) => {
+            let sc_addr = soroban_sdk::xdr::ScAddress::Contract(id.clone());
+            Address::try_from_val(env, &soroban_sdk::xdr::ScVal::Address(sc_addr))
+                .map(|a| format!("{a:?}"))
+                .unwrap_or_else(|_| format!("{id:?}"))
+        }
+        None => "<none>".to_string(),
+    };
+    let topics_str = event_topics(event).join(", ");
+    let data_str = data_label(env, &event_data(event));
+    format!(
+        "  [{}] contract: {}, topics: [{}], data: {}",
+        index + 1,
+        contract_str,
+        topics_str,
+        data_str
+    )
+}
+
+#[doc(hidden)]
+#[allow(clippy::type_complexity)]
+pub fn assert_event_emitted_check(
+    env: &Env,
+    contract: Option<&Address>,
+    topics: &[&str],
+    data_matcher: Option<(&dyn Fn(&EventData<'_>) -> bool, &str)>,
+) {
+    let all_events = env.events().all().events().to_vec();
+    let wanted_contract = contract.and_then(emitting_contract);
+
+    let found = all_events.iter().any(|event| {
+        if let Some(wanted_id) = &wanted_contract {
+            match &event.contract_id {
+                Some(emitter_id) if wanted_id == emitter_id => {}
+                _ => return false,
+            }
+        }
+
+        let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
+        for &expected_topic in topics {
+            let bytes = expected_topic.as_bytes();
+            let matches_topic = body.topics.iter().any(|t| match t {
+                soroban_sdk::xdr::ScVal::Symbol(sym) => AsRef::<[u8]>::as_ref(sym) == bytes,
+                other => topic_label(other) == expected_topic,
+            });
+            if !matches_topic {
+                return false;
+            }
+        }
+
+        if let Some((data_fn, _)) = data_matcher {
+            let event_data = EventData::new(env, event_data(event));
+            if !data_fn(&event_data) {
+                return false;
+            }
+        }
+
+        true
+    });
+
+    if !found {
+        let contract_desc = match contract {
+            Some(addr) => format!("{addr:?}"),
+            None => "<any>".to_string(),
+        };
+        let topics_desc = if topics.is_empty() {
+            "<any>".to_string()
+        } else {
+            format!("[{}]", topics.join(", "))
+        };
+        let data_desc = match data_matcher {
+            Some((_, desc)) => desc,
+            None => "<any>",
+        };
+
+        let events_debug = if all_events.is_empty() {
+            "  (no events emitted in the most recent invocation)".to_string()
+        } else {
+            all_events
+                .iter()
+                .enumerate()
+                .map(|(i, e)| format_event(env, i, e))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        panic!(
+            "assert_event_emitted! failed: no matching event found.\n\
+             Expected event:\n\
+               contract: {}\n\
+               topic(s): {}\n\
+               data: {}\n\
+             Emitted events ({} in scope):\n\
+             {}",
+            contract_desc,
+            topics_desc,
+            data_desc,
+            all_events.len(),
+            events_debug
+        );
+    }
+}
+
+/// Assert that a matching event was emitted during the most recent contract invocation.
+///
+/// Supports filtering by emitting contract address, topic(s), and data fields or payload.
+/// Panics with a clear diagnostic message including all emitted events if no matching
+/// event is found. If multiple matching events are emitted, the assertion succeeds.
+///
+/// # Examples
+///
+/// Assert by contract, topic, and struct/map fields:
+/// ```rust,ignore
+/// assert_event_emitted!(env, contract_id, "Transfer", {
+///     from: sender,
+///     to: receiver,
+///     amount: 1000i128,
+/// });
+/// ```
+///
+/// Assert with multiple topics:
+/// ```rust,ignore
+/// assert_event_emitted!(env, contract_id, ["Transfer", "Audit"], {
+///     amount: 1000i128,
+/// });
+/// ```
+///
+/// Assert by contract and topic only:
+/// ```rust,ignore
+/// assert_event_emitted!(env, contract_id, "ping");
+/// ```
+#[macro_export]
+macro_rules! assert_event_emitted {
+    // 1. (env, contract, [topics], { fields })
+    ($env:expr, $contract:expr, [ $($topic:expr),* $(,)? ], { $($field:ident : $val:expr),* $(,)? }) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __contract = $crate::events::__as_contract(&$contract);
+        let __topics: &[&str] = &[ $( AsRef::<str>::as_ref(&$topic) ),* ];
+        let __data_matcher = |__data: &$crate::events::EventData<'_>| -> bool {
+            $(
+                if let Some(__field_data) = __data.field(stringify!($field)) {
+                    if __field_data.deserialize().as_ref() != Some(&$val) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            )*
+            true
+        };
+        let __data_desc = concat!("{ ", $( stringify!($field), ": ", stringify!($val), ", ", )* "}");
+        $crate::events::assert_event_emitted_check(
+            __env,
+            Some(__contract),
+            __topics,
+            Some((&__data_matcher, __data_desc)),
+        );
+    }};
+
+    // 2. (env, contract, [topics])
+    ($env:expr, $contract:expr, [ $($topic:expr),* $(,)? ]) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __contract = $crate::events::__as_contract(&$contract);
+        let __topics: &[&str] = &[ $( AsRef::<str>::as_ref(&$topic) ),* ];
+        $crate::events::assert_event_emitted_check(
+            __env,
+            Some(__contract),
+            __topics,
+            None,
+        );
+    }};
+
+    // 3. (env, contract, topic, { fields })
+    ($env:expr, $contract:expr, $topic:expr, { $($field:ident : $val:expr),* $(,)? }) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __contract = $crate::events::__as_contract(&$contract);
+        let __topic: &str = AsRef::<str>::as_ref(&$topic);
+        let __topics = [__topic];
+        let __data_matcher = |__data: &$crate::events::EventData<'_>| -> bool {
+            $(
+                if let Some(__field_data) = __data.field(stringify!($field)) {
+                    if __field_data.deserialize().as_ref() != Some(&$val) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            )*
+            true
+        };
+        let __data_desc = concat!("{ ", $( stringify!($field), ": ", stringify!($val), ", ", )* "}");
+        $crate::events::assert_event_emitted_check(
+            __env,
+            Some(__contract),
+            &__topics,
+            Some((&__data_matcher, __data_desc)),
+        );
+    }};
+
+    // 4. (env, [topics], { fields })
+    ($env:expr, [ $($topic:expr),* $(,)? ], { $($field:ident : $val:expr),* $(,)? }) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __topics: &[&str] = &[ $( AsRef::<str>::as_ref(&$topic) ),* ];
+        let __data_matcher = |__data: &$crate::events::EventData<'_>| -> bool {
+            $(
+                if let Some(__field_data) = __data.field(stringify!($field)) {
+                    if __field_data.deserialize().as_ref() != Some(&$val) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            )*
+            true
+        };
+        let __data_desc = concat!("{ ", $( stringify!($field), ": ", stringify!($val), ", ", )* "}");
+        $crate::events::assert_event_emitted_check(
+            __env,
+            None,
+            __topics,
+            Some((&__data_matcher, __data_desc)),
+        );
+    }};
+
+    // 5. (env, topic, { fields })
+    ($env:expr, $topic:expr, { $($field:ident : $val:expr),* $(,)? }) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __topic: &str = AsRef::<str>::as_ref(&$topic);
+        let __topics = [__topic];
+        let __data_matcher = |__data: &$crate::events::EventData<'_>| -> bool {
+            $(
+                if let Some(__field_data) = __data.field(stringify!($field)) {
+                    if __field_data.deserialize().as_ref() != Some(&$val) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            )*
+            true
+        };
+        let __data_desc = concat!("{ ", $( stringify!($field), ": ", stringify!($val), ", ", )* "}");
+        $crate::events::assert_event_emitted_check(
+            __env,
+            None,
+            &__topics,
+            Some((&__data_matcher, __data_desc)),
+        );
+    }};
+
+    // 6. (env, contract, topic, scalar/expression data)
+    ($env:expr, $contract:expr, $topic:expr, $data:expr) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __contract = $crate::events::__as_contract(&$contract);
+        let __topic: &str = AsRef::<str>::as_ref(&$topic);
+        let __topics = [__topic];
+        let __data_val = &$data;
+        let __data_matcher = |__data: &$crate::events::EventData<'_>| -> bool {
+            __data.deserialize().as_ref() == Some(__data_val)
+        };
+        let __data_desc = stringify!($data);
+        $crate::events::assert_event_emitted_check(
+            __env,
+            Some(__contract),
+            &__topics,
+            Some((&__data_matcher, __data_desc)),
+        );
+    }};
+
+    // 7. (env, contract, topic)
+    ($env:expr, $contract:expr, $topic:expr) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __contract = $crate::events::__as_contract(&$contract);
+        let __topic: &str = AsRef::<str>::as_ref(&$topic);
+        let __topics = [__topic];
+        $crate::events::assert_event_emitted_check(
+            __env,
+            Some(__contract),
+            &__topics,
+            None,
+        );
+    }};
+
+    // 8. (env, [topics])
+    ($env:expr, [ $($topic:expr),* $(,)? ]) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __topics: &[&str] = &[ $( AsRef::<str>::as_ref(&$topic) ),* ];
+        $crate::events::assert_event_emitted_check(
+            __env,
+            None,
+            __topics,
+            None,
+        );
+    }};
+
+    // 9. (env, topic)
+    ($env:expr, $topic:expr) => {{
+        let __env = $crate::events::__as_env(&$env);
+        let __topic: &str = AsRef::<str>::as_ref(&$topic);
+        let __topics = [__topic];
+        $crate::events::assert_event_emitted_check(
+            __env,
+            None,
+            &__topics,
+            None,
+        );
+    }};
+}
+
 /// The events of several invocations, asserted over as one set.
 ///
 /// `env.events().all()` reports only the most recent contract invocation, so a
@@ -609,7 +957,7 @@ impl<'a> EventLog<'a> {
         EventMatcher {
             env: self.env,
             contract: None,
-            topic: None,
+            topics: Vec::new(),
             events: Some(&self.events),
         }
     }
@@ -934,6 +1282,14 @@ mod tests {
         Symbol,
     };
 
+    #[contractevent(topics = ["Transfer"])]
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct TransferEvent {
+        pub from: Address,
+        pub to: Address,
+        pub amount: i128,
+    }
+
     #[contract]
     pub struct EmitterContract;
 
@@ -947,6 +1303,25 @@ mod tests {
         #[allow(deprecated)]
         pub fn emit_pair(env: Env, first: Symbol, second: Symbol) {
             env.events().publish((first, second), ());
+        }
+
+        pub fn emit_transfer(env: Env, from: Address, to: Address, amount: i128) {
+            TransferEvent { from, to, amount }.publish(&env);
+        }
+
+        pub fn emit_multiple_transfers(env: Env, from: Address, to: Address) {
+            TransferEvent {
+                from: from.clone(),
+                to: to.clone(),
+                amount: 100,
+            }
+            .publish(&env);
+            TransferEvent {
+                from,
+                to,
+                amount: 1000,
+            }
+            .publish(&env);
         }
 
         pub fn silent(env: Env) {
@@ -1943,5 +2318,133 @@ Scope: most recent invocation
         crate::assert_event_data_schema!(&env, "moved", {
             amount: i128,
         });
+    }
+
+    #[test]
+    fn assert_event_emitted_matches_contract_topic_and_fields() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        client.emit_transfer(&from, &to, &1000i128);
+
+        crate::assert_event_emitted!(env, client.address, "Transfer", {
+            from: from,
+            to: to,
+            amount: 1000i128,
+        });
+    }
+
+    #[test]
+    fn assert_event_emitted_matches_contract_and_topic_only() {
+        let env = Env::default();
+        let client = emitter(&env);
+        client.emit(&symbol_short!("ping"));
+
+        crate::assert_event_emitted!(env, client.address, "ping");
+    }
+
+    #[test]
+    fn assert_event_emitted_matches_multiple_topics() {
+        let env = Env::default();
+        let client = emitter(&env);
+        client.emit_pair(&symbol_short!("claim"), &symbol_short!("grant"));
+
+        crate::assert_event_emitted!(env, client.address, ["claim", "grant"]);
+    }
+
+    #[test]
+    fn assert_event_emitted_matches_multiple_topics_and_fields() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        client.emit_transfer(&from, &to, &1000i128);
+
+        crate::assert_event_emitted!(env, client.address, ["Transfer"], {
+            from: from,
+            to: to,
+            amount: 1000i128,
+        });
+    }
+
+    #[test]
+    fn assert_event_emitted_succeeds_when_multiple_events_match() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        client.emit_multiple_transfers(&from, &to);
+
+        // At least one event matches each assertion
+        crate::assert_event_emitted!(env, client.address, "Transfer", {
+            amount: 1000i128,
+        });
+        crate::assert_event_emitted!(env, client.address, "Transfer", {
+            amount: 100i128,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "assert_event_emitted! failed: no matching event found.")]
+    fn assert_event_emitted_fails_on_data_mismatch() {
+        let env = Env::default();
+        let client = emitter(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        client.emit_transfer(&from, &to, &500i128);
+
+        crate::assert_event_emitted!(env, client.address, "Transfer", {
+            amount: 1000i128,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "assert_event_emitted! failed: no matching event found.")]
+    fn assert_event_emitted_fails_on_topic_mismatch() {
+        let env = Env::default();
+        let client = emitter(&env);
+        client.emit(&symbol_short!("ping"));
+
+        crate::assert_event_emitted!(env, client.address, "pong");
+    }
+
+    #[test]
+    #[should_panic(expected = "assert_event_emitted! failed: no matching event found.")]
+    fn assert_event_emitted_fails_on_contract_mismatch() {
+        let env = Env::default();
+        let first = emitter(&env);
+        let second = emitter(&env);
+        first.emit(&symbol_short!("ping"));
+
+        crate::assert_event_emitted!(env, second.address, "ping");
+    }
+
+    #[test]
+    #[should_panic(expected = "(no events emitted in the most recent invocation)")]
+    fn assert_event_emitted_fails_on_empty_events() {
+        let env = Env::default();
+        let client = emitter(&env);
+        client.silent();
+
+        crate::assert_event_emitted!(env, client.address, "Transfer");
+    }
+
+    #[test]
+    fn with_topics_matches_events_with_all_specified_topics() {
+        let env = Env::default();
+        let client = emitter(&env);
+        client.emit_pair(&symbol_short!("claim"), &symbol_short!("grant"));
+
+        EventMatcher::new(&env)
+            .with_topics(["claim", "grant"])
+            .assert_count(1);
+        EventMatcher::new(&env)
+            .with_topics(["claim", "missing"])
+            .assert_count(0);
     }
 }
