@@ -27,6 +27,7 @@
 //!     }
 //! }
 //!
+//! # fn main() {
 //! let env = Env::default();
 //! env.mock_all_auths();
 //! let token = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
@@ -42,6 +43,7 @@
 //! let report = topology.validate();
 //! assert!(report.is_valid(), "{}", report.render_topology());
 //! assert!(report.to_mermaid().contains("pool --> token"));
+//! # }
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
