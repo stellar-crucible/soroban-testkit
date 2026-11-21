@@ -4,7 +4,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · contract_error · auth · balance · storage · budget_diff</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -797,3 +797,40 @@ Failure Summary:
     <p class="tk-card__body">See <a href="../guides/testing-patterns.html">Testing Patterns</a> for event and auth assertions in multi-contract suites.</p>
   </div>
 </div>
+
+## Budget ranges and ceilings (`assert_budget_consumed!`)
+
+`assert_budget_consumed!` bounds what the most recent top-level invocation cost (`BudgetSnapshot::last_invocation`), without manual snapshot arithmetic. Each metric takes either a range or an inclusive ceiling:
+
+```rust
+use soroban_testkit_assert::assert_budget_consumed;
+
+client.swap(&user, &100);
+
+assert_budget_consumed!(env, {
+    max_cpu: 150_000,
+    max_mem: 50_000,
+});
+
+assert_budget_consumed!(env, {
+    cpu: 10_000..=15_000, // any range: a..b, a..=b, a.., ..b, ..=b
+    mem: 1_000..,
+});
+```
+
+| Key | Value | Meaning |
+| --- | --- | --- |
+| `cpu` | `u64` range | CPU instructions must fall inside the range |
+| `max_cpu` | `u64` | CPU instructions must not exceed it (inclusive) |
+| `mem` | `u64` range | memory bytes must fall inside the range |
+| `max_mem` | `u64` | memory bytes must not exceed it (inclusive) |
+
+An unknown key is a compile error. On failure every breached metric is reported at once, with the observed value, the expected bound, the miss, and the miss as a percentage of the crossed bound:
+
+```text
+assert_budget_consumed! failed:
+  cpu_insns: observed 1_650, expected ..=1_500 — over the upper bound by 150 (+10.00%)
+  observed totals: cpu_insns=1_650 mem_bytes=812
+```
+
+The same check is available without the macro: build a `BudgetBounds` (`.cpu(..)`, `.max_cpu(..)`, `.mem(..)`, `.max_mem(..)`) and call `check(&snapshot)` or `assert_within(&snapshot)` on any `BudgetSnapshot`.
