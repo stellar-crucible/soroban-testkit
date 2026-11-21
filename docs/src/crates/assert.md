@@ -34,6 +34,7 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
+| `assert_auth_strict!(env, [ .. ])` | Every expected authorization matches exactly one record, with no records left over |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
 | `assert_storage_key_deleted!(env, contract, key)` | A key is gone from instance, persistent and temporary storage |
@@ -478,6 +479,44 @@ recorded, so the wrong invoker, function, or argument is visible without a re-ru
 panicked at 'Expected an authorization matching { invoker Contract(C…FCT4), function "set_admin", args [_, 7] }, found 1 recorded authorization(s):
   [0] invoker Contract(C…FCT4) contract Contract(C…D2KM) function "increment" args [Contract(C…FCT4), 1]'
 ```
+
+### Strict authorization matching
+
+Use `assert_auth_strict!` when a test must prove that a call authorized *only*
+the expected invokers and functions. Every listed pattern must match a distinct
+recorded authorization, and every record must match one listed pattern. The
+macro also accepts argument patterns, where `_` matches any value in that
+position:
+
+```rust
+use soroban_testkit_assert::assert_auth_strict;
+
+client.set_admin(&admin, &new_admin);
+
+assert_auth_strict!(env, [
+    {
+        invoker: admin,
+        function: "set_admin",
+        args: [new_admin],
+    },
+]);
+```
+
+Declare multiple authorizations as separate entries. An empty list asserts that
+the invocation recorded no authorizations:
+
+```rust
+assert_auth_strict!(env, [
+    { invoker: first, function: "joint", args: [_, second] },
+    { invoker: second, function: "joint", args: [first, _] },
+]);
+
+assert_auth_strict!(env, []);
+```
+
+If a pattern is missing or any unlisted authorization was recorded, the failure
+shows expected and observed authorizations side by side, then identifies missing
+patterns and extra records.
 
 ### Sub-tree authorization matching
 
