@@ -27,6 +27,8 @@
 - [Worked Example: Constant Product AMM](./guides/amm-example.md)
 - [Worked Example: Order Book DEX](./guides/orderbook-example.md)
 - [Worked Example: Non-Fungible Token (NFT)](./guides/nft-example.md)
+- [Worked Example: Governance DAO with Timelock](./guides/governance-example.md)
+- [Mocking Dependency Contracts](./guides/mocking.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 
