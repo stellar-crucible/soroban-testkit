@@ -5,10 +5,12 @@ pub mod coverage;
 pub mod error;
 pub mod footprint;
 pub mod namespace_auditor;
+pub mod profiler;
 pub mod reentrancy;
 pub mod stack_depth;
 pub mod storage;
 pub mod storage_fragmentation;
+pub mod wasm;
 pub mod tracer;
 pub mod ttl;
 

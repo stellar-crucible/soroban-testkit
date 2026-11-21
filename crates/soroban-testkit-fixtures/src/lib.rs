@@ -9,6 +9,7 @@ pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 pub mod protocol_registry;
+pub mod reentrancy;
 #[cfg(test)]
 mod ttl_tests;
 
@@ -36,6 +37,14 @@ use soroban_sdk::xdr::ScAddress;
 use soroban_sdk::{Address, Env, IntoVal, TryFromVal as _, Val};
 pub use soroban_testkit_core::ttl::{RentThresholds, TtlExtension, TtlInspector, TtlStatus};
 use soroban_testkit_core::StorageTier;
+
+pub use event_indexer::{
+    EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
+};
+pub use eviction::StateEvictionSimulator;
+pub use gas_exhaustion::{
+    ExecutionBudget, ExecutionReport, ExecutionStatus, ExhaustedResource, GasExhaustionHarness,
+};
 
 pub use event_indexer::{
     EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
