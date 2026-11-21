@@ -26,6 +26,7 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
 | `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
+| `assert_emitted_matches!(env, { .. })` | Asserts emitted events matching glob wildcards (`*`, `?`) or regex topic patterns and data fields |
 | `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
 | `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
 | `assert_contract_error!(client.try_call(..), MyError::Variant)` | The call failed with exactly that `#[contracterror]` variant |
@@ -36,6 +37,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `assert_auth_tree!(env, { .. })` | Validates hierarchical authorization call-trees down to arbitrary depth with visual tree diffs |
+| `AuthTreeMockBuilder::new(..)` | Programmatic builder for mock authorization call-trees |
 | `AuthSubInvocationMatcher::assert_matches()` | An authorized sub-call matching contract, function, and arguments appears at any depth |
 | `assert_auth_sub_invocation!(env, { .. })` | Inline sub-invocation matcher isolating intermediate contract calls at any depth |
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
@@ -316,6 +319,34 @@ Types are checked by Soroban value deserialization, including `i128`, `u64`,
 the expected type and observed type/value. The assertion requires at least one
 event matching the topic.
 
+## Regex and wildcard topic matching (assert_emitted_matches!)
+
+When contract events contain prefixes, variable identifiers, or structured multi-part topics (e.g. `Transfer:XLM`, `Order:Created:104`), exact string topic matching can be brittle. `assert_emitted_matches!` allows matching topics using wildcard glob patterns (`*`, `?`) and regular expressions, while validating data payload fields in the same assertion:
+
+```rust
+use soroban_testkit_assert::assert_emitted_matches;
+
+// Match with wildcard globs across single or multi-part topics
+assert_emitted_matches!(env, {
+    contract: dex_id,
+    topic: "Trade:*",
+    data: { amount: 500u64 },
+});
+
+// Match with regular expression pattern
+assert_emitted_matches!(env, {
+    contract: dex_id,
+    topic: r"^Order:(Filled|Cancelled)$",
+});
+
+// Works across EventLog collections spanning multiple invocations
+assert_emitted_matches!(event_log, {
+    topic: "Trade:XLM",
+});
+```
+
+On assertion failure, `assert_emitted_matches!` reports every recorded event with its emitting contract, formatted topics, and raw payload data.
+
 ## Successful contract calls
 
 Use the generated client's `try_*` call with these macros instead of a bare
@@ -553,6 +584,49 @@ invoker Contract(C…1234)                                     | [0] invoker Con
 contract Contract(C…BBBB) function "route"                   | contract Contract(C…AAAA) function "swap" args [...]
 ├── contract Contract(C…CCCC) function "deposit"             | └── contract Contract(C…BBBB) function "route" args [...]
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
+```
+
+### Hierarchical call-tree validation and mock builder (assert_auth_tree!)
+
+In nested multi-contract calls (e.g. `Router -> Pool -> Vault -> Token`), authorizations form recursive trees of `AuthorizedInvocation` structures. `assert_auth_tree!` validates an entire nested delegation hierarchy to arbitrary depth using concise `sub_invokes` lists:
+
+```rust
+use soroban_testkit_assert::assert_auth_tree;
+
+assert_auth_tree!(env, {
+    invoker: user,
+    function: "deposit_and_stake",
+    sub_invokes: [
+        {
+            invoker: router,
+            function: "transfer",
+            args: [user, pool, 1000],
+            sub_invokes: [
+                { invoker: pool, function: "mint_receipt", args: [user, 1000] }
+            ]
+        }
+    ]
+});
+```
+
+To construct mock authorization trees programmatically in tests or mocks, use `AuthTreeMockBuilder`:
+
+```rust
+use soroban_testkit_assert::{auth_tree::tree_depth, AuthTreeMockBuilder};
+
+let mock_invocation = AuthTreeMockBuilder::new(router, "transfer")
+    .arg(&user, &env)
+    .arg(&pool, &env)
+    .arg(&1000i128, &env)
+    .sub_invoke(
+        AuthTreeMockBuilder::new(pool, "mint_receipt")
+            .arg(&user, &env)
+            .arg(&1000i128, &env)
+            .build(&env)
+    )
+    .build(&env);
+
+assert_eq!(tree_depth(&mock_invocation), 2);
 ```
 
 ### Isolating intermediate sub-invocations

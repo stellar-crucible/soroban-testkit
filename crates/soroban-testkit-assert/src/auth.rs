@@ -379,6 +379,24 @@ macro_rules! __assert_auth_sub_tree_root {
             $($($rest)*)?
         )
     };
+    ($env:expr; $matcher:expr; sub_invokes: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.any_sub_invocations();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $matcher:expr; sub_invokes: [$($children:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.sub_invocations($crate::__assert_auth_sub_tree_children!(
+                $env;
+                $crate::auth::SubInvocations::new();
+                $($children)*
+            ));
+            $($($rest)*)?
+        )
+    };
 }
 
 /// Parses nested node fields inside `sub_invocations: [ { ... } ]`.
@@ -395,6 +413,16 @@ macro_rules! __assert_auth_sub_tree_node {
         $crate::__assert_auth_sub_tree_node!(
             $env;
             $node.contract(&$contract);
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; invoker: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!($env; $node; $($($rest)*)?)
+    };
+    ($env:expr; $node:expr; invoker: $invoker:expr $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.contract(&$invoker);
             $($($rest)*)?
         )
     };
@@ -430,6 +458,24 @@ macro_rules! __assert_auth_sub_tree_node {
         )
     };
     ($env:expr; $node:expr; sub_invocations: [$($children:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.sub_invocations($crate::__assert_auth_sub_tree_children!(
+                $env;
+                $crate::auth::SubInvocations::new();
+                $($children)*
+            ));
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; sub_invokes: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.any_sub_invocations();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; sub_invokes: [$($children:tt)*] $(, $($rest:tt)*)?) => {
         $crate::__assert_auth_sub_tree_node!(
             $env;
             $node.sub_invocations($crate::__assert_auth_sub_tree_children!(

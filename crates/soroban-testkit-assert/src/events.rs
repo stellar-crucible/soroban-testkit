@@ -25,6 +25,14 @@ impl<'a> EventMatcher<'a> {
         }
     }
 
+    pub fn env(&self) -> &'a Env {
+        self.env
+    }
+
+    pub fn events_slice(&self) -> Option<&'a [soroban_sdk::xdr::ContractEvent]> {
+        self.events
+    }
+
     pub fn from_contract(mut self, contract: &Address) -> Self {
         self.contract = Some(contract.clone());
         self
@@ -58,7 +66,7 @@ impl<'a> EventMatcher<'a> {
 
     /// Applies the configured filters to the events in scope, whether that scope
     /// is the latest invocation or an [`EventLog`].
-    fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
+    pub(crate) fn matched(&self) -> Vec<soroban_sdk::xdr::ContractEvent> {
         let mut events = self.scoped();
         if let Some(topic) = &self.topic {
             events.retain(|event| has_topic(event, topic));
@@ -635,7 +643,7 @@ impl<'a> EventLog<'a> {
 /// The SDK's own `ContractEvents::filter_by_contract` panics on an account
 /// address instead, and works only on the events `env.events().all()` handed it
 /// — an accumulated set needs the comparison made here.
-fn emitting_contract(address: &Address) -> Option<soroban_sdk::xdr::ContractId> {
+pub(crate) fn emitting_contract(address: &Address) -> Option<soroban_sdk::xdr::ContractId> {
     let soroban_sdk::xdr::ScVal::Address(emitter) = soroban_sdk::xdr::ScVal::from(address) else {
         unreachable!("an Address always converts to ScVal::Address");
     };
@@ -902,6 +910,13 @@ fn topic_label(topic: &soroban_sdk::xdr::ScVal) -> String {
         soroban_sdk::xdr::ScVal::Symbol(symbol) => {
             String::from_utf8_lossy(AsRef::<[u8]>::as_ref(symbol)).into_owned()
         }
+        soroban_sdk::xdr::ScVal::String(string) => {
+            String::from_utf8_lossy(AsRef::<[u8]>::as_ref(string)).into_owned()
+        }
+        soroban_sdk::xdr::ScVal::U32(val) => val.to_string(),
+        soroban_sdk::xdr::ScVal::I32(val) => val.to_string(),
+        soroban_sdk::xdr::ScVal::U64(val) => val.to_string(),
+        soroban_sdk::xdr::ScVal::I64(val) => val.to_string(),
         other => format!("{other:?}"),
     }
 }
