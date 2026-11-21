@@ -27,6 +27,9 @@
 - [Worked Example: Order Book DEX](./guides/orderbook-example.md)
 - [Worked Example: Non-Fungible Token (NFT)](./guides/nft-example.md)
 - [Worked Example: vAMM Perpetuals](./guides/vamm-example.md)
+- [Worked Example: Constant Product AMM](./guides/amm-example.md)
+- [Worked Example: Order Book DEX](./guides/orderbook-example.md)
+- [Worked Example: Non-Fungible Token (NFT)](./guides/nft-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 

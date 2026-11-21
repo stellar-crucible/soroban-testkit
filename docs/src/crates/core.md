@@ -6,6 +6,11 @@ WASM analysis and host execution profiling — the primitives the rest of Testki
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · wasm · profiler · reentrancy · conservation</span></div>
+Budget tracking, error decoding, storage inspection and contract dependency graphs — the primitives the rest of Testkit is built on.
+
+<div class="tk-spec">
+  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · reentrancy · conservation</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -54,6 +59,11 @@ WASM analysis and host execution profiling — the primitives the rest of Testki
 | `CoverageReport` | Aggregates execution metrics, coverage percentages, Markdown tables, and plaintext summaries |
 | `ClientDefinition` | Typed representation of contract client entry points for coverage auditing |
 | `client_definition!` | Macro for concise client entry point declaration |
+| `CallTracer` | Recovers the cross-contract call tree of an invocation: depth, contract, function, metered CPU/memory and outcome per frame; renders ASCII trees and Mermaid sequence diagrams |
+| `TraceFrame`, `CallOutcome` | One traced contract frame, and whether it returned, failed (with the host error) or is unknown |
+| `TtlInspector` | Live TTL of a storage entry in any tier, read without triggering eviction or auto-restore, with the ledger's rent thresholds |
+| `TtlStatus`, `RentThresholds` | `Live` / `Expired` (temporary) / `Archived` (persistent, instance), and the ledger's min/max TTL parameters |
+| `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
 
 ## Budget snapshots
 

@@ -267,6 +267,72 @@ assert!(state.ttl() >= 20_000);
 The simulator keeps archived state in the host so restoration must recover the
 original data; it does not substitute a new value during the test.
 
+## TTL and expiration simulation
+
+Testing a restore path or an archival boundary used to mean arithmetic on
+sequence numbers that silently goes stale when the network's rent parameters
+change. `TestContext` reads the boundary from the entry itself:
+
+```rust
+use soroban_sdk::{symbol_short, Val};
+use soroban_testkit_fixtures::{TestContext, TtlInspector};
+
+let ctx = TestContext::new();
+let contract_id = ctx.env.register(Nonces, ());
+NoncesClient::new(&ctx.env, &contract_id).put(); // writes a temporary entry
+let key = symbol_short!("nonce");
+
+let ttl = TtlInspector::for_key(&ctx.env, &contract_id, &key);
+assert!(ttl.live_until_ledger > ctx.ledger_sequence());
+
+ctx.fast_forward_to_expiration(&contract_id, &key);
+let value = ctx.env.as_contract(&contract_id, || {
+    ctx.env.storage().temporary().get::<_, Val>(&key)
+});
+assert!(value.is_none());
+```
+
+Storage has to be read from inside a contract frame, hence `as_contract`;
+`ctx.assert_temporary_expired(&contract_id, &key)` does exactly that read and
+also checks the TTL.
+
+| Method | Does |
+|--------|------|
+| `ttl(contract, key)` | `TtlInspector` for the entry, in whichever tier holds it |
+| `ledger_sequence()` | The current sequence, as used in TTL arithmetic |
+| `fast_forward_to_expiration(contract, key)` | Sets the sequence to `live_until + 1`, the first ledger the entry is not live |
+| `fast_forward_to_last_live_ledger(contract, key)` | Sets the sequence to `live_until`, the last ledger the entry still reads |
+| `observe_ttl_extension(contract, key, call)` | Runs `call` and returns a `TtlExtension` (before/after readings) |
+| `assert_temporary_expired(contract, key)` | The temporary entry is past its TTL and reads as empty from the contract |
+| `assert_persistent_archived(contract, key)` | The persistent entry is past its TTL, checked without restoring it |
+
+### How each tier behaves
+
+- **Temporary** — past its TTL the entry is gone: the next read returns `None`
+  and `has` returns `false`, and nothing can bring it back.
+- **Persistent** — past its TTL the entry is archived. The SDK test host
+  restores an archived entry the moment a contract reads it, so check the
+  archival with `assert_persistent_archived` (which does not read through the
+  contract) or take archived entries off the ledger with `archive_expired`
+  and test the restore path with `ArchivalSweepSimulator`.
+- **Instance** — every instance key shares the contract instance's TTL;
+  `ttl()` on an instance key reports it, and expiry archives the instance.
+
+### Validating `extend_ttl`
+
+```rust
+let extension = ctx.observe_ttl_extension(&contract_id, &key, || {
+    client.extend(&threshold, &extend_to)
+});
+extension.assert_matches_extend_ttl(threshold, extend_to);
+extension.assert_extended_to(extend_to);
+```
+
+`assert_matches_extend_ttl` judges the call against the host's rules from the
+`before` reading (extend only when the TTL is at or below `threshold`, clamp
+to the network ceiling, never shorten), so the same assertion covers both
+sides of the threshold. `assert_not_extended` pins the no-op case.
+
 ## Testing schema migrations
 
 Contracts bump their storage schema — v1 to v2 to v3 — and migrate the data

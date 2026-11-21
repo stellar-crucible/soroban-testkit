@@ -18,6 +18,7 @@ members = [
     "examples/orderbook",
     "examples/nft",
     "examples/vamm",
+    "examples/amm",
 ]
 
 [workspace.package]
