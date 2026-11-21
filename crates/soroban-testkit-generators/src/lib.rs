@@ -46,7 +46,9 @@ pub use differential::{
     DivergenceKind, ExecutionTrace, IntoTrace,
 };
 #[cfg(feature = "proptest")]
-pub use errors::{host_error_code_coverage, HostError};
+pub use errors::{
+    contract_error_code, error_with_type, host_error, host_error_code_coverage, HostError,
+};
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 #[cfg(feature = "proptest")]
