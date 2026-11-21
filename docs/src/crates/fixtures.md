@@ -223,6 +223,60 @@ restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
 
+## Named branches and speculative paths
+
+`reset` is destructive: it throws the chain away. When several paths start from
+the *same* protocol state — five trade routes from one liquidity pool, three
+liquidation scenarios from one debt position — build the state once and take a
+named checkpoint instead:
+
+```rust
+use soroban_testkit_fixtures::branching::BranchingContext;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+
+let mut ctx = BranchingContext::new(TestContextBuilder::new().with_users(2).build());
+let pool_id = ctx.env.register(Pool, ());
+let pool = PoolClient::new(&ctx.env, &pool_id);
+
+pool.deposit(&1_000);           // setup, executed once
+ctx.create_branch("initial_pool");
+
+for route in routes {
+    ctx.switch_branch("initial_pool").create_branch(route.name);
+    // ... run the route against the pool's original 1,000 ...
+}
+```
+
+`BranchingContext` derefs to `TestContext`, so `ctx.env`, `ctx.users`,
+`advance_time` and the rest keep working. Its branch API is:
+
+| Method | Effect |
+|--------|--------|
+| `create_branch(name)` | Snapshot the ledger under `name` and make it current |
+| `switch_branch(name)` | Rewrite the live ledger to the checkpoint |
+| `current_branch()` | The last created or switched-to name |
+| `branch_names()` | Every checkpoint, in sorted order |
+| `has_branch(name)` | Whether a checkpoint exists |
+| `delete_branch(name)` | Drop one checkpoint, returning whether it existed |
+
+A switch restores every captured ledger entry with its value and `live_until`
+TTL, removes contract data keys written after the checkpoint (including entries
+the contract deleted, which come back), and resets the full ledger clock:
+sequence, timestamp, protocol version, network id, base reserve and the TTL
+thresholds.
+
+The environment itself is kept rather than rebuilt, which is what makes the
+rest of the fixture keep working:
+
+- native test contracts stay registered, so no setup is re-executed;
+- `ctx.admin`, `ctx.users`, contract addresses and clients remain valid;
+- the auth policy (`mock_all_auths`) and the network profile still apply.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Two things a branch cannot rewind</span>
+  <p>A contract registered <em>after</em> a checkpoint keeps its code and instance entries — its storage is cleared, but it remains callable, because the SDK exposes no API to delete those entries. Register every contract before the checkpoint. Recorded authorizations (<code>env.auths()</code>) belong to the most recent invocation rather than to the ledger, so assert them immediately after the call that produced them.</p>
+</div>
+
 ## Persistent storage eviction
 
 `StateEvictionSimulator` creates a short-lived persistent entry, advances its
@@ -795,6 +849,42 @@ flowchart TD
   C_0 -. resolves .-> ORACLE
   C_0 -. resolves .-> VAULT
 ```
+
+## Declared dependency topology validation (`TopologyValidator`)
+
+For multi-contract protocols, `TopologyValidator` lets a test declare the
+expected dependency graph and then scan each deployed contract's instance
+storage for `Address` references. It flags three failure modes:
+
+- **Uninitialized link** — a declared dependency that no contract stores yet.
+- **Dangling reference** — a stored address that points at a contract that was
+  never registered.
+- **Inactive contract** — a registered contract whose address is not deployed.
+
+```rust
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::TopologyValidator;
+
+let env = Env::default();
+env.mock_all_auths();
+
+let mut topology = TopologyValidator::new(&env);
+let token = Address::generate(&env);
+let oracle = env.register_contract(None, ...); // deployed contract id
+let pool = env.register_contract(None, ...);
+
+topology.register_contract("token", &token);
+topology.register_contract("oracle", &oracle);
+topology.register_contract("pool", &pool);
+topology.require_link("pool", "token");
+topology.require_link("pool", "oracle");
+
+topology.assert_valid(); // panics with the full report on any violation
+```
+
+`TopologyValidator::validate` returns a `TopologyReport` whose `is_valid`,
+`violations`, `to_mermaid`, and `render_topology` helpers support non-fatal
+assertions and diagram generation for documentation.
 
 ## Failure injection for mock dependencies (`FailureInjector`)
 

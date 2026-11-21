@@ -445,6 +445,51 @@ Three things the host decides, not the macro:
 `check_contract_error` and `check_host_error` return the diagnostic as a
 `Result<(), String>` instead of panicking.
 
+### Asserting the error code behind a panic
+
+A client method that is not a `try_*` call panics when the invocation fails, and
+the host renders the failure inside the panic text:
+
+```text
+HostError: Error(Contract, #101)
+HostError: Error(Auth, InvalidAction)
+```
+
+`#[should_panic(expected = "...")]` only checks that the text contains a
+substring. `assert_contract_call_panics_with_error_code!` catches the panic,
+parses the packed `Error(..)`, and compares the decoded error with an exact
+expectation:
+
+```rust
+use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
+use soroban_testkit_assert::assert_contract_call_panics_with_error_code;
+
+// A numeric #[contracterror] code.
+assert_contract_call_panics_with_error_code!(client.withdraw(&1_000), VaultError::Locked as u32);
+
+// An exact host error category and code.
+assert_contract_call_panics_with_error_code!(
+    client.withdraw(&1_000),
+    ScErrorType::Auth,
+    ScErrorCode::InvalidAction
+);
+```
+
+The call is evaluated once, inside `catch_unwind`. The assertion fails cleanly
+when the call returns normally, when the panic carries no Soroban error (the
+diagnostic quotes the panic), and when the code or category differs. A mismatch
+prints both errors with their decoded category, numeric code and variant name:
+
+```text
+assert_contract_call_panics_with_error_code! failed: the call panicked with a different error
+  expected: Error(Contract, #101) — decoded: code 101, category contract
+  received: Error(Contract, #2) — decoded: code 2, category contract, variant contract code 2
+  panic:    HostError: Error(Contract, #2)
+```
+
+`check_panic_error_code` returns the diagnostic as a `Result<(), String>`
+without panicking, for tests that assert on the message itself.
+
 ## Authorization matching
 
 Verify who had to sign for a call, and for what. A recorded authorization carries
@@ -548,6 +593,33 @@ assert_auth_strict!(env, []);
 If a pattern is missing or any unlisted authorization was recorded, the failure
 shows expected and observed authorizations side by side, then identifies missing
 patterns and extra records.
+
+### Exact multiset matching
+
+`assert_auth_exact_multiset!` is the order-insensitive form of the same
+assertion. A contract that triggers several independent `require_auth` demands
+can record them in any order, and the order is not part of the SDK's contract:
+
+```rust
+use soroban_testkit_assert::assert_auth_exact_multiset;
+
+client.settle(&first, &second);
+
+assert_auth_exact_multiset!(env, [
+    { invoker: second, function: "settle", args: [first, _] },
+    { invoker: first, function: "settle", args: [_, second] },
+]);
+```
+
+Matching is one-to-one, so this is a multiset rather than a subset rule:
+
+- every expected pattern must match a **distinct** recorded authorization;
+- every recorded authorization must be consumed by an expected pattern;
+- two identical patterns require two identical records, and an empty list
+  asserts that nothing was authorized.
+
+Missing and surplus authorizations both fail, with the side-by-side table
+followed by the unmatched expectations and the extra records.
 
 ### Sub-tree authorization matching
 
@@ -873,6 +945,35 @@ Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
 | Discrepancy                  |                |                |       -1 (LEAK DETECTED) |
 ------------------------------------------------------------------------------------------------------
 ```
+
+## Cross-invocation token conservation (`assert_token_conservation_across_invocations!`)
+
+When a protocol moves tokens across several invocations — swaps, fee splits,
+batch settlements — the total supply must be conserved. The
+`assert_token_conservation_across_invocations!` macro records balances before and
+after each invocation, credits declared protocol fees to their treasury accounts,
+and panics with a debit/credit reconciliation table when an invocation leaks
+value:
+
+```rust
+use soroban_testkit_assert::assert_token_conservation_across_invocations;
+
+let report = assert_token_conservation_across_invocations!(
+    accounts: [(&alice, "Alice"), (&bob, "Bob")],
+    balance: |address| token_client.balance(address),
+    fees: [(&treasury, "Treasury", 10i128)],
+    invocations: [
+        { router.swap(&alice, &bob, &1000); },
+        { router.settle_fees(&treasury); },
+    ],
+);
+assert!(report.is_conserved());
+```
+
+Declared `fees` are internal transfers to treasury accounts and are auto-added
+to the tracked set. A fee that never reaches its treasury is reported as a
+missing credit. `TokenConservationReport` exposes `is_conserved`,
+`invocations`, and `fees` for further assertions.
 
 ## Comparative budget differential and relative gas savings
 
