@@ -6,15 +6,24 @@
 //! are ten of each, so the whole domain is one hundred pairs, and
 //! [`host_error_code_coverage`] draws from all of them.
 //!
-//! The strategy is built from two bounded integers rather than a `prop_oneof!`
-//! over the pairs. proptest shrinks integers towards zero, and both tables are
-//! in XDR discriminant order, so a failing case simplifies towards
-//! `Contract`/`ArithDomain` — the smallest type and the smallest code — instead
-//! of stopping at whichever branch of the `oneof` happened to be taken.
+//! The deterministic coverage strategy is built from two bounded integers
+//! rather than a `prop_oneof!` over the pairs. proptest shrinks integers
+//! towards zero, and both tables are in XDR discriminant order, so a failing
+//! case simplifies towards `Contract`/`ArithDomain`. The SDK-valued
+//! [`host_error`] strategy uses those same ordered categories and gives
+//! contract errors the full application-defined `u32` code range.
 
 use proptest::prelude::*;
 use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
 use soroban_sdk::Error;
+
+/// Any valid application-defined contract error code.
+///
+/// The full `u32` range is valid for contract errors, and proptest shrinks
+/// failing values towards zero.
+pub fn contract_error_code() -> impl Strategy<Value = u32> {
+    any::<u32>()
+}
 
 /// Every host error category, in XDR discriminant order.
 ///
@@ -167,21 +176,44 @@ pub fn host_error_code_coverage() -> impl Strategy<Value = HostError> {
     })
 }
 
-/// Every host error pair, at random.
+/// Every host error category, at random, as a Soroban SDK [`Error`].
 ///
-/// An alias for [`host_error_code_coverage`] for tests that read better without
-/// the coverage wording.
-pub fn host_error() -> impl Strategy<Value = HostError> {
-    host_error_code_coverage()
+/// Contract errors use the full `u32` code range; other categories use the
+/// standardized [`ScErrorCode`] values. Category and code strategies shrink
+/// towards the lowest XDR discriminants.
+pub fn host_error() -> impl Strategy<Value = Error> {
+    (0..HOST_ERROR_TYPES.len())
+        .prop_flat_map(|type_index| error_codes_for_type(HOST_ERROR_TYPES[type_index]))
+        .boxed()
 }
 
-/// The codes of one category, at random.
+/// The standardized host codes paired with one category, at random.
 ///
-/// `contract` errors are application-defined, so pair this with a fixed type to
-/// fuzz one branch of a recovery match rather than the whole domain.
+/// For full-range application-defined contract codes, use
+/// [`error_with_type`] with [`ScErrorType::Contract`].
 pub fn host_error_of_type(error_type: ScErrorType) -> impl Strategy<Value = HostError> {
     (0..HOST_ERROR_CODES.len())
         .prop_map(move |index| HostError::new(error_type, HOST_ERROR_CODES[index]))
+}
+
+/// Errors restricted to a particular category, as Soroban SDK [`Error`] values.
+///
+/// Contract errors use [`contract_error_code`] because their codes are
+/// application-defined; all other categories use standardized host codes.
+pub fn error_with_type(error_type: ScErrorType) -> impl Strategy<Value = Error> {
+    error_codes_for_type(error_type)
+}
+
+fn error_codes_for_type(error_type: ScErrorType) -> BoxedStrategy<Error> {
+    if error_type == ScErrorType::Contract {
+        contract_error_code()
+            .prop_map(Error::from_contract_error)
+            .boxed()
+    } else {
+        host_error_code()
+            .prop_map(move |code| Error::from_type_and_code(error_type, code))
+            .boxed()
+    }
 }
 
 /// The full domain, in table order, for a deterministic sweep.
@@ -230,13 +262,15 @@ fn index_of_code(code: ScErrorCode) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        all_host_errors, host_error, host_error_code, host_error_code_coverage, host_error_of_type,
-        host_error_type, HostError, HOST_ERROR_CODES, HOST_ERROR_TYPES,
+        all_host_errors, contract_error_code, error_with_type, host_error, host_error_code,
+        host_error_code_coverage, host_error_of_type, host_error_type, HostError, HOST_ERROR_CODES,
+        HOST_ERROR_TYPES,
     };
     use proptest::prelude::*;
     use proptest::test_runner::{TestError, TestRunner};
-    use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
+    use soroban_sdk::xdr::{ScError, ScErrorCode, ScErrorType, ScVal};
     use soroban_sdk::Error;
+    use soroban_testkit_core::error::DecodedError;
     use std::collections::HashSet;
 
     /// A recovery decision, the shape a contract's `match` on an error produces.
@@ -269,10 +303,19 @@ mod tests {
         }
 
         #[test]
-        fn a_generated_error_keeps_its_own_discriminants(error in host_error()) {
-            prop_assert!(HOST_ERROR_TYPES.contains(&error.error_type()));
-            prop_assert!(HOST_ERROR_CODES.contains(&error.code()));
-            prop_assert_eq!(HostError::from_index(error.index()), Some(error));
+        fn a_generated_sdk_error_round_trips_through_scval(error in host_error()) {
+            prop_assert!(HOST_ERROR_TYPES.iter().any(|error_type| error.is_type(*error_type)));
+            let sc_val = ScVal::try_from(error).expect("generated errors have valid XDR codes");
+            let ScVal::Error(sc_error) = sc_val else {
+                panic!("an SDK Error must convert to ScVal::Error");
+            };
+            prop_assert_eq!(Error::from(sc_error), error);
+        }
+
+        #[test]
+        fn a_generated_sdk_error_can_be_decoded(error in host_error()) {
+            let decoded = DecodedError::from_error(&error);
+            prop_assert!(!decoded.category.is_empty());
         }
 
         #[test]
@@ -384,6 +427,81 @@ mod tests {
                 assert_eq!(smallest.label(), "contract/0");
             }
             other => panic!("expected a shrunk failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn contract_error_codes_shrink_to_zero() {
+        let mut runner = TestRunner::new(ProptestConfig {
+            cases: 1,
+            max_shrink_iters: 10_000,
+            ..ProptestConfig::default()
+        });
+        let outcome = runner.run(&contract_error_code(), |code| {
+            prop_assert_eq!(code, code.wrapping_add(1), "force shrinking to zero");
+            Ok(())
+        });
+
+        match outcome {
+            Err(TestError::Fail(_, smallest)) => assert_eq!(smallest, 0),
+            other => panic!("expected a shrunk failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn contract_code_boundaries_round_trip_through_scval() {
+        for code in [0, u32::MAX] {
+            let error = Error::from_contract_error(code);
+            let sc_val = ScVal::try_from(error).expect("contract codes are valid XDR");
+
+            match sc_val {
+                ScVal::Error(ScError::Contract(sc_code)) => assert_eq!(sc_code, code),
+                other => panic!("expected a contract ScVal error, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn sdk_errors_shrink_to_the_lowest_category_and_code() {
+        let mut runner = TestRunner::new(ProptestConfig {
+            cases: 1,
+            max_shrink_iters: 10_000,
+            ..ProptestConfig::default()
+        });
+        let outcome = runner.run(&host_error(), |error| {
+            prop_assert_eq!(
+                error.get_code(),
+                error.get_code().wrapping_add(1),
+                "force shrinking to the lowest error"
+            );
+            Ok(())
+        });
+
+        match outcome {
+            Err(TestError::Fail(_, smallest)) => {
+                assert!(smallest.is_type(ScErrorType::Contract));
+                assert_eq!(smallest.get_code(), 0);
+            }
+            other => panic!("expected a shrunk failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_error_type_strategy_returns_xdr_convertible_sdk_errors() {
+        for error_type in HOST_ERROR_TYPES {
+            let mut runner = TestRunner::default();
+            runner
+                .run(&error_with_type(error_type), |error| {
+                    prop_assert!(error.is_type(error_type));
+                    let sc_val =
+                        ScVal::try_from(error).expect("generated errors have valid XDR codes");
+                    let ScVal::Error(sc_error) = sc_val else {
+                        panic!("an SDK Error must convert to ScVal::Error");
+                    };
+                    prop_assert_eq!(Error::from(sc_error), error);
+                    Ok(())
+                })
+                .unwrap();
         }
     }
 
