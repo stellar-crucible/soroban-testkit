@@ -20,8 +20,10 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
 | `fuzzed_invocation_args(env, typed, max_rogue)` | `Vec<Val>` | valid arguments mixed with integers, booleans, symbols, errors, and address objects |
+| `contract_error_code()` | `u32` | any application-defined contract error code, shrinking towards zero |
+| `host_error()` | `Error` | an SDK error from every standard category, including arbitrary contract codes |
+| `error_with_type(kind)` | `Error` | an SDK error restricted to the requested `ScErrorType` |
 | `host_error_code_coverage()` | `HostError` | all 10 categories × all 10 codes |
-| `host_error()` | `HostError` | alias for `host_error_code_coverage()` |
 | `host_error_type()` | `ScErrorType` | every host category |
 | `host_error_code()` | `ScErrorCode` | every host code |
 | `host_error_of_type(kind)` | `HostError` | the codes of one category |
@@ -118,6 +120,38 @@ proptest! {
   <p>Each generated address carries a process-wide nonce, so two calls to <code>address()</code> in the same test run never produce the same bytes — even if their random prefixes collide. The trade-off is that values depend on generation order, so a failing case should be judged by the bytes proptest prints rather than by replaying a random seed alone.</p>
 </div>
 
+## Strkeys (account, contract, corrupted)
+
+Soroban strkeys are 56-character base32 strings carrying a version byte and a
+CRC-16 checksum. The generators module provides strategies that produce valid
+account (`G...`) and contract (`C...`) strkeys, plus corrupted variants that
+flip a checksum bit:
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::strategies::{
+    account_strkey, contract_strkey, corrupted_strkey, Strkey,
+};
+
+proptest! {
+    #[test]
+    fn round_trips(s in account_strkey()) {
+        let decoded = Strkey::decode(&s).unwrap();
+        assert_eq!(decoded.encoded(), s);
+    }
+
+    #[test]
+    fn corrupted_is_rejected(s in corrupted_strkey()) {
+        assert!(Strkey::decode(&s).is_err());
+    }
+}
+```
+
+`Strkey` exposes `new`, `zero`, `encoded`, `decode`, `to_address`, and
+`StrkeyKind`/`StrkeyError` for direct parsing tests. Valid inputs shrink toward
+the canonical all-zero strkey; corrupted inputs shrink toward a single-bit
+checksum flip.
+
 ## Fuzzing invocation argument types
 
 `fuzzed_invocation_args` takes the host environment, a vector of valid
@@ -192,9 +226,43 @@ a contract call returns. `host_error_of_type(kind)` narrows a run to one branch
 when a category needs its own treatment, and `all_host_errors()` is the full
 hundred in table order for a deterministic sweep.
 
+Use `host_error()` when the code under test consumes the SDK error directly;
+`error_with_type(kind)` keeps generated errors within one category, including
+application-defined contract codes when `kind` is `ScErrorType::Contract`.
+`contract_error_code()` produces the entire valid `u32` range and shrinks
+failing values towards zero. Generated SDK errors convert to the corresponding
+XDR [`ScVal::Error`](https://docs.rs/soroban-sdk/latest/soroban_sdk/xdr/enum.ScVal.html)
+without losing their category or code:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::xdr::{ScErrorType, ScVal};
+use soroban_testkit_core::error::DecodedError;
+use soroban_testkit_generators::{error_with_type, host_error};
+
+proptest! {
+    #[test]
+    fn error_handler_never_panics(error in host_error()) {
+        let decoded = DecodedError::from_error(&error);
+        assert!(!decoded.category.is_empty());
+
+        let xdr_error = ScVal::try_from(error).expect("generated errors are valid XDR");
+        assert!(matches!(xdr_error, ScVal::Error(_)));
+    }
+
+    #[test]
+    fn storage_error_handler_never_panics(
+        error in error_with_type(ScErrorType::Storage),
+    ) {
+        // The strategy only emits Storage errors.
+        assert!(error.is_type(ScErrorType::Storage));
+    }
+}
+```
+
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
-  <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
+  <p><code>host_error_code_coverage()</code> uses two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>). <code>host_error()</code> follows that category order and contract codes shrink towards zero too.</p>
 </div>
 
 ## Tuples and fixed-size arrays
@@ -345,6 +413,59 @@ holds.
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the shortest span</span>
   <p>A failing duration minimises to <code>min_secs</code>, a failing timepoint to <code>min_timestamp</code>, and a failing interval to <code>(1, 1)</code> — or to <code>(1, 2)</code> when the bug needs a non-empty span. A vesting calculation that is wrong at the end of its schedule is therefore reported at the earliest boundary that reproduces it rather than at a random year.</p>
+</div>
+
+## Realistic ledger windows
+
+A time-locked contract sees both `env.ledger().sequence()` and
+`env.ledger().timestamp()`, and the two move together: Stellar closes a ledger
+about every five seconds. `realistic_ledger_window()` generates a sequence span
+and the timestamps at its two ends, correlated at that cadence with a bounded
+clock skew:
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::{realistic_ledger_window, LedgerWindow};
+
+proptest! {
+    #[test]
+    fn a_timelock_unlocks_inside_its_window(
+        window in realistic_ledger_window(),
+        lock_secs in 0u64..=600,
+    ) {
+        let unlock_at = window.start_timestamp + lock_secs;
+        let unlock_ledger = window.sequence_at(unlock_at);
+        prop_assert!(window.timestamp_at(unlock_ledger) <= unlock_at);
+    }
+}
+```
+
+`LedgerWindow` carries `start_sequence`, `end_sequence`, `start_timestamp`,
+`end_timestamp` and the `skew_secs` beyond the nominal cadence, with helpers:
+
+| Method | Meaning |
+|--------|---------|
+| `ledger_count()` | Ledgers spanned; zero for an immediate window |
+| `elapsed_secs()` | Network time spanned, skew included |
+| `is_immediate()` | The window opens and closes on the same ledger |
+| `timestamp_at(seq)` | Clock at a ledger, interpolated across the window |
+| `sequence_at(ts)` | The ledger at or immediately before a timestamp |
+
+Both ends are inclusive, so `timestamp_at(start_sequence)` is
+`start_timestamp` and `timestamp_at(end_sequence)` is `end_timestamp`. Set them
+on a test environment with
+`env.ledger().set_sequence_number(window.end_sequence)` and
+`env.ledger().set_timestamp(window.end_timestamp)` to run a contract at the far
+end of the window.
+
+`skew_secs` lies in `0..=ledger_count()`, so the generated window averages
+between five and six seconds per ledger; the end timestamp is never behind the
+start. Start sequences come from the same range as `ledger_sequence()`, and the
+span reaches `MAX_LEDGER_WINDOW_LEDGERS` (about six days of network time).
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Shrinking goes to immediate execution</span>
+  <p>A failing window minimises to a zero-ledger, zero-second span with no skew, at the lowest start sequence and <code>MIN_LEDGER_TIMESTAMP</code>. A boundary check that is wrong only for a long lock therefore reports the smallest window that still reproduces it, rather than a random week of ledgers.</p>
 </div>
 
 ## Event Fuzzing

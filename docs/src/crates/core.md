@@ -4,7 +4,7 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · reentrancy</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · reentrancy · conservation</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -51,6 +51,11 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `CoverageReport` | Aggregates execution metrics, coverage percentages, Markdown tables, and plaintext summaries |
 | `ClientDefinition` | Typed representation of contract client entry points for coverage auditing |
 | `client_definition!` | Macro for concise client entry point declaration |
+| `CallTracer` | Recovers the cross-contract call tree of an invocation: depth, contract, function, metered CPU/memory and outcome per frame; renders ASCII trees and Mermaid sequence diagrams |
+| `TraceFrame`, `CallOutcome` | One traced contract frame, and whether it returned, failed (with the host error) or is unknown |
+| `TtlInspector` | Live TTL of a storage entry in any tier, read without triggering eviction or auto-restore, with the ledger's rent thresholds |
+| `TtlStatus`, `RentThresholds` | `Live` / `Expired` (temporary) / `Archived` (persistent, instance), and the ledger's min/max TTL parameters |
+| `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
 
 ## Budget snapshots
 
@@ -954,3 +959,42 @@ std::fs::write("target/budget_report.html", html).unwrap();
 <hr class="tk-divider" />
 
 <p class="tk-muted">Next: <a href="./assert.html">soroban-testkit-assert</a> — turn these measurements into readable assertions.</p>
+
+## Liquidity conservation (`ConservationVerifier`)
+
+The core invariant of anything that moves tokens: across the holders you track (users, pools, vaults, fee collectors), the total balance changes by exactly what was minted minus what was burned. `ConservationVerifier` reads every tracked balance from the token contract before and after a workflow and checks that equation exactly, so a leak of a single stroop fails.
+
+```rust
+use soroban_testkit_core::ConservationVerifier;
+
+let verifier = ConservationVerifier::new(&env, &token_id);
+verifier.track_accounts(&[user1.clone(), user2.clone(), pool.clone()]);
+
+// ... a multi-step workflow: swaps, deposits, fee splits ...
+verifier.record_mint(500); // supply the workflow is meant to create
+verifier.record_burn(40);  // supply it is meant to destroy
+
+verifier.assert_conserved();
+```
+
+The SEP-41 token interface has no total-supply query, so mints and burns are declared with `record_mint` / `record_burn`. Anything the contract mints or burns that the test did not declare is reported as a discrepancy. Negative means a **leak** (value left the tracked set or was destroyed, such as rounding dust burned or kept by an untracked contract). Positive means **phantom minting**.
+
+On a violation, `assert_conserved` panics with a reconciliation table: opening and closing balance, credit and debit per account, the totals, and the verdict. This one is from the crate's own test, where a splitter pays 100 out to three recipients in shares of 33 and burns the 1-stroop rounding remainder:
+
+```text
+account       |              opening |              closing |               credit |                debit
+---------------------------------------------------------------------------------------------------------
+CAAAAA…HK3M   |                 1000 |                  900 |                      |                  100
+CAAAAA…OLZM   |                    0 |                    0 |                      |
+CAAAAA…ITA4   |                    0 |                   33 |                   33 |
+CAAAAA…K3IM   |                    0 |                   33 |                   33 |
+CAAAAA…MDR4   |                    0 |                   33 |                   33 |
+---------------------------------------------------------------------------------------------------------
+total         |                 1000 |                  999 |                   99 |                  100
+
+net balance delta : -1
+expected delta    : 0 (minted 0 - burned 0)
+discrepancy       : -1 — LEAK: 1 stroop(s) left the tracked set
+```
+
+`check()` returns the same `ConservationReport` as `Ok`/`Err` instead of panicking, and `checkpoint()` makes the current balances the new opening position so each step of a long workflow can be checked on its own.

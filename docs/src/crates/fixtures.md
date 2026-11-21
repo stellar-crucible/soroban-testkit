@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -223,6 +223,60 @@ restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
 
+## Named branches and speculative paths
+
+`reset` is destructive: it throws the chain away. When several paths start from
+the *same* protocol state — five trade routes from one liquidity pool, three
+liquidation scenarios from one debt position — build the state once and take a
+named checkpoint instead:
+
+```rust
+use soroban_testkit_fixtures::branching::BranchingContext;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+
+let mut ctx = BranchingContext::new(TestContextBuilder::new().with_users(2).build());
+let pool_id = ctx.env.register(Pool, ());
+let pool = PoolClient::new(&ctx.env, &pool_id);
+
+pool.deposit(&1_000);           // setup, executed once
+ctx.create_branch("initial_pool");
+
+for route in routes {
+    ctx.switch_branch("initial_pool").create_branch(route.name);
+    // ... run the route against the pool's original 1,000 ...
+}
+```
+
+`BranchingContext` derefs to `TestContext`, so `ctx.env`, `ctx.users`,
+`advance_time` and the rest keep working. Its branch API is:
+
+| Method | Effect |
+|--------|--------|
+| `create_branch(name)` | Snapshot the ledger under `name` and make it current |
+| `switch_branch(name)` | Rewrite the live ledger to the checkpoint |
+| `current_branch()` | The last created or switched-to name |
+| `branch_names()` | Every checkpoint, in sorted order |
+| `has_branch(name)` | Whether a checkpoint exists |
+| `delete_branch(name)` | Drop one checkpoint, returning whether it existed |
+
+A switch restores every captured ledger entry with its value and `live_until`
+TTL, removes contract data keys written after the checkpoint (including entries
+the contract deleted, which come back), and resets the full ledger clock:
+sequence, timestamp, protocol version, network id, base reserve and the TTL
+thresholds.
+
+The environment itself is kept rather than rebuilt, which is what makes the
+rest of the fixture keep working:
+
+- native test contracts stay registered, so no setup is re-executed;
+- `ctx.admin`, `ctx.users`, contract addresses and clients remain valid;
+- the auth policy (`mock_all_auths`) and the network profile still apply.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Two things a branch cannot rewind</span>
+  <p>A contract registered <em>after</em> a checkpoint keeps its code and instance entries — its storage is cleared, but it remains callable, because the SDK exposes no API to delete those entries. Register every contract before the checkpoint. Recorded authorizations (<code>env.auths()</code>) belong to the most recent invocation rather than to the ledger, so assert them immediately after the call that produced them.</p>
+</div>
+
 ## Persistent storage eviction
 
 `StateEvictionSimulator` creates a short-lived persistent entry, advances its
@@ -245,6 +299,72 @@ assert!(state.ttl() >= 20_000);
 
 The simulator keeps archived state in the host so restoration must recover the
 original data; it does not substitute a new value during the test.
+
+## TTL and expiration simulation
+
+Testing a restore path or an archival boundary used to mean arithmetic on
+sequence numbers that silently goes stale when the network's rent parameters
+change. `TestContext` reads the boundary from the entry itself:
+
+```rust
+use soroban_sdk::{symbol_short, Val};
+use soroban_testkit_fixtures::{TestContext, TtlInspector};
+
+let ctx = TestContext::new();
+let contract_id = ctx.env.register(Nonces, ());
+NoncesClient::new(&ctx.env, &contract_id).put(); // writes a temporary entry
+let key = symbol_short!("nonce");
+
+let ttl = TtlInspector::for_key(&ctx.env, &contract_id, &key);
+assert!(ttl.live_until_ledger > ctx.ledger_sequence());
+
+ctx.fast_forward_to_expiration(&contract_id, &key);
+let value = ctx.env.as_contract(&contract_id, || {
+    ctx.env.storage().temporary().get::<_, Val>(&key)
+});
+assert!(value.is_none());
+```
+
+Storage has to be read from inside a contract frame, hence `as_contract`;
+`ctx.assert_temporary_expired(&contract_id, &key)` does exactly that read and
+also checks the TTL.
+
+| Method | Does |
+|--------|------|
+| `ttl(contract, key)` | `TtlInspector` for the entry, in whichever tier holds it |
+| `ledger_sequence()` | The current sequence, as used in TTL arithmetic |
+| `fast_forward_to_expiration(contract, key)` | Sets the sequence to `live_until + 1`, the first ledger the entry is not live |
+| `fast_forward_to_last_live_ledger(contract, key)` | Sets the sequence to `live_until`, the last ledger the entry still reads |
+| `observe_ttl_extension(contract, key, call)` | Runs `call` and returns a `TtlExtension` (before/after readings) |
+| `assert_temporary_expired(contract, key)` | The temporary entry is past its TTL and reads as empty from the contract |
+| `assert_persistent_archived(contract, key)` | The persistent entry is past its TTL, checked without restoring it |
+
+### How each tier behaves
+
+- **Temporary** — past its TTL the entry is gone: the next read returns `None`
+  and `has` returns `false`, and nothing can bring it back.
+- **Persistent** — past its TTL the entry is archived. The SDK test host
+  restores an archived entry the moment a contract reads it, so check the
+  archival with `assert_persistent_archived` (which does not read through the
+  contract) or take archived entries off the ledger with `archive_expired`
+  and test the restore path with `ArchivalSweepSimulator`.
+- **Instance** — every instance key shares the contract instance's TTL;
+  `ttl()` on an instance key reports it, and expiry archives the instance.
+
+### Validating `extend_ttl`
+
+```rust
+let extension = ctx.observe_ttl_extension(&contract_id, &key, || {
+    client.extend(&threshold, &extend_to)
+});
+extension.assert_matches_extend_ttl(threshold, extend_to);
+extension.assert_extended_to(extend_to);
+```
+
+`assert_matches_extend_ttl` judges the call against the host's rules from the
+`before` reading (extend only when the TTL is at or below `threshold`, clamp
+to the network ceiling, never shorten), so the same assertion covers both
+sides of the threshold. `assert_not_extended` pins the no-op case.
 
 ## Testing schema migrations
 
@@ -730,58 +850,80 @@ flowchart TD
   C_0 -. resolves .-> VAULT
 ```
 
-## Cryptographic Signatures and Keypair Fixtures
+## Declared dependency topology validation (`TopologyValidator`)
 
-While `env.mock_all_auths()` is useful for initial unit testing, contracts handling off-chain signed meta-transactions, delegated account credentials, or multi-sig policies require testing with authentic Ed25519 signatures and real cryptographic keypairs.
+For multi-contract protocols, `TopologyValidator` lets a test declare the
+expected dependency graph and then scan each deployed contract's instance
+storage for `Address` references. It flags three failure modes:
 
-### Generating Ed25519 Signers
-
-[`SignerKeypair`] wraps a 32-byte Ed25519 keypair and derives a host-compatible account [`Address`]. Signatures generated by `SignerKeypair` are verifiable by `soroban_sdk::crypto::ed25519_verify`:
-
-```rust
-use soroban_testkit_fixtures::SignerKeypair;
-use soroban_sdk::Bytes;
-
-let signer = SignerKeypair::random(&ctx.env);
-let message = Bytes::from_slice(&ctx.env, b"Authorize transfer 500");
-let signature = signer.sign(&message);
-
-// Verified using host crypto
-ctx.env.crypto().ed25519_verify(&signer.public_key_bytes(&ctx.env), &message, &signature);
-```
-
-### Constructing Cryptographically Signed Invocations
-
-Use `ctx.generate_signed_auth(...)` to construct valid `AuthorizedInvocation` structures accompanied by cryptographic proofs and replay protection:
+- **Uninitialized link** — a declared dependency that no contract stores yet.
+- **Dangling reference** — a stored address that points at a contract that was
+  never registered.
+- **Inactive contract** — a registered contract whose address is not deployed.
 
 ```rust
-let signer = SignerKeypair::random(&ctx.env);
-let auth = ctx.generate_signed_auth(
-    &signer,
-    &contract_id,
-    symbol_short!("deposit"),
-    vec![&ctx.env, 500i128.into_val(&ctx.env)],
-);
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::TopologyValidator;
 
-// auth.invocation is an AuthorizedInvocation
-assert_eq!(auth.signer, *signer.address());
+let env = Env::default();
+env.mock_all_auths();
+
+let mut topology = TopologyValidator::new(&env);
+let token = Address::generate(&env);
+let oracle = env.register_contract(None, ...); // deployed contract id
+let pool = env.register_contract(None, ...);
+
+topology.register_contract("token", &token);
+topology.register_contract("oracle", &oracle);
+topology.register_contract("pool", &pool);
+topology.require_link("pool", "token");
+topology.require_link("pool", "oracle");
+
+topology.assert_valid(); // panics with the full report on any violation
 ```
 
-### Testing Replay Attacks and Signature Malleability
+`TopologyValidator::validate` returns a `TopologyReport` whose `is_valid`,
+`violations`, `to_mermaid`, and `render_topology` helpers support non-fatal
+assertions and diagram generation for documentation.
 
-The module provides test helpers for simulating replay attacks and signature corruption:
+## Failure injection for mock dependencies (`FailureInjector`)
+
+A resilient contract has to survive a dependency that fails: an oracle out of budget, a vault whose storage expired, a token that traps. `FailureInjector` decides, per contract and per function, when a mock dependency fails and with which error, without writing a separate crashing contract for each case.
+
+The injection point is one call at the top of each mock function:
 
 ```rust
-use soroban_testkit_fixtures::crypto::{malleate_signature, mutate_message};
+use soroban_testkit_fixtures::{failure_point, FailureInjector, InjectedFailure};
 
-// Replay protection test: simulate reusing signature with an altered nonce
-let replay_attempt = auth.simulate_replay_attack(43);
-assert_ne!(replay_attempt.nonce, auth.nonce);
+#[contractimpl]
+impl MockOracle {
+    pub fn get_price(env: Env) -> i128 {
+        failure_point(&env, "get_price");
+        100
+    }
+}
 
-// Signature malleability: bit-flipped signature fails verification
-let bad_sig = malleate_signature(&ctx.env, &auth.signature);
+let injector = FailureInjector::attach(&env);
 
-// Message corruption: altered payload fails verification
-let mutated = mutate_message(&auth.message);
+injector.fail_function(&oracle_id, "get_price", InjectedFailure::BudgetExceeded); // permanent crash
+assert_eq!(dex.try_quote(&oracle_id, &2), Err(Ok(DexError::OracleUnavailable)));
+
+injector.fail_times(&oracle_id, "get_price", InjectedFailure::StorageNotFound, 2); // temporary outage
+injector.fail_on_call(&oracle_id, "get_price", InjectedFailure::InternalError, 3); // only call 3 fails
+
+injector.clear(); // normal execution again (also happens on drop)
 ```
 
+| Failure | Raised as |
+| --- | --- |
+| `OutOfMemory` | `Error(WasmVm, ExceededLimit)` |
+| `BudgetExceeded` | `Error(Budget, ExceededLimit)` (the out-of-gas case) |
+| `StorageNotFound` | a genuine host trap: a TTL extension on a missing entry, as an archived or never-written entry would cause |
+| `InternalError` | `Error(Context, InternalError)` |
+| `Contract(code)` | a contract error with that code |
+
+**What the caller sees.** A `Contract(code)` failure reaches a `try_*` caller unchanged. Every host-level failure reaches it as `Error(Context, InvalidAction)`, because the host never forwards a callee's host error verbatim. That is also exactly what a caller sees when a real dependency traps. Without a `try_*` call, the failure aborts the caller.
+
+**One difference from a live network.** On a network, exhausting the CPU or memory budget aborts the *whole transaction* and no caller can catch it. The injected `BudgetExceeded` and `OutOfMemory` fail only the dependency's invocation, modelling a dependency that runs out and reports it, so the caller's fallback path is testable. To test transaction-wide exhaustion, run the call under real limits (`NetworkProfile`, or `env.cost_estimate().budget().reset_limits`).
+
+Rules are scoped to the test thread and to the injector that installed them, so one test cannot leak a failure into the next. `injector.calls(&id, "fn")` reports how many calls the injection point has seen.

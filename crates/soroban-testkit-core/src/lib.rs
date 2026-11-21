@@ -1,6 +1,7 @@
 pub mod budget;
 pub mod budget_report;
 pub mod compatibility;
+pub mod conservation;
 pub mod coverage;
 pub mod error;
 pub mod footprint;
@@ -11,12 +12,15 @@ pub mod reentrancy;
 pub mod stack_depth;
 pub mod storage;
 pub mod storage_fragmentation;
+pub mod tracer;
+pub mod ttl;
 
 pub use budget_report::{BudgetComparison, DiffStatus, FunctionBudgetDiff};
 pub use compatibility::{
     CompatibilityAuditor, CompatibilityGrade, CompatibilityScorecard, DeprecationItem,
     DeprecationSeverity, DEFAULT_TARGET_PROTOCOL,
 };
+pub use conservation::{ConservationReport, ConservationVerifier, ReconciliationRow};
 pub use coverage::{
     ClientDefinition, ContractCoverageReport, CoverageAuditor, CoverageError, CoverageReport,
     FunctionCoverageRecord, FunctionCoverageStatus,
@@ -41,3 +45,5 @@ pub use storage_fragmentation::{
     ConsolidationOpportunity, FragmentationReport, StorageEntryMetrics,
     StorageFragmentationAnalyzer, TierFragmentationSummary,
 };
+pub use tracer::{CallOutcome, CallTracer, TraceFrame};
+pub use ttl::{RentThresholds, TtlExtension, TtlInspector, TtlStatus};
