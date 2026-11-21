@@ -6,6 +6,7 @@ pub mod contract_error;
 pub mod events;
 pub mod invocation;
 pub mod storage;
+pub mod token_conservation;
 
 pub use auth::{
     AuthArgs, AuthMatcher, AuthStrictMatcher, AuthSubInvocationMatcher, AuthSubTree,
@@ -25,3 +26,7 @@ pub use contract_error::{
 };
 pub use events::{EventCountBound, EventSource};
 pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};
+pub use token_conservation::{
+    resolve_fee_credits, FeeClaim, FeeSettlement, IntoFeeClaim, InvocationConservation,
+    TokenConservationReport, TokenConservationTracker,
+};

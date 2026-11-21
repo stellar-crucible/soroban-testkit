@@ -10,6 +10,7 @@ pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 pub mod protocol_registry;
+pub mod topology;
 #[cfg(test)]
 mod ttl_tests;
 
@@ -29,6 +30,10 @@ pub use protocol_registry::{
     ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
     ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
     ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
+pub use topology::{
+    AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
+    TopologyReport, TopologyValidator, UninitializedLink,
 };
 
 pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};

@@ -872,6 +872,35 @@ Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
 ------------------------------------------------------------------------------------------------------
 ```
 
+## Cross-invocation token conservation (`assert_token_conservation_across_invocations!`)
+
+When a protocol moves tokens across several invocations — swaps, fee splits,
+batch settlements — the total supply must be conserved. The
+`assert_token_conservation_across_invocations!` macro records balances before and
+after each invocation, credits declared protocol fees to their treasury accounts,
+and panics with a debit/credit reconciliation table when an invocation leaks
+value:
+
+```rust
+use soroban_testkit_assert::assert_token_conservation_across_invocations;
+
+let report = assert_token_conservation_across_invocations!(
+    accounts: [(&alice, "Alice"), (&bob, "Bob")],
+    balance: |address| token_client.balance(address),
+    fees: [(&treasury, "Treasury", 10i128)],
+    invocations: [
+        { router.swap(&alice, &bob, &1000); },
+        { router.settle_fees(&treasury); },
+    ],
+);
+assert!(report.is_conserved());
+```
+
+Declared `fees` are internal transfers to treasury accounts and are auto-added
+to the tracked set. A fee that never reaches its treasury is reported as a
+missing credit. `TokenConservationReport` exposes `is_conserved`,
+`invocations`, and `fees` for further assertions.
+
 ## Comparative budget differential and relative gas savings
 
 When refactoring code paths or evaluating alternative algorithm implementations (such as linear scan vs binary search, or unindexed vs indexed storage queries), smart contract engineers need to assert that an optimized branch achieves relative gas savings without regressing on CPU instruction or memory consumption.

@@ -850,6 +850,42 @@ flowchart TD
   C_0 -. resolves .-> VAULT
 ```
 
+## Declared dependency topology validation (`TopologyValidator`)
+
+For multi-contract protocols, `TopologyValidator` lets a test declare the
+expected dependency graph and then scan each deployed contract's instance
+storage for `Address` references. It flags three failure modes:
+
+- **Uninitialized link** — a declared dependency that no contract stores yet.
+- **Dangling reference** — a stored address that points at a contract that was
+  never registered.
+- **Inactive contract** — a registered contract whose address is not deployed.
+
+```rust
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::TopologyValidator;
+
+let env = Env::default();
+env.mock_all_auths();
+
+let mut topology = TopologyValidator::new(&env);
+let token = Address::generate(&env);
+let oracle = env.register_contract(None, ...); // deployed contract id
+let pool = env.register_contract(None, ...);
+
+topology.register_contract("token", &token);
+topology.register_contract("oracle", &oracle);
+topology.register_contract("pool", &pool);
+topology.require_link("pool", "token");
+topology.require_link("pool", "oracle");
+
+topology.assert_valid(); // panics with the full report on any violation
+```
+
+`TopologyValidator::validate` returns a `TopologyReport` whose `is_valid`,
+`violations`, `to_mermaid`, and `render_topology` helpers support non-fatal
+assertions and diagram generation for documentation.
+
 ## Failure injection for mock dependencies (`FailureInjector`)
 
 A resilient contract has to survive a dependency that fails: an oracle out of budget, a vault whose storage expired, a token that traps. `FailureInjector` decides, per contract and per function, when a mock dependency fails and with which error, without writing a separate crashing contract for each case.
