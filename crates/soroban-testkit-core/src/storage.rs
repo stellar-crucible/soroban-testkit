@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use soroban_sdk::{
-    xdr::{ContractDataDurability, LedgerEntryData, LedgerKey, ScAddress, ScVal},
+    xdr::{ContractDataDurability, LedgerEntryData, LedgerKey, Limits, ScAddress, ScVal, WriteXdr},
     Address, Env,
 };
 
@@ -31,6 +31,8 @@ pub struct StorageEntry {
     pub key: String,
     pub tier: StorageTier,
     pub value: String,
+    /// The stored value as its XDR bytes, exactly as the ledger holds it.
+    pub bytes: Vec<u8>,
     /// Ledger sequence the entry dies at; `None` when the entry never expires.
     pub live_until: Option<u32>,
 }
@@ -43,6 +45,11 @@ impl StorageEntry {
     /// `tier:key`, the form failure messages quote.
     pub fn qualified(&self) -> String {
         format!("{}:{}", self.tier.as_str(), self.key)
+    }
+
+    /// The stored value's XDR bytes, exactly as the ledger holds them.
+    pub fn value_bytes(&self) -> &[u8] {
+        &self.bytes
     }
 }
 
@@ -92,6 +99,7 @@ impl StorageSnapshot {
                                 key,
                                 tier: StorageTier::Instance,
                                 value: render(&item.val),
+                                bytes: xdr_bytes(&item.val),
                                 live_until: *live_until,
                             },
                         );
@@ -109,6 +117,7 @@ impl StorageSnapshot {
                             key,
                             tier,
                             value: render(&stored.val),
+                            bytes: xdr_bytes(&stored.val),
                             live_until: *live_until,
                         },
                     );
@@ -410,6 +419,10 @@ pub(crate) fn contract_hash_of(env: &Env, address: &Address) -> Option<[u8; 32]>
         return None;
     };
     contract_hash(&sc_address)
+}
+
+fn xdr_bytes(value: &ScVal) -> Vec<u8> {
+    value.to_xdr(Limits::none()).unwrap_or_default()
 }
 
 /// Render an XDR value as a stable, readable string.

@@ -1,0 +1,23 @@
+[package]
+name = "soroban-testkit-example-nft"
+description = "Non-Fungible Token (NFT) contract with approvals, metadata URIs, and secondary sale royalty splits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+publish = false
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-testkit-assert = { path = "../../crates/soroban-testkit-assert" }
+soroban-testkit-core = { path = "../../crates/soroban-testkit-core" }
+soroban-testkit-fixtures = { path = "../../crates/soroban-testkit-fixtures" }
+soroban-testkit-generators = { path = "../../crates/soroban-testkit-generators" }
+proptest = { workspace = true }
