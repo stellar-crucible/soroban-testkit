@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · mock · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -837,3 +837,47 @@ injector.clear(); // normal execution again (also happens on drop)
 **One difference from a live network.** On a network, exhausting the CPU or memory budget aborts the *whole transaction* and no caller can catch it. The injected `BudgetExceeded` and `OutOfMemory` fail only the dependency's invocation, modelling a dependency that runs out and reports it, so the caller's fallback path is testable. To test transaction-wide exhaustion, run the call under real limits (`NetworkProfile`, or `env.cost_estimate().budget().reset_limits`).
 
 Rules are scoped to the test thread and to the injector that installed them, so one test cannot leak a failure into the next. `injector.calls(&id, "fn")` reports how many calls the injection point has seen.
+
+## Declarative mock contracts
+
+Unit tests rarely want to hand-write a stand-in for every dependency. Declare the interface once with `#[mock_contract]`, then give each test its own behaviour:
+
+```rust
+use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_testkit_fixtures::{mock_contract, MockContractBuilder};
+
+#[contract]
+pub struct RateOracle;
+
+#[mock_contract]
+#[contractimpl]
+impl RateOracle {
+    pub fn get_rate(_env: Env, _asset: Address) -> i128 { unimplemented!() }
+}
+
+let oracle = MockContractBuilder::<RateOracle>::new(&env)
+    .expect_call("get_rate", |_env, _args| 1_500i128)
+    .times(2)
+    .build();
+
+// the contract under test sees a normal contract address
+consumer_client.trade(&oracle.address(), &usdc);
+
+oracle.assert_expectations();
+```
+
+`#[mock_contract]` replaces every function body with a dispatcher, so the placeholder bodies are never compiled; the attribute must sit directly above `#[contractimpl]`.
+
+| Builder call | Meaning |
+| --- | --- |
+| `expect_call(name, handler)` | return whatever `handler(env, args)` produces |
+| `expect_panic(name, message)` | fail the invocation with `message` |
+| `.times(n)` | exactly `n` calls (the default is exactly once) |
+| `.at_least(n)` | `n` or more calls |
+| `.never()` | the function must not be called |
+
+Arguments arrive encoded as `Val`s in declaration order; `mock::arg::<T>(env, args, i)` decodes one and panics with a diagnostic if it is missing or has the wrong type. Expectations are verified by `assert_expectations()` and again when the mock is dropped, so a forgotten assertion still fails the test.
+
+**Why the interface is declared.** A Soroban host resolves an invocation to an exported function symbol before any contract code runs, and no entry point receives the function name as a value. The SDK therefore cannot expose a contract whose exported functions are decided at runtime. `#[mock_contract]` generates a real contract at compile time and dispatches *inside* it, which keeps the address usable by typed clients, including from the contract under test.
+
+Mocks live in a thread-local registry keyed by contract address, which suits `#[test]` functions; they are not shared between threads.

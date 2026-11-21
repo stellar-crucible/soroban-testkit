@@ -16,3 +16,4 @@ rust-version.workspace = true
 soroban-sdk = { workspace = true }
 soroban-env-host = { workspace = true }
 soroban-testkit-core = { path = "../soroban-testkit-core", version = "0.4.1" }
+soroban-testkit-fixtures-macros = { path = "../soroban-testkit-fixtures-macros", version = "0.4.1" }

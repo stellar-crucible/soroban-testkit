@@ -2086,6 +2086,16 @@ dependencies = [
  "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",
+ "soroban-testkit-fixtures-macros",
+]
+
+[[package]]
+name = "soroban-testkit-fixtures-macros"
+version = "0.4.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
