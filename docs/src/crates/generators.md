@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl · storage_tier · cost_model</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl · storage_tier · cost_model · financial</span></div>
 </div>
 
 ## Available strategies
@@ -13,6 +13,13 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | Strategy | Type | Range |
 |----------|------|-------|
 | `token_amount()` | `i128` | 0 to 1e15 |
+| `stroop_amount()` | `i128` | 0 to `MAX_TOKEN_SUPPLY` (1e9 units), weighted towards decimal boundaries |
+| `extreme_stroop_amount()` | `i128` | stroops plus `i64::MAX`, `u64::MAX` and `i128::MAX` |
+| `stroop_boundaries()` | `Vec<i128>` | the amounts a fee rounds wrongly around: 0, 1 stroop, a unit ± 1, ten units ± 1, the cap |
+| `basis_points()` | `u32` | 0 to 10,000, weighted towards 0, 1, 30, 50, 100, 9,999 and 10,000 |
+| `exchange_rate_ratio()` | `(i128, i128)` | numerator and denominator in 1 to 1e6, so the supply cap times either leg fits in `i128` |
+| `priced_stroop_amount()` | `(i128, i128, i128)` | `(amount, numerator, denominator)` — an amount with the rate that prices it |
+| `split_fee(amount, bps)` | `(i128, i128)` | reference `(net, fee)` split, rounding the fee up |
 | `ledger_sequence()` | `u32` | 1 to 10,000,000 |
 | `timestamp()` | `u64` | Sep 2020 to May 2033 |
 | `address()` | `AddressBytes` | an account or contract address |
@@ -50,6 +57,38 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `contract_cost_model()` | `ContractCostModel` | valid host cost schedule covering all `ContractCostType` variants, shrinking to baseline |
 | `contract_cost_model_with_multipliers(cpu, mem)` | `ContractCostModel` | cost schedule with custom CPU and Memory fee multipliers (percentage) |
 | `contract_cost_model_with_config(config)` | `ContractCostModel` | cost schedule with per-dimension and per-cost-type multiplier overrides |
+
+## Money: stroops, basis points and rates
+
+`financial` spends its cases where integer money goes wrong instead of spreading
+them evenly over `i128`. Two thirds of the amounts come from
+`stroop_boundaries()` — zero, one stroop, one stroop either side of a whole unit,
+a unit either side of ten, and the supply cap — and the rest is spread over
+`0..=MAX_TOKEN_SUPPLY` (1e9 units at seven decimals). Rate ratios stay in
+`1..=1e6` on both legs, so `MAX_TOKEN_SUPPLY * numerator` is always representable:
+a failed case means the contract overflowed, not the strategy.
+
+```rust
+use proptest::prelude::*;
+use soroban_testkit_generators::financial::{basis_points, stroop_amount};
+use soroban_testkit_generators::{assert_balances_never_negative, assert_fee_rounding_favors_protocol};
+
+proptest! {
+    #[test]
+    fn a_swap_keeps_every_stroop(amount in stroop_amount(), fee_bps in basis_points()) {
+        let (net, fee) = split(amount, fee_bps);
+        assert_fee_rounding_favors_protocol!(gross = amount, fee_bps = fee_bps, net = net, fee = fee);
+        assert_balances_never_negative!(net = net, fee = fee);
+    }
+}
+```
+
+`assert_fee_rounding_favors_protocol!` holds a split to the three things a fee
+bug breaks: the legs add back up to the gross, neither is negative, and the fee
+is no more than one stroop away from `gross * bps / 10_000` in either direction —
+the loosest two honest divisions can be. `assert_balances_never_negative!` takes
+as many `name = value` pairs as you have legs and names the one that went below
+zero.
 
 ## Usage with proptest
 

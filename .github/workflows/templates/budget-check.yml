@@ -1,0 +1,160 @@
+# Reusable workflow: fail a pull request when a Soroban call got more expensive.
+#
+# Copy this file into the calling repository's `.github/workflows/`, then call
+# it from a workflow that runs on `pull_request`:
+#
+#   jobs:
+#     budget:
+#       uses: ./.github/workflows/budget-check.yml
+#       with:
+#         baseline: tests/budget.json
+#         test-command: cargo test -p my-contract -- --ignored --nocapture record_baseline
+#         threshold: "5"
+#
+# The job compares the baseline committed on the base branch with the one the
+# pull request records, posts the table as a sticky comment, and exits non-zero
+# when any case grew past `threshold` percent. The full setup guide lives in
+# `docs/src/guides/budget-testing.md`.
+
+name: Soroban budget check
+
+on:
+  workflow_call:
+    inputs:
+      baseline:
+        description: "Path to the committed baseline file, relative to the repository root"
+        type: string
+        required: true
+      test-command:
+        description: "Command that rewrites the baseline with this run's measurements"
+        type: string
+        required: true
+      threshold:
+        description: "Percent a case may grow past the base branch before the job fails"
+        type: string
+        required: false
+        default: "5"
+      base-ref:
+        description: "Branch to compare against; defaults to the pull request's base branch"
+        type: string
+        required: false
+        default: ""
+      allow-missing-base:
+        description: "Treat a baseline the base branch does not have yet as empty"
+        type: boolean
+        required: false
+        default: false
+      comment:
+        description: "Post the report as a pull request comment"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  budget:
+    name: Compare hot-path costs with the baseline
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      BASELINE: ${{ inputs.baseline }}
+      THRESHOLD: ${{ inputs.threshold }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Reading the base branch's copy commits the number the pull request is
+      # judged against, so the comparison never depends on the working tree of
+      # the branch under review.
+      - name: Take the baseline from the base branch
+        env:
+          BASE_REF: ${{ inputs.base-ref || github.base_ref || github.ref_name }}
+          ALLOW_MISSING: ${{ inputs.allow-missing-base }}
+        run: |
+          set -eu
+          base_file="$RUNNER_TEMP/budget-base.json"
+          if git fetch --no-tags --depth=1 origin "$BASE_REF" \
+             && git show "FETCH_HEAD:$BASELINE" > "$base_file" 2>/dev/null; then
+            echo "baseline taken from $BASE_REF:$BASELINE"
+          elif [ "$ALLOW_MISSING" = "true" ]; then
+            rm -f "$base_file"
+            echo "::warning::$BASE_REF has no $BASELINE yet; comparing against an empty baseline"
+          else
+            echo "::error::$BASE_REF has no $BASELINE. Commit one, or set allow-missing-base."
+            exit 1
+          fi
+          {
+            echo ''
+            echo '### Committed baseline'
+            echo ''
+            echo '```json'
+            cat "$base_file" 2>/dev/null || echo '{}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record this run's costs
+        run: |
+          set -o pipefail
+          ${{ inputs.test-command }} 2>&1 | tee budget-record.log
+
+      # The binary ships in soroban-testkit-core, so a repository that already
+      # depends on the testkit needs no extra install step.
+      - name: Compare
+        id: compare
+        env:
+          ALLOW_MISSING: ${{ inputs.allow-missing-base }}
+        run: |
+          set -o pipefail
+          args=("$RUNNER_TEMP/budget-base.json" "$BASELINE"
+                --threshold "$THRESHOLD"
+                --output-markdown "$RUNNER_TEMP/budget-report.md")
+          if [ "$ALLOW_MISSING" = "true" ]; then
+            args+=(--allow-missing-base)
+          fi
+
+          status=0
+          cargo run --quiet --locked -p soroban-testkit-core --bin budget-diff -- \
+            "${args[@]}" > "$RUNNER_TEMP/budget-diff.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/budget-diff.log"
+          cat "$RUNNER_TEMP/budget-report.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # A fork cannot write comments, so a missing permission downgrades to a
+      # note instead of hiding the numbers behind a red build.
+      - name: Comment on the pull request
+        if: always() && inputs.comment && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          marker='<!-- soroban-testkit-budget-diff -->'
+          if [ ! -s "$RUNNER_TEMP/budget-report.md" ]; then
+            body="$marker
+          ## Soroban budget check (not measured)
+
+          The comparison did not run, so there is nothing to report. That is not a pass."
+          else
+            body="$marker
+          $(cat "$RUNNER_TEMP/budget-report.md")
+
+          Threshold: \`$THRESHOLD\`%. Measured against \`$BASELINE\` on \`${{ github.base_ref }}\`.
+          Soroban metering is deterministic, so these readings depend on the contract and the
+          pinned SDK rather than on the runner."
+          fi
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -f body="$body"
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body"
+          fi

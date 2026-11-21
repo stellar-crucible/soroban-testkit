@@ -36,6 +36,8 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `DependencyEdge` | One caller → callee edge with its call count and functions |
 | `DependencyCycle` | A closed call chain such as `A -> B -> C -> A`, with self-recursion as `A -> A` |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
+| `BudgetDiff`, `BudgetCaseDiff` | Base vs head baselines: signed deltas, growth percent, a Markdown report and the cases past a threshold |
+| `budget-diff` | Binary wrapping `BudgetDiff` for CI |
 | `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
 | `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
 | `StackDepthAuditor` | Reconstructs a contract call chain from host diagnostic events and checks it against a depth cap |
