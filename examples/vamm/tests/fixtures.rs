@@ -1,8 +1,8 @@
 extern crate std;
 
 use soroban_sdk::Address;
-use soroban_testkit_fixtures::builder::TestContextBuilder;
 use soroban_testkit_example_vamm::{VammContract, VammContractClient};
+use soroban_testkit_fixtures::builder::TestContextBuilder;
 
 fn deploy(ctx: &soroban_testkit_fixtures::TestContext) -> (Address, VammContractClient<'_>) {
     let contract = ctx.env.register(VammContract, ());
@@ -56,7 +56,9 @@ fn rejects_a_second_position_for_the_same_trader() {
 fn rejects_invalid_side() {
     let ctx = TestContextBuilder::new().with_users(2).build();
     let (_, client) = deploy(&ctx);
-    assert!(client.try_open_position(ctx.user(0), &0, &1_000, &2).is_err());
+    assert!(client
+        .try_open_position(ctx.user(0), &0, &1_000, &2)
+        .is_err());
 }
 
 #[test]
@@ -64,7 +66,9 @@ fn rejects_zero_collateral_and_excessive_leverage() {
     let ctx = TestContextBuilder::new().with_users(3).build();
     let (_, client) = deploy(&ctx);
     assert!(client.try_open_position(ctx.user(0), &1, &0, &2).is_err());
-    assert!(client.try_open_position(ctx.user(1), &1, &1_000, &11).is_err());
+    assert!(client
+        .try_open_position(ctx.user(1), &1, &1_000, &11)
+        .is_err());
 }
 
 #[test]

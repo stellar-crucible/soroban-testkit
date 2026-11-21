@@ -1,9 +1,6 @@
 extern crate std;
 
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 use soroban_testkit_core::budget::{BudgetBaseline, BudgetSnapshot};
 use soroban_testkit_core::storage::{StorageSnapshot, StorageTier};
 use soroban_testkit_example_vamm::{VammContract, VammContractClient};

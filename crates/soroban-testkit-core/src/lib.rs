@@ -9,8 +9,8 @@ pub mod profiler;
 pub mod reentrancy;
 pub mod stack_depth;
 pub mod storage;
-pub mod wasm;
 pub mod storage_fragmentation;
+pub mod wasm;
 
 pub use compatibility::{
     CompatibilityAuditor, CompatibilityGrade, CompatibilityScorecard, DeprecationItem,

@@ -75,7 +75,9 @@ pub fn unrealized_pnl(position: &Position, mark: i128) -> i128 {
 }
 
 pub fn liquidation_required(position: &Position, mark: i128) -> bool {
-    let equity = position.collateral.saturating_add(unrealized_pnl(position, mark));
+    let equity = position
+        .collateral
+        .saturating_add(unrealized_pnl(position, mark));
     let maintenance = position
         .size
         .abs()
@@ -172,7 +174,9 @@ impl VammContract {
     }
 
     pub fn liquidate(env: Env, trader: Address) -> i128 {
-        let position = positions(&env).get(trader.clone()).expect("position not found");
+        let position = positions(&env)
+            .get(trader.clone())
+            .expect("position not found");
         let mark = mark_price(&state(&env));
         assert!(liquidation_required(&position, mark), "position is healthy");
         let mut all = positions(&env);

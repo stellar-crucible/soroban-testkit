@@ -1,6 +1,4 @@
-use soroban_sdk::{
-    contract, contracterror, contractimpl, symbol_short, Address, Env,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, symbol_short, Address, Env};
 
 const LOCKED: soroban_sdk::Symbol = symbol_short!("locked");
 
@@ -92,10 +90,7 @@ impl Default for ReentrancyGuardHarness {
 }
 
 fn is_locked(env: &Env) -> bool {
-    env.storage()
-        .instance()
-        .get(&LOCKED)
-        .unwrap_or(false)
+    env.storage().instance().get(&LOCKED).unwrap_or(false)
 }
 
 #[cfg(test)]

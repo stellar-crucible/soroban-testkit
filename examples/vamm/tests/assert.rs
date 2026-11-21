@@ -2,8 +2,8 @@ extern crate std;
 
 use soroban_testkit_assert::assert_auth_matches;
 use soroban_testkit_assert::auth::AuthMatcher;
-use soroban_testkit_fixtures::builder::TestContextBuilder;
 use soroban_testkit_example_vamm::{VammContract, VammContractClient};
+use soroban_testkit_fixtures::builder::TestContextBuilder;
 
 fn deploy(ctx: &soroban_testkit_fixtures::TestContext) -> VammContractClient<'_> {
     let contract = ctx.env.register(VammContract, ());

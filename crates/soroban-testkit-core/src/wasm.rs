@@ -69,7 +69,9 @@ impl WasmSectionAnalyzer {
             let payload_end = cursor
                 .checked_add(payload_len)
                 .filter(|end| *end <= wasm.len())
-                .ok_or_else(|| WasmAnalysisError("WASM section extends past end of input".into()))?;
+                .ok_or_else(|| {
+                    WasmAnalysisError("WASM section extends past end of input".into())
+                })?;
             let payload = &wasm[cursor..payload_end];
             let (name, custom_name) = if section_id == 0 {
                 let (custom_name, _content_start) = read_name(payload)?;
@@ -115,9 +117,7 @@ impl WasmSectionAnalyzer {
                 "WASM size {} bytes exceeds maximum deployment size {} bytes",
                 total_size_bytes, self.maximum_size_bytes
             ));
-        } else if total_size_bytes.saturating_mul(10)
-            >= self.maximum_size_bytes.saturating_mul(9)
-        {
+        } else if total_size_bytes.saturating_mul(10) >= self.maximum_size_bytes.saturating_mul(9) {
             warnings.push(format!(
                 "WASM size {} bytes is at least 90% of maximum deployment size {} bytes",
                 total_size_bytes, self.maximum_size_bytes
@@ -246,7 +246,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Type", "Function", "Code", "Custom (name)"]
         );
-        assert!(report.warnings.iter().any(|warning| warning.contains("debug/name")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("debug/name")));
     }
 
     #[test]
@@ -257,8 +260,14 @@ mod tests {
             .analyze(wasm)
             .unwrap();
         assert_eq!(report.total_size_bytes, wasm.len() as u64);
-        assert!(report.warnings.iter().any(|warning| warning.contains("exceeds maximum")));
-        assert!(report.warnings.iter().any(|warning| warning.contains("data sections")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("exceeds maximum")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("data sections")));
         assert!(report.to_markdown().contains("| Data | 4 |"));
         assert!(report.to_json().unwrap().contains("\"maximum_size_bytes\""));
     }
@@ -293,7 +302,10 @@ mod tests {
             .analyze(&wasm)
             .unwrap();
 
-        assert!(report.warnings.iter().any(|warning| warning.contains("string custom section")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("string custom section")));
         let near = WasmSectionAnalyzer::new(wasm.len() as u64)
             .analyze(&wasm)
             .unwrap();
