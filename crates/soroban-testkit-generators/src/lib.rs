@@ -67,7 +67,9 @@ pub use strkey::{
 };
 #[cfg(feature = "proptest")]
 pub use temporal::{
-    ledger_sequence_interval, soroban_duration, soroban_timepoint, MAX_LEDGER_SEQUENCE,
+    ledger_sequence_interval, realistic_ledger_window, soroban_duration, soroban_timepoint,
+    LedgerWindow, MAX_LEDGER_SEQUENCE, MAX_LEDGER_TIMESTAMP, MAX_LEDGER_WINDOW_LEDGERS,
+    MIN_LEDGER_TIMESTAMP, SECONDS_PER_LEDGER,
 };
 #[cfg(feature = "proptest")]
 pub use ttl::{

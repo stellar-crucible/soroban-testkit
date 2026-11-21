@@ -21,7 +21,8 @@ pub use budget_diff::{
     measure_invocation_budget, BudgetDiffMatcher, BudgetDiffReport, BudgetDiffViolation,
 };
 pub use contract_error::{
-    check_contract_error, check_host_error, HostErrorExpectation, ReceivedError, TryCallResult,
+    check_contract_error, check_host_error, check_panic_error_code, HostErrorExpectation,
+    IntoPanicExpectation, PanicErrorExpectation, ReceivedError, TryCallResult,
 };
 pub use events::{EventCountBound, EventSource};
 pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};

@@ -716,6 +716,40 @@ macro_rules! assert_auth_strict {
     }};
 }
 
+/// Asserts that the recorded authorizations are exactly the expected ones as
+/// an **unordered multiset**.
+///
+/// `env.auths()` does not promise an order: a call that triggers several
+/// independent `require_auth` demands can record them in any sequence, and the
+/// sequence can change between SDK versions. This macro therefore matches
+/// without regard to order, but still one-to-one: every expected pattern must
+/// match a distinct recorded authorization, and every recorded authorization
+/// must be consumed. Duplicates matter, so two identical patterns require two
+/// identical records.
+///
+/// Each entry accepts the same fields as [`assert_auth_strict!`]: `function`
+/// (required), `invoker` (optional), and positional `args` where `_` accepts
+/// any value.
+///
+/// ```text
+/// assert_auth_exact_multiset!(env, [
+///     { invoker: first, function: "joint", args: [_, second] },
+///     { invoker: second, function: "joint", args: [first, _] },
+/// ]);
+/// ```
+///
+/// On failure the message renders a side-by-side table of expected and observed
+/// authorizations, then lists the expectations that matched nothing and the
+/// observed authorizations that matched no expectation.
+#[macro_export]
+macro_rules! assert_auth_exact_multiset {
+    ($env:expr, [$($expected:tt)*] $(,)?) => {{
+        // The strict matcher already performs the one-to-one multiset
+        // assignment; this macro is the order-insensitive name for it.
+        $crate::assert_auth_strict!($env, [$($expected)*])
+    }};
+}
+
 /// Builds an [`AuthArgs`] from the token list a user wrote inside `args: [..]`.
 ///
 /// Both the empty list and a trailing comma end in the same rule, because the
@@ -1738,6 +1772,92 @@ mod tests {
         assert!(message.contains("Expected authorization(s)"));
         assert!(message.contains("Observed authorization(s)"));
         assert!(message.contains("Unexpected observed authorization(s)"));
+    }
+
+    #[test]
+    fn exact_multiset_matches_authorizations_in_any_order() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        // The recorded order is first -> second; the expectation is reversed.
+        crate::assert_auth_exact_multiset!(env, [
+            {
+                invoker: second,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+            {
+                invoker: first,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Missing expected authorization(s)")]
+    fn exact_multiset_rejects_a_missing_authorization() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+        let stranger = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        crate::assert_auth_exact_multiset!(env, [
+            {
+                invoker: first,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+            {
+                invoker: stranger,
+                function: "joint",
+                args: [first, second],
+            },
+        ]);
+    }
+
+    #[test]
+    fn exact_multiset_rejects_surplus_authorizations_with_a_diff_table() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::assert_auth_exact_multiset!(env, [
+                {
+                    invoker: first,
+                    function: "joint",
+                    args: [first.clone(), second.clone()],
+                },
+            ]);
+        }))
+        .expect_err("a surplus authorization must fail the multiset assertion");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("the multiset failure should have a text diagnostic");
+
+        assert!(
+            message.contains("Strict authorization assertion failed"),
+            "{message}"
+        );
+        assert!(message.contains("Expected authorization(s)"), "{message}");
+        assert!(message.contains("Observed authorization(s)"), "{message}");
+        assert!(
+            message.contains("Unexpected observed authorization(s)"),
+            "{message}"
+        );
     }
 
     #[test]

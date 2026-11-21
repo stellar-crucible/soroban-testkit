@@ -41,6 +41,7 @@
 //! On a mismatch the failure names the expected variant, the variant (or
 //! host error) actually received, and the code and category of both.
 
+use std::any::Any;
 use std::fmt::{self, Debug};
 
 use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
@@ -133,6 +134,206 @@ where
         "assert_contract_error! failed: the call failed with a different error\n  expected: {wanted}\n  received: {received}{}",
         decoded_line(&received)
     ))
+}
+
+/// The error a panicking invocation is expected to carry.
+///
+/// A bare `u32` is a contract error code (category `Contract`); a
+/// `(ScErrorType, ScErrorCode)` pair names an exact host error. Both convert
+/// into this type, so [`assert_contract_call_panics_with_error_code!`] accepts
+/// either form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanicErrorExpectation {
+    /// A numeric `#[contracterror]` code.
+    Contract { code: u32 },
+    /// An exact host error category and code.
+    Host {
+        category: ScErrorType,
+        code: ScErrorCode,
+    },
+}
+
+impl PanicErrorExpectation {
+    /// The expectation as the failure message spells it.
+    pub fn describe(&self) -> String {
+        match self {
+            PanicErrorExpectation::Contract { code } => {
+                format!("Error(Contract, #{code}) — decoded: code {code}, category contract")
+            }
+            PanicErrorExpectation::Host { category, code } => format!(
+                "Error({}, {}) — decoded: code {}, category {}, variant {}",
+                category.name(),
+                code.name(),
+                *code as u32,
+                category_name(*category),
+                code.name(),
+            ),
+        }
+    }
+
+    fn matches(&self, actual: &Error) -> bool {
+        match self {
+            PanicErrorExpectation::Contract { code } => {
+                actual.is_type(ScErrorType::Contract) && actual.get_code() == *code
+            }
+            PanicErrorExpectation::Host { category, code } => {
+                actual.is_type(*category) && actual.is_code(*code)
+            }
+        }
+    }
+}
+
+/// Converts an expected value into a [`PanicErrorExpectation`].
+///
+/// Implemented for `u32` (a contract error code) and for
+/// `(ScErrorType, ScErrorCode)` (an exact host error), so a test never has to
+/// build the enum itself.
+pub trait IntoPanicExpectation {
+    fn into_panic_expectation(self) -> PanicErrorExpectation;
+}
+
+impl IntoPanicExpectation for u32 {
+    fn into_panic_expectation(self) -> PanicErrorExpectation {
+        PanicErrorExpectation::Contract { code: self }
+    }
+}
+
+impl IntoPanicExpectation for (ScErrorType, ScErrorCode) {
+    fn into_panic_expectation(self) -> PanicErrorExpectation {
+        PanicErrorExpectation::Host {
+            category: self.0,
+            code: self.1,
+        }
+    }
+}
+
+impl IntoPanicExpectation for PanicErrorExpectation {
+    fn into_panic_expectation(self) -> PanicErrorExpectation {
+        self
+    }
+}
+
+const ERROR_TYPES: [ScErrorType; 10] = [
+    ScErrorType::Contract,
+    ScErrorType::WasmVm,
+    ScErrorType::Context,
+    ScErrorType::Storage,
+    ScErrorType::Object,
+    ScErrorType::Crypto,
+    ScErrorType::Events,
+    ScErrorType::Budget,
+    ScErrorType::Value,
+    ScErrorType::Auth,
+];
+
+const ERROR_CODES: [ScErrorCode; 10] = [
+    ScErrorCode::ArithDomain,
+    ScErrorCode::IndexBounds,
+    ScErrorCode::InvalidInput,
+    ScErrorCode::MissingValue,
+    ScErrorCode::ExistingValue,
+    ScErrorCode::ExceededLimit,
+    ScErrorCode::InvalidAction,
+    ScErrorCode::InternalError,
+    ScErrorCode::UnexpectedType,
+    ScErrorCode::UnexpectedSize,
+];
+
+/// The panic text the test host renders a failed invocation with, e.g.
+/// `HostError: Error(Contract, #101)` or `HostError: Error(Auth, InvalidAction)`.
+fn parse_panic_error(message: &str) -> Option<Error> {
+    let start = message.find("Error(")? + "Error(".len();
+    let rest = &message[start..];
+    let end = rest.find(')')?;
+    let (type_text, code_text) = rest[..end].split_once(", ")?;
+
+    let category = ERROR_TYPES
+        .into_iter()
+        .find(|category| category.name() == type_text)?;
+
+    // Contract codes are user-defined, so they are always printed as numbers
+    // and need not name a host `ScErrorCode`.
+    if category == ScErrorType::Contract {
+        let number = code_text.strip_prefix('#')?.parse().ok()?;
+        return Some(Error::from_contract_error(number));
+    }
+
+    // A `#` prefix is the numeric discriminant; otherwise the host prints the
+    // name of a known `ScErrorCode`.
+    let code = match code_text.strip_prefix('#') {
+        Some(number) => ScErrorCode::try_from(number.parse::<u32>().ok()? as i32).ok()?,
+        None => ERROR_CODES
+            .into_iter()
+            .find(|code| code.name() == code_text)?,
+    };
+
+    Some(Error::from_type_and_code(category, code))
+}
+
+fn panic_text(payload: &(dyn Any + Send)) -> Option<&str> {
+    payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+}
+
+/// Check the outcome of catching an invocation panic against `expected`,
+/// returning the diagnostic when it does not match.
+///
+/// `outcome` is the result of `std::panic::catch_unwind` around the call. The
+/// panic payload is parsed for the host's `Error(..)` rendering; a call that
+/// returned normally, a panic with no Soroban error, and an error of the wrong
+/// category or code all produce a message naming expected and received.
+pub fn check_panic_error_code<E: IntoPanicExpectation>(
+    outcome: Result<(), Box<dyn Any + Send>>,
+    expected: E,
+) -> Result<(), String> {
+    let wanted = expected.into_panic_expectation();
+    let payload = match outcome {
+        Ok(()) => {
+            return Err(format!(
+                "assert_contract_call_panics_with_error_code! failed: the call completed successfully, but it was expected to panic with {}\n  expected: {}",
+                wanted.describe(),
+                wanted.describe()
+            ))
+        }
+        Err(payload) => payload,
+    };
+
+    let message = panic_text(payload.as_ref()).unwrap_or("<panic payload was not text>");
+    let Some(actual) = parse_panic_error(message) else {
+        return Err(format!(
+            "assert_contract_call_panics_with_error_code! failed: the call panicked, but the panic did not carry a decodable Soroban error\n  expected: {}\n  panic:    {}",
+            wanted.describe(),
+            message.trim()
+        ));
+    };
+
+    if wanted.matches(&actual) {
+        return Ok(());
+    }
+
+    let decoded = DecodedError::from_error(&actual);
+    Err(format!(
+        "assert_contract_call_panics_with_error_code! failed: the call panicked with a different error\n  expected: {}\n  received: {actual:?} — decoded: code {}, category {}, variant {}\n  panic:    {}",
+        wanted.describe(),
+        decoded.code,
+        decoded.category,
+        variant_name(&actual),
+        message.trim(),
+    ))
+}
+
+/// The most specific name the SDK knows for `error`: a host code name, or the
+/// bare contract code when the error is contract-authored.
+fn variant_name(error: &Error) -> String {
+    if error.is_type(ScErrorType::Contract) {
+        format!("contract code {}", error.get_code())
+    } else {
+        ScErrorCode::try_from(error.get_code() as i32)
+            .map(|code| code.name().to_string())
+            .unwrap_or_else(|_| format!("#{}", error.get_code()))
+    }
 }
 
 fn decoded_line(received: &ReceivedError) -> String {
@@ -305,6 +506,71 @@ macro_rules! assert_host_error {
         if let Err(message) = $crate::contract_error::check_host_error($call, $expected) {
             panic!("{}", message);
         }
+    };
+}
+
+/// Assert that a contract invocation panics with an exact error code.
+///
+/// Contract clients panic when an invocation fails, and the host renders the
+/// failure as `HostError: Error(Contract, #101)` or
+/// `HostError: Error(Auth, InvalidAction)`. This macro catches that panic,
+/// decodes the packed error, and compares it with the expected value:
+///
+/// * `assert_contract_call_panics_with_error_code!(call, 101)` — a numeric
+///   `#[contracterror]` code;
+/// * `assert_contract_call_panics_with_error_code!(call, ScErrorType::Auth, ScErrorCode::InvalidAction)`
+///   — an exact host error category and code.
+///
+/// The call is evaluated once, inside `catch_unwind`. A call that returns
+/// normally fails the assertion, and so does a panic that carries no Soroban
+/// error. Failures print the expected and received error with their decoded
+/// category, numeric code, and variant name, plus the panic text.
+///
+/// ```rust
+/// # use soroban_sdk::{contract, contracterror, contractimpl, Env};
+/// # use soroban_testkit_assert::assert_contract_call_panics_with_error_code;
+/// #[contracterror]
+/// #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+/// #[repr(u32)]
+/// pub enum VaultError {
+///     Locked = 101,
+/// }
+///
+/// #[contract]
+/// pub struct Vault;
+///
+/// #[contractimpl]
+/// impl Vault {
+///     pub fn open(env: Env) -> Result<(), VaultError> {
+///         env.panic_with_error(VaultError::Locked)
+///     }
+/// }
+///
+/// # fn main() {
+/// let env = Env::default();
+/// let client = VaultClient::new(&env, &env.register(Vault, ()));
+/// assert_contract_call_panics_with_error_code!(client.open(), 101);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! assert_contract_call_panics_with_error_code {
+    ($call:expr, $ty:expr, $code:expr $(,)?) => {
+        $crate::contract_error::check_panic_error_code(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = $call;
+            })),
+            ($ty, $code),
+        )
+        .unwrap_or_else(|message| panic!("{}", message))
+    };
+    ($call:expr, $expected:expr $(,)?) => {
+        $crate::contract_error::check_panic_error_code(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = $call;
+            })),
+            $expected,
+        )
+        .unwrap_or_else(|message| panic!("{}", message))
     };
 }
 
@@ -549,5 +815,118 @@ mod tests {
         let client = client(&env);
 
         crate::assert_host_error!(client.try_checked(&true), ScErrorType::Storage);
+    }
+
+    #[test]
+    fn a_panicking_call_matches_its_numeric_contract_error_code() {
+        let env = Env::default();
+        let client = client(&env);
+
+        crate::assert_contract_call_panics_with_error_code!(
+            client.checked(&false),
+            TokenError::Unauthorized as u32,
+        );
+    }
+
+    #[test]
+    fn a_mismatched_panic_code_prints_expected_and_received_decoded_errors() {
+        let env = Env::default();
+        let client = client(&env);
+
+        let message = check_panic_error_code(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = client.checked(&false);
+            })),
+            101u32,
+        )
+        .unwrap_err();
+
+        assert!(
+            message.contains("panicked with a different error"),
+            "{message}"
+        );
+        assert!(
+            message
+                .contains("expected: Error(Contract, #101) — decoded: code 101, category contract"),
+            "{message}"
+        );
+        assert!(
+            message.contains("received: Error(Contract, #2) — decoded: code 2, category contract"),
+            "{message}"
+        );
+        assert!(
+            message.contains("HostError: Error(Contract, #2)"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_call_that_succeeds_fails_the_panic_assertion_cleanly() {
+        let env = Env::default();
+        let client = client(&env);
+
+        let message = check_panic_error_code(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = client.checked(&true);
+            })),
+            2u32,
+        )
+        .unwrap_err();
+
+        assert!(
+            message.contains("the call completed successfully"),
+            "{message}"
+        );
+        assert!(message.contains("Error(Contract, #2)"), "{message}");
+    }
+
+    #[test]
+    fn a_panic_without_a_soroban_error_is_reported_with_its_text() {
+        let message =
+            check_panic_error_code(std::panic::catch_unwind(|| panic!("boom")), 2u32).unwrap_err();
+
+        assert!(
+            message.contains("did not carry a decodable Soroban error"),
+            "{message}"
+        );
+        assert!(message.contains("boom"), "{message}");
+    }
+
+    #[test]
+    fn a_host_error_panic_matches_category_and_code() {
+        let payload: Box<dyn Any + Send> =
+            Box::new("HostError: Error(Auth, InvalidAction)\n".to_string());
+
+        check_panic_error_code(
+            Err(payload),
+            (ScErrorType::Auth, ScErrorCode::InvalidAction),
+        )
+        .expect("the auth error should match");
+
+        let payload: Box<dyn Any + Send> = Box::new("HostError: Error(Storage, #3)\n".to_string());
+        check_panic_error_code(
+            Err(payload),
+            (ScErrorType::Storage, ScErrorCode::MissingValue),
+        )
+        .expect("the numeric storage code should match");
+    }
+
+    #[test]
+    fn a_host_error_expectation_names_the_variant_in_its_diagnostic() {
+        let message = check_panic_error_code(
+            std::panic::catch_unwind(client_panics_with_auth_error),
+            (ScErrorType::Budget, ScErrorCode::ExceededLimit),
+        )
+        .unwrap_err();
+
+        assert!(
+            message.contains("Error(Auth, InvalidAction) — decoded: code 6, category auth, variant InvalidAction"),
+            "{message}"
+        );
+    }
+
+    fn client_panics_with_auth_error() {
+        let payload = Box::new("HostError: Error(Auth, InvalidAction)".to_string());
+        std::panic::resume_unwind(payload)
     }
 }

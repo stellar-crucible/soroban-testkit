@@ -1,4 +1,5 @@
 pub mod archival;
+pub mod branching;
 pub mod builder;
 pub mod congestion;
 pub mod consensus;
@@ -13,6 +14,7 @@ pub mod topology;
 #[cfg(test)]
 mod ttl_tests;
 
+pub use branching::BranchingContext;
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
 };
