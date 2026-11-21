@@ -6,6 +6,7 @@ pub mod budget_diff;
 pub mod contract_error;
 pub mod events;
 pub mod invocation;
+pub mod panic_msg;
 pub mod payload;
 pub mod regex_matcher;
 pub mod storage;
@@ -29,6 +30,9 @@ pub use contract_error::{
     IntoPanicExpectation, PanicErrorExpectation, ReceivedError, TryCallResult,
 };
 pub use events::{EventCountBound, EventSource};
+pub use panic_msg::{
+    check_panic_msg, CapturedPanic, MatchMode, PanicMsgFailure, PanicOrigin, PanicPattern,
+};
 pub use regex_matcher::RegexEventMatcher;
 pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};
 pub use token_conservation::{
