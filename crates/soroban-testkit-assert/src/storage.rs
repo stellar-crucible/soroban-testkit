@@ -1,16 +1,40 @@
-//! Storage tier entry count quota assertions.
+//! Storage assertions.
 //!
-//! Smart contract state must be partitioned appropriately across instance,
-//! persistent, and temporary storage tiers. [`StorageQuotaMatcher`] and the
-//! [`assert_storage_tier_count!`] macro enforce entry count quotas per tier,
-//! validating exact counts or upper bounds (`max_*`), and format an informative
-//! breakdown table listing all keys in each tier whenever a quota is breached.
+//! Two families share this module: entry count quotas per tier
+//! ([`StorageQuotaMatcher`] and [`assert_storage_tier_count!`]) and assertions
+//! that entries are gone ([`assert_storage_empty`] and
+//! [`assert_storage_key_deleted`]).
+//!
+//! The quota matcher enforces exact counts or upper and lower bounds on
+//! instance, persistent and temporary storage, and prints a per-tier table
+//! when a budget is breached.
+//!
+//! The deletion assertions prove entries are gone from the ledger rather than
+//! merely rewritten: a key holding `0`, an empty `Option::None`, an empty map
+//! or any other tombstone value is still a live ledger entry and fails them.
+//! Both inspect all three tiers unless one tier is named, and a failure lists
+//! every surviving entry with its tier, rendered value and XDR bytes.
+//!
+//! ```
+//! use soroban_testkit_assert::{assert_storage_empty, assert_storage_key_deleted};
+//! use soroban_testkit_assert::storage::StorageTier;
+//! # use soroban_sdk::{Address, Env};
+//!
+//! # fn example(env: &Env, contract: &Address) {
+//! assert_storage_key_deleted!(env, contract, "count");
+//! assert_storage_key_deleted!(env, contract, "count", StorageTier::Persistent);
+//! assert_storage_empty!(env, contract);
+//! assert_storage_empty!(env, contract, StorageTier::Temporary);
+//! # }
+//! ```
 
 use std::collections::BTreeMap;
 use std::fmt;
 
-use soroban_sdk::{Address, Env, TryFromVal, Val, xdr::ScVal};
-use soroban_testkit_core::storage::{StorageChange, StorageDiff, StorageEntry, StorageSnapshot, StorageTier};
+use soroban_sdk::{Address, Env};
+use soroban_testkit_core::storage::{StorageEntry, StorageSnapshot};
+
+pub use soroban_testkit_core::storage::StorageTier;
 
 /// Quota specification for a storage tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,6 +354,180 @@ macro_rules! assert_storage_tier_count {
     }};
 }
 
+/// Assert that `key` exists in none of the contract's storage tiers.
+///
+/// The key is the rendered form a [`StorageSnapshot`] reports — a symbol's
+/// text, a number, `[a, b]` for a vector, `{k: v}` for a map — the same form
+/// [`assert_storage_tier`](soroban_testkit_core::assert_storage_tier) takes.
+///
+/// # Panics
+///
+/// Panics if any tier still holds the key, showing every surviving entry.
+pub fn assert_storage_key_deleted(env: &Env, contract: &Address, key: &str) {
+    let snapshot = StorageSnapshot::capture(env, contract);
+    let survivors: Vec<&StorageEntry> = snapshot
+        .entries()
+        .iter()
+        .filter(|entry| entry.key == key)
+        .collect();
+
+    assert!(
+        survivors.is_empty(),
+        "Expected storage key {:?} to be deleted from all tiers, but it still exists:\n{}",
+        key,
+        describe(&survivors),
+    );
+}
+
+/// Assert that `key` no longer exists in one storage tier.
+///
+/// The key may still live in another tier; only `tier` is inspected.
+///
+/// # Panics
+///
+/// Panics if `tier` still holds the key, showing the surviving entry.
+pub fn assert_storage_key_deleted_in(env: &Env, contract: &Address, key: &str, tier: StorageTier) {
+    let snapshot = StorageSnapshot::capture(env, contract);
+    let survivors: Vec<&StorageEntry> = snapshot
+        .in_tier(tier)
+        .into_iter()
+        .filter(|entry| entry.key == key)
+        .collect();
+
+    assert!(
+        survivors.is_empty(),
+        "Expected storage key {:?} to be deleted from the {} tier, but it still exists:\n{}",
+        key,
+        tier.as_str(),
+        describe(&survivors),
+    );
+}
+
+/// Assert that the contract holds no live storage entry in any tier.
+///
+/// A contract that never wrote storage passes, as does one whose keys were
+/// all deleted. Entries rewritten to zero, `None` or another empty value do
+/// not pass: they are still stored.
+///
+/// # Panics
+///
+/// Panics if any tier holds an entry, listing every survivor with its bytes.
+pub fn assert_storage_empty(env: &Env, contract: &Address) {
+    let snapshot = StorageSnapshot::capture(env, contract);
+    let survivors: Vec<&StorageEntry> = snapshot.entries().iter().collect();
+
+    assert!(
+        survivors.is_empty(),
+        "Expected contract storage to be empty, but {} entr{} survived:\n{}",
+        survivors.len(),
+        if survivors.len() == 1 { "y" } else { "ies" },
+        describe(&survivors),
+    );
+}
+
+/// Assert that one storage tier of the contract holds no live entry.
+///
+/// The other tiers are not inspected and may hold entries.
+///
+/// # Panics
+///
+/// Panics if `tier` holds an entry, showing it with its value and bytes.
+pub fn assert_storage_empty_in(env: &Env, contract: &Address, tier: StorageTier) {
+    let snapshot = StorageSnapshot::capture(env, contract);
+    let survivors = snapshot.in_tier(tier);
+
+    assert!(
+        survivors.is_empty(),
+        "Expected the {} storage tier to be empty, but {} entr{} survived:\n{}",
+        tier.as_str(),
+        survivors.len(),
+        if survivors.len() == 1 { "y" } else { "ies" },
+        describe(&survivors),
+    );
+}
+
+/// Asserts that a storage key no longer exists in any tier.
+///
+/// Pass a [`StorageTier`] as a fourth argument to inspect one tier only.
+///
+/// # Example
+///
+/// ```rust
+/// use soroban_testkit_assert::{assert_storage_key_deleted, storage::StorageTier};
+/// # use soroban_sdk::{Address, Env};
+/// # fn example(env: &Env, contract: &Address) {
+/// assert_storage_key_deleted!(env, contract, "balance");
+/// assert_storage_key_deleted!(env, contract, "balance", StorageTier::Persistent);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! assert_storage_key_deleted {
+    ($env:expr, $contract:expr, $key:expr $(,)?) => {
+        $crate::storage::assert_storage_key_deleted($env, $contract, $key)
+    };
+    ($env:expr, $contract:expr, $key:expr, $tier:expr $(,)?) => {
+        $crate::storage::assert_storage_key_deleted_in($env, $contract, $key, $tier)
+    };
+}
+
+/// Asserts that a contract's storage, or one tier of it, is empty.
+///
+/// Pass a [`StorageTier`] as a third argument to inspect one tier only.
+///
+/// # Example
+///
+/// ```rust
+/// use soroban_testkit_assert::{assert_storage_empty, storage::StorageTier};
+/// # use soroban_sdk::{Address, Env};
+/// # fn example(env: &Env, contract: &Address) {
+/// assert_storage_empty!(env, contract);
+/// assert_storage_empty!(env, contract, StorageTier::Temporary);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! assert_storage_empty {
+    ($env:expr, $contract:expr $(,)?) => {
+        $crate::storage::assert_storage_empty($env, $contract)
+    };
+    ($env:expr, $contract:expr, $tier:expr $(,)?) => {
+        $crate::storage::assert_storage_empty_in($env, $contract, $tier)
+    };
+}
+
+/// How much of a surviving value's XDR to quote in a failure message.
+const MAX_QUOTED_BYTES: usize = 64;
+
+fn describe(entries: &[&StorageEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| format!("  {}", describe_entry(entry)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn describe_entry(entry: &StorageEntry) -> String {
+    let bytes = entry.value_bytes();
+    format!(
+        "{} = {} [{} byte{}: {}]",
+        entry.qualified(),
+        entry.value,
+        bytes.len(),
+        if bytes.len() == 1 { "" } else { "s" },
+        hex(bytes),
+    )
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut rendered = String::with_capacity(MAX_QUOTED_BYTES * 2 + 1);
+    for byte in bytes.iter().take(MAX_QUOTED_BYTES) {
+        rendered.push_str(&format!("{byte:02x}"));
+    }
+    if bytes.len() > MAX_QUOTED_BYTES {
+        rendered.push('…');
+    }
+    rendered
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,817 +661,11 @@ mod tests {
     }
 }
 
-// ============================================================================
-// assert_storage_diff! macro and StorageDiffMatcher
-// ============================================================================
-
-/// Expected value specification for a storage key in the diff assertion.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExpectedValue {
-    /// Any value is accepted (wildcard for value).
-    Any,
-    /// Exact value match with typed deserialization.
-    Exact(String),
-    /// Value must deserialize to the given type and match.
-    Typed {
-        type_name: String,
-        value: String,
-    },
-}
-
-impl ExpectedValue {
-    /// Check if the actual value matches the expected value.
-    pub fn matches(&self, actual: &str) -> bool {
-        match self {
-            ExpectedValue::Any => true,
-            ExpectedValue::Exact(expected) => expected == actual,
-            ExpectedValue::Typed { value, .. } => value == actual,
-        }
-    }
-}
-
-/// A single expected added entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExpectedAdded {
-    pub key: String,
-    pub tier: Option<StorageTier>,
-    pub value: ExpectedValue,
-}
-
-/// A single expected modified entry with from/to values.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExpectedModified {
-    pub key: String,
-    pub tier: Option<StorageTier>,
-    pub from: ExpectedValue,
-    pub to: ExpectedValue,
-}
-
-/// A single expected removed entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExpectedRemoved {
-    pub key: String,
-    pub tier: Option<StorageTier>,
-    pub value: ExpectedValue,
-}
-
-/// A single expected unchanged entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExpectedUnchanged {
-    pub key: String,
-    pub tier: Option<StorageTier>,
-    pub value: ExpectedValue,
-}
-
-/// Pattern matching for storage keys (exact or glob).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KeyPattern {
-    Exact(String),
-    Glob(String),
-}
-
-impl KeyPattern {
-    pub fn matches(&self, key: &str) -> bool {
-        match self {
-            KeyPattern::Exact(expected) => expected == key,
-            KeyPattern::Glob(pattern) => {
-                if pattern == "*" {
-                    true
-                } else if let Some(prefix) = pattern.strip_suffix('*') {
-                    key.starts_with(prefix)
-                } else if let Some(suffix) = pattern.strip_prefix('*') {
-                    key.ends_with(suffix)
-                } else {
-                    pattern == key
-                }
-            }
-        }
-    }
-}
-
-/// Matcher for storage diff assertions.
-#[derive(Clone)]
-pub struct StorageDiffMatcher<'a> {
-    env: &'a Env,
-    contract: &'a Address,
-    before_snapshot: StorageSnapshot,
-    added: Vec<ExpectedAdded>,
-    modified: Vec<ExpectedModified>,
-    removed: Vec<ExpectedRemoved>,
-    unchanged: Vec<ExpectedUnchanged>,
-}
-
-impl<'a> fmt::Debug for StorageDiffMatcher<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("StorageDiffMatcher")
-            .field("contract", &self.contract)
-            .field("added", &self.added)
-            .field("modified", &self.modified)
-            .field("removed", &self.removed)
-            .field("unchanged", &self.unchanged)
-            .finish()
-    }
-}
-
-impl<'a> StorageDiffMatcher<'a> {
-    /// Create a new storage diff matcher, capturing the current storage state as the "before" snapshot.
-    pub fn new(env: &'a Env, contract: &'a Address) -> Self {
-        let before_snapshot = StorageSnapshot::capture(env, contract);
-        Self {
-            env,
-            contract,
-            before_snapshot,
-            added: Vec::new(),
-            modified: Vec::new(),
-            removed: Vec::new(),
-            unchanged: Vec::new(),
-        }
-    }
-
-    /// Create a new storage diff matcher with a pre-captured "before" snapshot.
-    pub fn with_before_snapshot(env: &'a Env, contract: &'a Address, before_snapshot: StorageSnapshot) -> Self {
-        Self {
-            env,
-            contract,
-            before_snapshot,
-            added: Vec::new(),
-            modified: Vec::new(),
-            removed: Vec::new(),
-            unchanged: Vec::new(),
-        }
-    }
-
-    /// Add expected added keys.
-    pub fn added(mut self, added: Vec<ExpectedAdded>) -> Self {
-        self.added = added;
-        self
-    }
-
-    /// Add expected modified keys.
-    pub fn modified(mut self, modified: Vec<ExpectedModified>) -> Self {
-        self.modified = modified;
-        self
-    }
-
-    /// Add expected removed keys.
-    pub fn removed(mut self, removed: Vec<ExpectedRemoved>) -> Self {
-        self.removed = removed;
-        self
-    }
-
-    /// Add expected unchanged keys.
-    pub fn unchanged(mut self, unchanged: Vec<ExpectedUnchanged>) -> Self {
-        self.unchanged = unchanged;
-        self
-    }
-
-    /// Execute the assertion.
-    pub fn assert(self) {
-        let after_snapshot = StorageSnapshot::capture(self.env, self.contract);
-        let diff = self.before_snapshot.diff(&after_snapshot);
-
-        let mut failures = Vec::new();
-
-        // Check added entries
-        failures.extend(self.check_added(&diff));
-        // Check modified entries
-        failures.extend(self.check_modified(&diff));
-        // Check removed entries
-        failures.extend(self.check_removed(&diff));
-        // Check unchanged entries
-        failures.extend(self.check_unchanged(&diff, &after_snapshot));
-
-        // Check for unexpected changes
-        failures.extend(self.check_unexpected(&diff));
-
-        if !failures.is_empty() {
-            let table = self.format_diff_table(&diff, &failures, &after_snapshot);
-            panic!(
-                "\nStorage diff assertion failed:\n{}\n\n{}",
-                failures.join("\n"),
-                table
-            );
-        }
-    }
-
-    fn check_added(&self, diff: &StorageDiff) -> Vec<String> {
-        let mut failures = Vec::new();
-        let mut matched_indices = std::collections::HashSet::new();
-
-        for expected in &self.added {
-            let mut found = false;
-            for (idx, entry) in diff.added.iter().enumerate() {
-                if matched_indices.contains(&idx) {
-                    continue;
-                }
-                if self.key_and_tier_match(&expected.key, &expected.tier, entry) {
-                    if expected.value.matches(&entry.value) {
-                        found = true;
-                        matched_indices.insert(idx);
-                        break;
-                    } else {
-                        failures.push(format!(
-                            "Added key '{}' (tier: {}): expected value '{}', found '{}'",
-                            entry.key,
-                            entry.tier.as_str(),
-                            self.format_expected_value(&expected.value),
-                            entry.value
-                        ));
-                        matched_indices.insert(idx);
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if !found {
-                failures.push(format!(
-                    "Expected added key '{}' (tier: {}) not found in diff",
-                    expected.key,
-                    expected.tier.map(|t| t.as_str()).unwrap_or("any")
-                ));
-            }
-        }
-        failures
-    }
-
-    fn check_modified(&self, diff: &StorageDiff) -> Vec<String> {
-        let mut failures = Vec::new();
-        let mut matched_indices = std::collections::HashSet::new();
-
-        for expected in &self.modified {
-            let mut found = false;
-            for (idx, change) in diff.modified.iter().enumerate() {
-                if matched_indices.contains(&idx) {
-                    continue;
-                }
-                if self.key_and_tier_match(&expected.key, &expected.tier, change) {
-                    let from_ok = expected.from.matches(&change.before);
-                    let to_ok = expected.to.matches(&change.after);
-                    if from_ok && to_ok {
-                        found = true;
-                        matched_indices.insert(idx);
-                        break;
-                    } else {
-                        let mut msgs = Vec::new();
-                        if !from_ok {
-                            msgs.push(format!(
-                                "from: expected '{}', found '{}'",
-                                self.format_expected_value(&expected.from),
-                                change.before
-                            ));
-                        }
-                        if !to_ok {
-                            msgs.push(format!(
-                                "to: expected '{}', found '{}'",
-                                self.format_expected_value(&expected.to),
-                                change.after
-                            ));
-                        }
-                        failures.push(format!(
-                            "Modified key '{}' (tier: {}): {}",
-                            change.key,
-                            change.tier.as_str(),
-                            msgs.join(", ")
-                        ));
-                        matched_indices.insert(idx);
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if !found {
-                failures.push(format!(
-                    "Expected modified key '{}' (tier: {}) not found in diff",
-                    expected.key,
-                    expected.tier.map(|t| t.as_str()).unwrap_or("any")
-                ));
-            }
-        }
-        failures
-    }
-
-    fn check_removed(&self, diff: &StorageDiff) -> Vec<String> {
-        let mut failures = Vec::new();
-        let mut matched_indices = std::collections::HashSet::new();
-
-        for expected in &self.removed {
-            let mut found = false;
-            for (idx, entry) in diff.removed.iter().enumerate() {
-                if matched_indices.contains(&idx) {
-                    continue;
-                }
-                if self.key_and_tier_match(&expected.key, &expected.tier, entry) {
-                    if expected.value.matches(&entry.value) {
-                        found = true;
-                        matched_indices.insert(idx);
-                        break;
-                    } else {
-                        failures.push(format!(
-                            "Removed key '{}' (tier: {}): expected value '{}', found '{}'",
-                            entry.key,
-                            entry.tier.as_str(),
-                            self.format_expected_value(&expected.value),
-                            entry.value
-                        ));
-                        matched_indices.insert(idx);
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if !found {
-                failures.push(format!(
-                    "Expected removed key '{}' (tier: {}) not found in diff",
-                    expected.key,
-                    expected.tier.map(|t| t.as_str()).unwrap_or("any")
-                ));
-            }
-        }
-        failures
-    }
-
-    fn check_unchanged(&self, diff: &StorageDiff, after_snapshot: &StorageSnapshot) -> Vec<String> {
-        let mut failures = Vec::new();
-
-        for expected in &self.unchanged {
-            // Check that the key wasn't added, removed, or modified
-            let was_added = diff.added.iter().any(|e| self.key_and_tier_match(&expected.key, &expected.tier, e));
-            let was_removed = diff.removed.iter().any(|e| self.key_and_tier_match(&expected.key, &expected.tier, e));
-            let was_modified = diff.modified.iter().any(|c| self.key_and_tier_match(&expected.key, &expected.tier, c));
-
-            if was_added || was_removed || was_modified {
-                failures.push(format!(
-                    "Expected key '{}' (tier: {}) to be unchanged, but it was {}",
-                    expected.key,
-                    expected.tier.map(|t| t.as_str()).unwrap_or("any"),
-                    if was_added { "added" } else if was_removed { "removed" } else { "modified" }
-                ));
-                continue;
-            }
-
-            // Verify the value matches in both snapshots
-            let before_entry = self.find_entry(&self.before_snapshot, &expected.key, &expected.tier);
-            let after_entry = self.find_entry(after_snapshot, &expected.key, &expected.tier);
-
-            match (before_entry, after_entry) {
-                (Some(before), Some(after)) => {
-                    if !expected.value.matches(&before.value) || !expected.value.matches(&after.value) {
-                        failures.push(format!(
-                            "Unchanged key '{}' (tier: {}): expected value '{}', before='{}', after='{}'",
-                            expected.key,
-                            expected.tier.map(|t| t.as_str()).unwrap_or("any"),
-                            self.format_expected_value(&expected.value),
-                            before.value,
-                            after.value
-                        ));
-                    }
-                }
-                (None, None) => {
-                    failures.push(format!(
-                        "Expected unchanged key '{}' (tier: {}) not found in either snapshot",
-                        expected.key,
-                        expected.tier.map(|t| t.as_str()).unwrap_or("any")
-                    ));
-                }
-                (Some(_), None) => {
-                    failures.push(format!(
-                        "Expected unchanged key '{}' (tier: {}) found in before but missing in after",
-                        expected.key,
-                        expected.tier.map(|t| t.as_str()).unwrap_or("any")
-                    ));
-                }
-                (None, Some(_)) => {
-                    failures.push(format!(
-                        "Expected unchanged key '{}' (tier: {}) missing in before but found in after",
-                        expected.key,
-                        expected.tier.map(|t| t.as_str()).unwrap_or("any")
-                    ));
-                }
-            }
-        }
-        failures
-    }
-
-    fn check_unexpected(&self, diff: &StorageDiff) -> Vec<String> {
-        let mut failures = Vec::new();
-
-        // Check for unexpected added entries
-        for entry in &diff.added {
-            let expected = self.added.iter().any(|e| self.key_and_tier_match(&e.key, &e.tier, entry));
-            if !expected {
-                failures.push(format!(
-                    "Unexpected added key '{}' (tier: {}) with value '{}'",
-                    entry.key, entry.tier.as_str(), entry.value
-                ));
-            }
-        }
-
-        // Check for unexpected modified entries
-        for change in &diff.modified {
-            let expected = self.modified.iter().any(|e| self.key_and_tier_match(&e.key, &e.tier, change));
-            if !expected {
-                failures.push(format!(
-                    "Unexpected modified key '{}' (tier: {}): '{}' -> '{}'",
-                    change.key, change.tier.as_str(), change.before, change.after
-                ));
-            }
-        }
-
-        // Check for unexpected removed entries
-        for entry in &diff.removed {
-            let expected = self.removed.iter().any(|e| self.key_and_tier_match(&e.key, &e.tier, entry));
-            if !expected {
-                failures.push(format!(
-                    "Unexpected removed key '{}' (tier: {}) with value '{}'",
-                    entry.key, entry.tier.as_str(), entry.value
-                ));
-            }
-        }
-
-        failures
-    }
-
-    fn key_and_tier_match<T: StorageEntryLike>(&self, pattern: &str, tier: &Option<StorageTier>, entry: &T) -> bool {
-        let key_match = if pattern.contains('*') {
-            let kp = KeyPattern::Glob(pattern.to_string());
-            kp.matches(&entry.key())
-        } else {
-            pattern == entry.key()
-        };
-        let tier_match = tier.map(|t| t == entry.tier()).unwrap_or(true);
-        key_match && tier_match
-    }
-
-    fn find_entry<'b>(&self, snapshot: &'b StorageSnapshot, key: &str, tier: &Option<StorageTier>) -> Option<&'b StorageEntry> {
-        if let Some(t) = tier {
-            snapshot.entries().iter().find(|e| e.key == key && e.tier == *t)
-        } else {
-            snapshot.entries().iter().find(|e| e.key == key)
-        }
-    }
-
-    fn format_expected_value(&self, ev: &ExpectedValue) -> String {
-        match ev {
-            ExpectedValue::Any => "<any>".to_string(),
-            ExpectedValue::Exact(v) => v.clone(),
-            ExpectedValue::Typed { type_name, value } => format!("{}::{}", type_name, value),
-        }
-    }
-
-    fn format_diff_table(&self, diff: &StorageDiff, failures: &[String], after_snapshot: &StorageSnapshot) -> String {
-        let mut out = String::new();
-        out.push_str("════════════════════════════════════════════════════════════════════════════════\n");
-        out.push_str("                           STORAGE DIFF REPORT                                   \n");
-        out.push_str("═══════════════════════════════════════════════════════════════════════════════\n\n");
-
-        // Summary
-        out.push_str(&format!(
-            "Summary: {} added, {} modified, {} removed | Failures: {}\n\n",
-            diff.added.len(),
-            diff.modified.len(),
-            diff.removed.len(),
-            failures.len()
-        ));
-
-        // Added table
-        if !diff.added.is_empty() || !self.added.is_empty() {
-            out.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            out.push_str("│ ADDED                                                                         │\n");
-            out.push_str("├────────┬──────────────────────┬──────────────────────────────────────────────┤\n");
-            out.push_str("│ Tier   │ Key                  │ Value                                         │\n");
-            out.push_str("├────────┼──────────────────────┼──────────────────────────────────────────────┤\n");
-            for entry in &diff.added {
-                let status = if self.added.iter().any(|e| self.key_and_tier_match(&e.key, &e.tier, entry)) {
-                    " ✓"
-                } else {
-                    " ✗ UNEXPECTED"
-                };
-                out.push_str(&format!(
-                    "│ {:<6} │ {:<20} │ {:<42} │{}\n",
-                    entry.tier.as_str(),
-                    truncate(&entry.key, 20),
-                    truncate(&entry.value, 42),
-                    status
-                ));
-            }
-            for expected in &self.added {
-                if !diff.added.iter().any(|e| self.key_and_tier_match(&expected.key, &expected.tier, e)) {
-                    out.push_str(&format!(
-                        "│ {:<6} │ {:<20} │ {:<42} │ ✗ MISSING\n",
-                        expected.tier.map(|t| t.as_str()).unwrap_or("any"),
-                        truncate(&expected.key, 20),
-                        truncate(&self.format_expected_value(&expected.value), 42)
-                    ));
-                }
-            }
-            out.push_str("└────────┴──────────────────────┴──────────────────────────────────────────────┘\n\n");
-        }
-
-        // Modified table
-        if !diff.modified.is_empty() || !self.modified.is_empty() {
-            out.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            out.push_str("│ MODIFIED                                                                      │\n");
-            out.push_str("├────────┬──────────────────────┬──────────────────────┬──────────────────────┤\n");
-            out.push_str("│ Tier   │ Key                  │ Before               │ After                │\n");
-            out.push_str("├────────┼──────────────────────┼──────────────────────┼──────────────────────┤\n");
-            for change in &diff.modified {
-                let status = if self.modified.iter().any(|e| self.key_and_tier_match(&e.key, &e.tier, change)) {
-                    " ✓"
-                } else {
-                    " ✗ UNEXPECTED"
-                };
-                out.push_str(&format!(
-                    "│ {:<6} │ {:<20} │ {:<20} │ {:<20} │{}\n",
-                    change.tier.as_str(),
-                    truncate(&change.key, 20),
-                    truncate(&change.before, 20),
-                    truncate(&change.after, 20),
-                    status
-                ));
-            }
-            for expected in &self.modified {
-                if !diff.modified.iter().any(|c| self.key_and_tier_match(&expected.key, &expected.tier, c)) {
-                    out.push_str(&format!(
-                        "│ {:<6} │ {:<20} │ {:<20} │ {:<20} │ ✗ MISSING\n",
-                        expected.tier.map(|t| t.as_str()).unwrap_or("any"),
-                        truncate(&expected.key, 20),
-                        truncate(&self.format_expected_value(&expected.from), 20),
-                        truncate(&self.format_expected_value(&expected.to), 20)
-                    ));
-                }
-            }
-            out.push_str("└────────┴──────────────────────┴──────────────────────┴──────────────────────┘\n\n");
-        }
-
-        // Removed table
-        if !diff.removed.is_empty() || !self.removed.is_empty() {
-            out.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            out.push_str("│ REMOVED                                                                       │\n");
-            out.push_str("├────────┬──────────────────────┬──────────────────────────────────────────────┤\n");
-            out.push_str("│ Tier   │ Key                  │ Value                                         │\n");
-            out.push_str("├────────┼──────────────────────┼──────────────────────────────────────────────┤\n");
-            for entry in &diff.removed {
-                let status = if self.removed.iter().any(|e| self.key_and_tier_match(&e.key, &e.tier, entry)) {
-                    " ✓"
-                } else {
-                    " ✗ UNEXPECTED"
-                };
-                out.push_str(&format!(
-                    "│ {:<6} │ {:<20} │ {:<42} │{}\n",
-                    entry.tier.as_str(),
-                    truncate(&entry.key, 20),
-                    truncate(&entry.value, 42),
-                    status
-                ));
-            }
-            for expected in &self.removed {
-                if !diff.removed.iter().any(|e| self.key_and_tier_match(&expected.key, &expected.tier, e)) {
-                    out.push_str(&format!(
-                        "│ {:<6} │ {:<20} │ {:<42} │ ✗ MISSING\n",
-                        expected.tier.map(|t| t.as_str()).unwrap_or("any"),
-                        truncate(&expected.key, 20),
-                        truncate(&self.format_expected_value(&expected.value), 42)
-                    ));
-                }
-            }
-            out.push_str("└────────┴──────────────────────┴──────────────────────────────────────────────┘\n\n");
-        }
-
-        // Unchanged table
-        if !self.unchanged.is_empty() {
-            out.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            out.push_str("│ UNCHANGED                                                                     │\n");
-            out.push_str("├────────┬──────────────────────┬──────────────────────────────────────────────┤\n");
-            out.push_str("│ Tier   │ Key                  │ Value                                         │\n");
-            out.push_str("├────────┼──────────────────────┼──────────────────────────────────────────────┤\n");
-            for expected in &self.unchanged {
-                let before_entry = self.find_entry(&self.before_snapshot, &expected.key, &expected.tier);
-                let after_entry = self.find_entry(after_snapshot, &expected.key, &expected.tier);
-                let value = before_entry.or(after_entry).map(|e| e.value.as_str()).unwrap_or("<missing>");
-                let status = if failures.iter().any(|f| f.contains(&expected.key)) {
-                    " ✗ MISMATCH"
-                } else {
-                    " ✓"
-                };
-                out.push_str(&format!(
-                    "│ {:<6} │ {:<20} │ {:<42} │{}\n",
-                    expected.tier.map(|t| t.as_str()).unwrap_or("any"),
-                    truncate(&expected.key, 20),
-                    truncate(value, 42),
-                    status
-                ));
-            }
-            out.push_str("└────────┴──────────────────────┴──────────────────────────────────────────────┘\n\n");
-        }
-
-        out.push_str("═══════════════════════════════════════════════════════════════════════════════\n");
-        out
-    }
-}
-
-/// Trait to abstract over StorageEntry and StorageChange for key/tier access.
-trait StorageEntryLike {
-    fn key(&self) -> &str;
-    fn tier(&self) -> StorageTier;
-}
-
-impl StorageEntryLike for StorageEntry {
-    fn key(&self) -> &str {
-        &self.key
-    }
-    fn tier(&self) -> StorageTier {
-        self.tier
-    }
-}
-
-impl StorageEntryLike for StorageChange {
-    fn key(&self) -> &str {
-        &self.key
-    }
-    fn tier(&self) -> StorageTier {
-        self.tier
-    }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
-    }
-}
-
-/// Macro to build ExpectedValue from various input forms.
-#[macro_export]
-macro_rules! __storage_diff_value {
-    ($val:expr) => { $crate::storage::ExpectedValue::Exact(format!("{}", $val)) };
-    ($type:ty => $val:expr) => { $crate::storage::ExpectedValue::Typed { type_name: stringify!($type).to_string(), value: format!("{}", $val) } };
-    () => { $crate::storage::ExpectedValue::Any };
-}
-
-/// Internal macro to parse a single entry with explicit field matching using expr for values.
-#[macro_export]
-macro_rules! __storage_diff_parse_entry {
-    // Added entry
-    (added, { key: $key:expr $(, tier: $tier:expr)? $(, value: $value:expr)? $(,)? }) => {
-        $crate::storage::ExpectedAdded {
-            key: $key.to_string(),
-            tier: None $(.or(Some($tier)))?,
-            value: $crate::__storage_diff_value!($($value)?),
-        }
-    };
-    // Modified entry
-    (modified, { key: $key:expr $(, tier: $tier:expr)? $(, from: $from:expr)? $(, to: $to:expr)? $(,)? }) => {
-        $crate::storage::ExpectedModified {
-            key: $key.to_string(),
-            tier: None $(.or(Some($tier)))?,
-            from: $crate::__storage_diff_value!($($from)?),
-            to: $crate::__storage_diff_value!($($to)?),
-        }
-    };
-    // Removed entry
-    (removed, { key: $key:expr $(, tier: $tier:expr)? $(, value: $value:expr)? $(,)? }) => {
-        $crate::storage::ExpectedRemoved {
-            key: $key.to_string(),
-            tier: None $(.or(Some($tier)))?,
-            value: $crate::__storage_diff_value!($($value)?),
-        }
-    };
-    // Unchanged entry
-    (unchanged, { key: $key:expr $(, tier: $tier:expr)? $(, value: $value:expr)? $(,)? }) => {
-        $crate::storage::ExpectedUnchanged {
-            key: $key.to_string(),
-            tier: None $(.or(Some($tier)))?,
-            value: $crate::__storage_diff_value!($($value)?),
-        }
-    };
-}
-
-/// Macro to build ExpectedAdded from input.
-#[macro_export]
-macro_rules! __storage_diff_added {
-    ($($tt:tt)*) => {
-        $crate::__storage_diff_parse_entry!(added, $($tt)*)
-    };
-}
-
-/// Macro to build ExpectedModified from input.
-#[macro_export]
-macro_rules! __storage_diff_modified {
-    ($($tt:tt)*) => {
-        $crate::__storage_diff_parse_entry!(modified, $($tt)*)
-    };
-}
-
-/// Macro to build ExpectedRemoved from input.
-#[macro_export]
-macro_rules! __storage_diff_removed {
-    ($($tt:tt)*) => {
-        $crate::__storage_diff_parse_entry!(removed, $($tt)*)
-    };
-}
-
-/// Macro to build ExpectedUnchanged from input.
-#[macro_export]
-macro_rules! __storage_diff_unchanged {
-    ($($tt:tt)*) => {
-        $crate::__storage_diff_parse_entry!(unchanged, $($tt)*)
-    };
-}
-
-/// Assert storage changes between two points in time with declarative specifications.
-///
-/// Supports four clauses:
-/// - `added`: Keys that should be newly present
-/// - `modified`: Keys whose values should change (with `from` and `to`)
-/// - `removed`: Keys that should be deleted
-/// - `unchanged`: Keys that should remain exactly the same
-///
-/// Keys can be exact strings or glob patterns (`prefix*`, `*suffix`, `*`).
-/// Each entry can optionally specify a `tier: StorageTier::Variant`.
-/// Values can be exact (`value: 100`), typed (`value: u64 => 100`).
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use soroban_testkit_assert::assert_storage_diff;
-/// use soroban_testkit_core::storage::{StorageSnapshot, StorageTier};
-///
-/// // Capture storage state before operations
-/// let before = StorageSnapshot::capture(&env, &contract_id);
-/// // ... perform operations ...
-/// assert_storage_diff!(@before before, env, contract_id, {
-///     modified: [
-///         { key: "balances", from: 1000u64, to: 800u64 },
-///     ],
-///     added: [
-///         { key: "allowance:*", tier: StorageTier::Temporary },
-///     ],
-///     removed: [
-///         { key: "old_key" },
-///     ],
-///     unchanged: [
-///         { key: "admin", tier: StorageTier::Instance },
-///     ],
-/// });
-/// ```
-#[macro_export]
-macro_rules! assert_storage_diff {
-    // With pre-captured before snapshot (uses @before marker)
-    (@before $before:expr, $env:expr, $contract:expr, {
-        $(added: [ $($added:tt),* $(,)? ] $(,)? )?
-        $(modified: [ $($modified:tt),* $(,)? ] $(,)? )?
-        $(removed: [ $($removed:tt),* $(,)? ] $(,)? )?
-        $(unchanged: [ $($unchanged:tt),* $(,)? ] $(,)? )?
-    }) => {{
-        let matcher = $crate::storage::StorageDiffMatcher::with_before_snapshot(&$env, &$contract, $before)
-            $(
-                .added(vec![$($crate::__storage_diff_added!($added)),*])
-            )?
-            $(
-                .modified(vec![$($crate::__storage_diff_modified!($modified)),*])
-            )?
-            $(
-                .removed(vec![$($crate::__storage_diff_removed!($removed)),*])
-            )?
-            $(
-                .unchanged(vec![$($crate::__storage_diff_unchanged!($unchanged)),*])
-            )?;
-        matcher.assert();
-    }};
-    // Without pre-captured snapshot (captures current state as "before")
-    ($env:expr, $contract:expr, {
-        $(added: [ $($added:tt),* $(,)? ] $(,)? )?
-        $(modified: [ $($modified:tt),* $(,)? ] $(,)? )?
-        $(removed: [ $($removed:tt),* $(,)? ] $(,)? )?
-        $(unchanged: [ $($unchanged:tt),* $(,)? ] $(,)? )?
-    }) => {{
-        let matcher = $crate::storage::StorageDiffMatcher::new(&$env, &$contract)
-            $(
-                .added(vec![$($crate::__storage_diff_added!($added)),*])
-            )?
-            $(
-                .modified(vec![$($crate::__storage_diff_modified!($modified)),*])
-            )?
-            $(
-                .removed(vec![$($crate::__storage_diff_removed!($removed)),*])
-            )?
-            $(
-                .unchanged(vec![$($crate::__storage_diff_unchanged!($unchanged)),*])
-            )?;
-        matcher.assert();
-    }};
-}
-
-// ============================================================================
-// assert_storage_diff! macro tests
-// ============================================================================
-
 #[cfg(test)]
-mod storage_diff_tests {
-    use super::*;
+mod deletion_tests {
+    use super::StorageTier;
     use soroban_sdk::{
-        contract, contractimpl, symbol_short, testutils::Address as _, Address, Env, Map, Symbol,
+        contract, contractimpl, symbol_short, testutils::Address as _, Address, Env, Symbol,
     };
 
     #[contract]
@@ -1281,360 +673,188 @@ mod storage_diff_tests {
 
     #[contractimpl]
     impl Store {
-        pub fn seed(env: Env, admin: Address) {
+        pub fn seed(env: Env) {
+            env.storage().persistent().set(&count_key(&env), &42u32);
+            env.storage().temporary().set(&ttl_key(&env), &7u32);
+            env.storage().instance().set(&admin_key(), &1u32);
+        }
+
+        pub fn erase_count(env: Env) {
+            env.storage().persistent().remove(&count_key(&env));
+        }
+
+        pub fn store_zero(env: Env) {
+            env.storage().persistent().set(&count_key(&env), &0u32);
+        }
+
+        pub fn store_none(env: Env) {
             env.storage()
                 .persistent()
-                .set(&Symbol::new(&env, "count"), &42u32);
-            env.storage()
-                .temporary()
-                .set(&Symbol::new(&env, "ttl"), &7u32);
-            env.storage()
-                .instance()
-                .set(&symbol_short!("admin"), &admin);
+                .set(&count_key(&env), &Option::<u32>::None);
         }
 
-        pub fn bump(env: Env) {
-            let key = Symbol::new(&env, "count");
-            let current: u32 = env.storage().persistent().get(&key).unwrap();
-            env.storage().persistent().set(&key, &(current + 1));
+        pub fn store_empty_map(env: Env) {
+            env.storage().persistent().set(
+                &count_key(&env),
+                &soroban_sdk::Map::<Symbol, u32>::new(&env),
+            );
         }
 
-        pub fn erase(env: Env) {
-            env.storage()
-                .persistent()
-                .remove(&Symbol::new(&env, "count"));
-        }
-
-        pub fn write_map(env: Env) {
-            let mut map = Map::new(&env);
-            map.set(symbol_short!("a"), 1u32);
-            map.set(symbol_short!("b"), 2u32);
-            env.storage()
-                .persistent()
-                .set(&Symbol::new(&env, "map"), &map);
-        }
-
-        pub fn add_allowance(env: Env, key: Symbol, value: u64) {
-            env.storage().temporary().set(&key, &value);
-        }
-
-        pub fn modify_instance(env: Env) {
-            env.storage().instance().set(&symbol_short!("cfg"), &2u32);
-        }
-
-        pub fn add_temp_key(env: Env, key: Symbol, value: u64) {
-            env.storage().temporary().set(&key, &value);
+        pub fn clear(env: Env) {
+            env.storage().persistent().remove(&count_key(&env));
+            env.storage().temporary().remove(&ttl_key(&env));
+            env.storage().instance().remove(&admin_key());
         }
     }
 
-    fn seeded() -> (Env, Address) {
+    fn count_key(env: &Env) -> Symbol {
+        Symbol::new(env, "count")
+    }
+
+    fn ttl_key(env: &Env) -> Symbol {
+        Symbol::new(env, "ttl")
+    }
+
+    fn admin_key() -> Symbol {
+        symbol_short!("admin")
+    }
+
+    fn registered() -> (Env, Address) {
         let env = Env::default();
         let contract = env.register(Store, ());
-        StoreClient::new(&env, &contract).seed(&Address::generate(&env));
+        (env, contract)
+    }
+
+    fn seeded() -> (Env, Address) {
+        let (env, contract) = registered();
+        StoreClient::new(&env, &contract).seed();
         (env, contract)
     }
 
     #[test]
-    fn assert_storage_diff_modified_passes() {
+    fn deleted_key_is_absent_from_every_tier() {
         let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).bump();
+        StoreClient::new(&env, &contract).erase_count();
 
-        assert_storage_diff!(@before before, env, contract, {
-            modified: [
-                { key: "count", from: 42u32, to: 43u32 },
-            ],
-        });
+        assert_storage_key_deleted!(&env, &contract, "count");
     }
 
     #[test]
-    fn assert_storage_diff_modified_with_tier_passes() {
+    fn deleted_key_in_a_tier_passes_while_other_tiers_hold_keys() {
         let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).bump();
-
-        assert_storage_diff!(@before before, env, contract, {
-            modified: [
-                { key: "count", tier: StorageTier::Persistent, from: 42u32, to: 43u32 },
-            ],
-        });
-    }
-
-    #[test]
-    fn assert_storage_diff_added_passes() {
-        let env = Env::default();
-        let contract = env.register(Store, ());
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).seed(&Address::generate(&env));
-
-        assert_storage_diff!(@before before, env, contract, {
-            added: [
-                { key: "count" },
-                { key: "admin" },
-                { key: "ttl" },
-            ],
-        });
-    }
-
-    #[test]
-    fn assert_storage_diff_added_with_tier_passes() {
-        let env = Env::default();
-        let contract = env.register(Store, ());
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).seed(&Address::generate(&env));
-
-        assert_storage_diff!(@before before, env, contract, {
-            added: [
-                { key: "count", tier: StorageTier::Persistent },
-                { key: "admin", tier: StorageTier::Instance },
-                { key: "ttl", tier: StorageTier::Temporary },
-            ],
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Expected added key 'missing'")]
-    fn assert_storage_diff_added_fails_missing() {
-        let env = Env::default();
-        let contract = env.register(Store, ());
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).seed(&Address::generate(&env));
-
-        assert_storage_diff!(@before before, env, contract, {
-            added: [
-                { key: "missing" },
-            ],
-        });
-    }
-
-    #[test]
-    fn assert_storage_diff_removed_passes() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).erase();
-
-        assert_storage_diff!(@before before, env, contract, {
-            removed: [
-                { key: "count" },
-            ],
-        });
-    }
-
-    #[test]
-    fn assert_storage_diff_removed_with_tier_passes() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).erase();
-
-        assert_storage_diff!(@before before, env, contract, {
-            removed: [
-                { key: "count", tier: StorageTier::Persistent },
-            ],
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Expected removed key 'missing'")]
-    fn assert_storage_diff_removed_fails_missing() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).erase();
-
-        assert_storage_diff!(@before before, env, contract, {
-            removed: [
-                { key: "missing" },
-            ],
-        });
-    }
-
-    #[test]
-    fn assert_storage_diff_unchanged_passes() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        // No operations - storage unchanged
-        assert_storage_diff!(@before before, env, contract, {
-            unchanged: [
-                { key: "count" },
-                { key: "admin" },
-                { key: "ttl" },
-            ],
-        });
-    }
-
-    #[test]
-    fn assert_storage_diff_unchanged_with_tier_passes() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-
-        assert_storage_diff!(@before before, env, contract, {
-            unchanged: [
-                { key: "count", tier: StorageTier::Persistent },
-                { key: "admin", tier: StorageTier::Instance },
-                { key: "ttl", tier: StorageTier::Temporary },
-            ],
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Expected key 'count'")]
-    fn assert_storage_diff_unchanged_fails_when_modified() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).bump();
-
-        assert_storage_diff!(@before before, env, contract, {
-            unchanged: [
-                { key: "count" },
-            ],
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Expected key 'count'")]
-    fn assert_storage_diff_unchanged_fails_when_removed() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).erase();
-
-        assert_storage_diff!(@before before, env, contract, {
-            unchanged: [
-                { key: "count" },
-            ],
-        });
-    }
-
-    #[test]
-    fn assert_storage_diff_wildcard_added_passes() {
-        let env = Env::default();
-        let contract = env.register(Store, ());
         let client = StoreClient::new(&env, &contract);
-        client.seed(&Address::generate(&env));
-        let before = StorageSnapshot::capture(&env, &contract);
-        client.add_temp_key(&Symbol::new(&env, "allowance_user1"), &100u64);
-        client.add_temp_key(&Symbol::new(&env, "allowance_user2"), &200u64);
+        client.erase_count();
 
-        assert_storage_diff!(@before before, env, contract, {
-            added: [
-                { key: "allowance_*", tier: StorageTier::Temporary },
-            ],
-        });
+        assert_storage_key_deleted!(&env, &contract, "count", StorageTier::Persistent);
+
+        // "ttl" never existed in the persistent tier, so naming that tier passes
+        // even though the key is alive in temporary storage.
+        assert_storage_key_deleted!(&env, &contract, "ttl", StorageTier::Persistent);
     }
 
     #[test]
-    fn assert_storage_diff_wildcard_unchanged_passes() {
+    #[should_panic(expected = "persistent:count = 42")]
+    fn existing_key_fails_across_all_tiers() {
         let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
 
-        assert_storage_diff!(@before before, env, contract, {
-            unchanged: [
-                { key: "count" },
-                { key: "admin" },
-                { key: "ttl" },
-            ],
-        });
+        assert_storage_key_deleted!(&env, &contract, "count");
     }
 
     #[test]
-    fn assert_storage_diff_combined_passes() {
+    #[should_panic(expected = "to be deleted from the persistent tier")]
+    fn existing_key_fails_in_the_named_tier() {
         let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        let client = StoreClient::new(&env, &contract);
-        client.bump();  // modifies count: 42 -> 43
-        client.add_temp_key(&Symbol::new(&env, "allowance_new"), &500u64);  // adds new key
-        // Don't erase count - use a different key for removal test
-        client.write_map();  // adds map to persistent
-        // Add a temp key then we can't easily remove it, so just test without removal
-        client.add_temp_key(&Symbol::new(&env, "temp_remove"), &123u64);
 
-        assert_storage_diff!(@before before, env, contract, {
-            added: [
-                { key: "allowance_new", tier: StorageTier::Temporary },
-                { key: "map", tier: StorageTier::Persistent },
-                { key: "temp_remove", tier: StorageTier::Temporary },
-            ],
-            modified: [
-                { key: "count", from: 42u32, to: 43u32 },
-            ],
-            unchanged: [
-                { key: "admin", tier: StorageTier::Instance },
-                { key: "ttl", tier: StorageTier::Temporary },
-            ],
-        });
+        assert_storage_key_deleted!(&env, &contract, "count", StorageTier::Persistent);
     }
 
     #[test]
-    #[should_panic(expected = "Unexpected added key")]
-    fn assert_storage_diff_fails_on_unexpected_added() {
+    #[should_panic(expected = "persistent:count = 0")]
+    fn a_key_rewritten_to_zero_is_not_deleted() {
+        let (env, contract) = registered();
+        StoreClient::new(&env, &contract).store_zero();
+
+        assert_storage_key_deleted!(&env, &contract, "count");
+    }
+
+    #[test]
+    #[should_panic(expected = "persistent:count = void")]
+    fn a_key_holding_option_none_is_not_deleted() {
+        let (env, contract) = registered();
+        StoreClient::new(&env, &contract).store_none();
+
+        assert_storage_key_deleted!(&env, &contract, "count");
+    }
+
+    #[test]
+    #[should_panic(expected = "persistent:count = {}")]
+    fn a_key_holding_an_empty_value_is_not_deleted() {
+        let (env, contract) = registered();
+        StoreClient::new(&env, &contract).store_empty_map();
+
+        assert_storage_key_deleted!(&env, &contract, "count");
+    }
+
+    #[test]
+    fn an_untouched_contract_has_empty_storage() {
+        let (env, contract) = registered();
+
+        assert_storage_empty!(&env, &contract);
+        assert_storage_empty!(&env, &contract, StorageTier::Instance);
+        assert_storage_empty!(&env, &contract, StorageTier::Persistent);
+        assert_storage_empty!(&env, &contract, StorageTier::Temporary);
+    }
+
+    #[test]
+    fn a_cleared_contract_has_empty_storage() {
+        let (env, contract) = seeded();
+        StoreClient::new(&env, &contract).clear();
+
+        assert_storage_empty!(&env, &contract);
+    }
+
+    #[test]
+    fn an_empty_tier_passes_while_other_tiers_hold_keys() {
+        let (env, contract) = seeded();
+        StoreClient::new(&env, &contract).erase_count();
+
+        assert_storage_empty!(&env, &contract, StorageTier::Persistent);
+
+        // The other tiers are untouched and still hold their keys.
+        assert_storage_key_deleted!(&env, &contract, "ttl", StorageTier::Persistent);
+        assert_storage_key_deleted!(&env, &contract, "admin", StorageTier::Persistent);
+    }
+
+    #[test]
+    #[should_panic(expected = "3 entries survived")]
+    fn a_non_empty_contract_lists_every_survivor() {
+        let (env, contract) = seeded();
+
+        assert_storage_empty!(&env, &contract);
+    }
+
+    #[test]
+    #[should_panic(expected = "temporary:ttl = 7 [8 bytes:")]
+    fn survivors_are_reported_with_their_bytes() {
+        let (env, contract) = seeded();
+
+        assert_storage_empty!(&env, &contract);
+    }
+
+    #[test]
+    #[should_panic(expected = "temporary storage tier to be empty")]
+    fn a_non_empty_tier_fails() {
+        let (env, contract) = seeded();
+
+        assert_storage_empty!(&env, &contract, StorageTier::Temporary);
+    }
+
+    #[test]
+    fn a_non_contract_address_captures_as_empty() {
         let env = Env::default();
-        let contract = env.register(Store, ());
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).seed(&Address::generate(&env));
-        StoreClient::new(&env, &contract).add_temp_key(&Symbol::new(&env, "extra"), &999u64);
+        let account = Address::generate(&env);
 
-        assert_storage_diff!(@before before, env, contract, {
-            added: [
-                { key: "count" },
-            ],
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Modified key 'count'")]
-    fn assert_storage_diff_modified_fails_wrong_from() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).bump();
-
-        assert_storage_diff!(@before before, env, contract, {
-            modified: [
-                { key: "count", from: 100u32, to: 43u32 },
-            ],
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Modified key 'count'")]
-    fn assert_storage_diff_modified_fails_wrong_to() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).bump();
-
-        assert_storage_diff!(@before before, env, contract, {
-            modified: [
-                { key: "count", from: 42u32, to: 100u32 },
-            ],
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Unexpected added key")]
-    fn assert_storage_diff_fails_on_unexpected_modified() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).bump();
-        StoreClient::new(&env, &contract).modify_instance();  // This adds a new key 'cfg' to instance storage
-
-        assert_storage_diff!(@before before, env, contract, {
-            modified: [
-                { key: "count", from: 42u32, to: 43u32 },
-            ],
-            // Expect no other modifications - but modify_instance adds 'cfg' key (shows as added)
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "Unexpected added key")]
-    fn assert_storage_diff_fails_on_unexpected_removed() {
-        let (env, contract) = seeded();
-        let before = StorageSnapshot::capture(&env, &contract);
-        StoreClient::new(&env, &contract).erase();
-        StoreClient::new(&env, &contract).modify_instance();  // This adds a new key
-
-        assert_storage_diff!(@before before, env, contract, {
-            removed: [
-                { key: "count" },
-            ],
-            // Expect no other removals - but modify_instance adds 'cfg' key (shows as added)
-        });
+        assert_storage_empty!(&env, &account);
+        assert_storage_key_deleted!(&env, &account, "count");
     }
 }
