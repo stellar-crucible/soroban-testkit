@@ -1,6 +1,6 @@
 # soroban-testkit-assert
 
-Fluent matchers for contract events and authorizations, so assertions read like the behaviour you expect.
+Fluent matchers for contract events, authorizations and storage, so assertions read like the behaviour you expect.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
@@ -34,8 +34,13 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
+| `assert_auth_strict!(env, [ .. ])` | Every expected authorization matches exactly one record, with no records left over |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `assert_storage_key_deleted!(env, contract, key)` | A key is gone from instance, persistent and temporary storage |
+| `assert_storage_key_deleted!(env, contract, key, tier)` | A key is gone from one named tier |
+| `assert_storage_empty!(env, contract)` | No live storage entry survives in any tier |
+| `assert_storage_empty!(env, contract, tier)` | A named tier holds no live entry |
 | `AuthSubInvocationMatcher::assert_matches()` | An authorized sub-call matching contract, function, and arguments appears at any depth |
 | `assert_auth_sub_invocation!(env, { .. })` | Inline sub-invocation matcher isolating intermediate contract calls at any depth |
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
@@ -475,6 +480,44 @@ panicked at 'Expected an authorization matching { invoker Contract(C…FCT4), fu
   [0] invoker Contract(C…FCT4) contract Contract(C…D2KM) function "increment" args [Contract(C…FCT4), 1]'
 ```
 
+### Strict authorization matching
+
+Use `assert_auth_strict!` when a test must prove that a call authorized *only*
+the expected invokers and functions. Every listed pattern must match a distinct
+recorded authorization, and every record must match one listed pattern. The
+macro also accepts argument patterns, where `_` matches any value in that
+position:
+
+```rust
+use soroban_testkit_assert::assert_auth_strict;
+
+client.set_admin(&admin, &new_admin);
+
+assert_auth_strict!(env, [
+    {
+        invoker: admin,
+        function: "set_admin",
+        args: [new_admin],
+    },
+]);
+```
+
+Declare multiple authorizations as separate entries. An empty list asserts that
+the invocation recorded no authorizations:
+
+```rust
+assert_auth_strict!(env, [
+    { invoker: first, function: "joint", args: [_, second] },
+    { invoker: second, function: "joint", args: [first, _] },
+]);
+
+assert_auth_strict!(env, []);
+```
+
+If a pattern is missing or any unlisted authorization was recorded, the failure
+shows expected and observed authorizations side by side, then identifies missing
+patterns and extra records.
+
 ### Sub-tree authorization matching
 
 Multi-hop routing protocols (such as `aggregator -> pool -> vault`) record nested
@@ -609,6 +652,50 @@ contract Contract(C…AAAA) function "swap" args [...]
 └── contract Contract(C…BBBB) function "route" args [...]
     └── contract Contract(C…CCCC) function "deposit" args [...]'
 ```
+
+
+## Storage assertions
+
+Closing an account, burning a balance or cancelling an escrow should leave no storage behind. `assert_storage_key_deleted!` and `assert_storage_empty!` prove entries are gone from the ledger rather than merely rewritten:
+
+```rust
+use soroban_testkit_assert::{assert_storage_empty, assert_storage_key_deleted};
+use soroban_testkit_assert::storage::StorageTier;
+
+// The key no longer exists in any tier.
+assert_storage_key_deleted!(&env, &token, "balance");
+
+// Only the named tier is inspected; another tier may still hold the key.
+assert_storage_key_deleted!(&env, &token, "allowance", StorageTier::Persistent);
+
+// The contract's whole storage is empty, or one tier of it is.
+assert_storage_empty!(&env, &token);
+assert_storage_empty!(&env, &token, StorageTier::Temporary);
+```
+
+Both assertions inspect instance, persistent and temporary storage through [`StorageSnapshot`](core.html), with instance storage unfolded per key exactly as `assert_storage_tier!` reports it. The key is the snapshot's rendered form: a symbol's text for the usual case, but also `[a, b]` for a vector or `{k: v}` for a map, so composite keys can be named too.
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">Deleted is not the same as empty</span>
+  <p>These assertions are about the <strong>entry</strong>, not its value. A key rewritten to <code>0</code>, set to <code>Option::None</code> (stored as <code>void</code>), or holding an empty map is still a live ledger entry and fails both assertions. Delete the key with <code>storage().remove(&amp;key)</code>; overwriting it with a tombstone is not enough.</p>
+</div>
+
+A failure lists every surviving entry with the tier it lives in, its rendered value, and the XDR bytes the ledger holds:
+
+```text
+panicked at 'Expected contract storage to be empty, but 2 entries survived:
+  persistent:balance = 0 [8 bytes: 0000000300000000]
+  temporary:allowance = void [4 bytes: 00000000]'
+```
+
+Naming a key narrows the message to that key's survivors:
+
+```text
+panicked at 'Expected storage key "balance" to be deleted from all tiers, but it still exists:
+  persistent:balance = 0 [8 bytes: 0000000300000000]'
+```
+
+A contract that never wrote storage passes `assert_storage_empty!`, and an address that is not a contract owns no contract data, so it passes too.
 
 ## Failure messages
 
