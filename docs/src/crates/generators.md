@@ -20,8 +20,10 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
 | `fuzzed_invocation_args(env, typed, max_rogue)` | `Vec<Val>` | valid arguments mixed with integers, booleans, symbols, errors, and address objects |
+| `contract_error_code()` | `u32` | any application-defined contract error code, shrinking towards zero |
+| `host_error()` | `Error` | an SDK error from every standard category, including arbitrary contract codes |
+| `error_with_type(kind)` | `Error` | an SDK error restricted to the requested `ScErrorType` |
 | `host_error_code_coverage()` | `HostError` | all 10 categories × all 10 codes |
-| `host_error()` | `HostError` | alias for `host_error_code_coverage()` |
 | `host_error_type()` | `ScErrorType` | every host category |
 | `host_error_code()` | `ScErrorCode` | every host code |
 | `host_error_of_type(kind)` | `HostError` | the codes of one category |
@@ -192,9 +194,43 @@ a contract call returns. `host_error_of_type(kind)` narrows a run to one branch
 when a category needs its own treatment, and `all_host_errors()` is the full
 hundred in table order for a deterministic sweep.
 
+Use `host_error()` when the code under test consumes the SDK error directly;
+`error_with_type(kind)` keeps generated errors within one category, including
+application-defined contract codes when `kind` is `ScErrorType::Contract`.
+`contract_error_code()` produces the entire valid `u32` range and shrinks
+failing values towards zero. Generated SDK errors convert to the corresponding
+XDR [`ScVal::Error`](https://docs.rs/soroban-sdk/latest/soroban_sdk/xdr/enum.ScVal.html)
+without losing their category or code:
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::xdr::{ScErrorType, ScVal};
+use soroban_testkit_core::error::DecodedError;
+use soroban_testkit_generators::{error_with_type, host_error};
+
+proptest! {
+    #[test]
+    fn error_handler_never_panics(error in host_error()) {
+        let decoded = DecodedError::from_error(&error);
+        assert!(!decoded.category.is_empty());
+
+        let xdr_error = ScVal::try_from(error).expect("generated errors are valid XDR");
+        assert!(matches!(xdr_error, ScVal::Error(_)));
+    }
+
+    #[test]
+    fn storage_error_handler_never_panics(
+        error in error_with_type(ScErrorType::Storage),
+    ) {
+        // The strategy only emits Storage errors.
+        assert!(error.is_type(ScErrorType::Storage));
+    }
+}
+```
+
 <div class="tk-callout">
   <span class="tk-callout__title">Shrinking goes to the smallest discriminant</span>
-  <p>The strategy is two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>) instead of stopping at whichever branch of the <code>oneof</code> was taken.</p>
+  <p><code>host_error_code_coverage()</code> uses two bounded integers — one position in the category table, one in the code table — rather than a <code>prop_oneof!</code> over the pairs. proptest shrinks integers towards zero, and both tables are in XDR discriminant order, so a failing case simplifies to <code>Contract</code>/<code>ArithDomain</code> (<code>contract/0</code>). <code>host_error()</code> follows that category order and contract codes shrink towards zero too.</p>
 </div>
 
 ## Tuples and fixed-size arrays
