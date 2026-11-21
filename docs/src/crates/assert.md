@@ -26,6 +26,7 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
 | `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
+| `assert_emitted_matches!(env, { .. })` | Asserts emitted events matching glob wildcards (`*`, `?`) or regex topic patterns and data fields |
 | `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
 | `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
 | `assert_contract_error!(client.try_call(..), MyError::Variant)` | The call failed with exactly that `#[contracterror]` variant |
@@ -37,6 +38,8 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `assert_auth_strict!(env, [ .. ])` | Every expected authorization matches exactly one record, with no records left over |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `assert_auth_tree!(env, { .. })` | Validates hierarchical authorization call-trees down to arbitrary depth with visual tree diffs |
+| `AuthTreeMockBuilder::new(..)` | Programmatic builder for mock authorization call-trees |
 | `assert_storage_key_deleted!(env, contract, key)` | A key is gone from instance, persistent and temporary storage |
 | `assert_storage_key_deleted!(env, contract, key, tier)` | A key is gone from one named tier |
 | `assert_storage_empty!(env, contract)` | No live storage entry survives in any tier |
@@ -321,6 +324,34 @@ Types are checked by Soroban value deserialization, including `i128`, `u64`,
 the expected type and observed type/value. The assertion requires at least one
 event matching the topic.
 
+## Regex and wildcard topic matching (assert_emitted_matches!)
+
+When contract events contain prefixes, variable identifiers, or structured multi-part topics (e.g. `Transfer:XLM`, `Order:Created:104`), exact string topic matching can be brittle. `assert_emitted_matches!` allows matching topics using wildcard glob patterns (`*`, `?`) and regular expressions, while validating data payload fields in the same assertion:
+
+```rust
+use soroban_testkit_assert::assert_emitted_matches;
+
+// Match with wildcard globs across single or multi-part topics
+assert_emitted_matches!(env, {
+    contract: dex_id,
+    topic: "Trade:*",
+    data: { amount: 500u64 },
+});
+
+// Match with regular expression pattern
+assert_emitted_matches!(env, {
+    contract: dex_id,
+    topic: r"^Order:(Filled|Cancelled)$",
+});
+
+// Works across EventLog collections spanning multiple invocations
+assert_emitted_matches!(event_log, {
+    topic: "Trade:XLM",
+});
+```
+
+On assertion failure, `assert_emitted_matches!` reports every recorded event with its emitting contract, formatted topics, and raw payload data.
+
 ## Successful contract calls
 
 Use the generated client's `try_*` call with these macros instead of a bare
@@ -413,6 +444,51 @@ Three things the host decides, not the macro:
 
 `check_contract_error` and `check_host_error` return the diagnostic as a
 `Result<(), String>` instead of panicking.
+
+### Asserting the error code behind a panic
+
+A client method that is not a `try_*` call panics when the invocation fails, and
+the host renders the failure inside the panic text:
+
+```text
+HostError: Error(Contract, #101)
+HostError: Error(Auth, InvalidAction)
+```
+
+`#[should_panic(expected = "...")]` only checks that the text contains a
+substring. `assert_contract_call_panics_with_error_code!` catches the panic,
+parses the packed `Error(..)`, and compares the decoded error with an exact
+expectation:
+
+```rust
+use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
+use soroban_testkit_assert::assert_contract_call_panics_with_error_code;
+
+// A numeric #[contracterror] code.
+assert_contract_call_panics_with_error_code!(client.withdraw(&1_000), VaultError::Locked as u32);
+
+// An exact host error category and code.
+assert_contract_call_panics_with_error_code!(
+    client.withdraw(&1_000),
+    ScErrorType::Auth,
+    ScErrorCode::InvalidAction
+);
+```
+
+The call is evaluated once, inside `catch_unwind`. The assertion fails cleanly
+when the call returns normally, when the panic carries no Soroban error (the
+diagnostic quotes the panic), and when the code or category differs. A mismatch
+prints both errors with their decoded category, numeric code and variant name:
+
+```text
+assert_contract_call_panics_with_error_code! failed: the call panicked with a different error
+  expected: Error(Contract, #101) — decoded: code 101, category contract
+  received: Error(Contract, #2) — decoded: code 2, category contract, variant contract code 2
+  panic:    HostError: Error(Contract, #2)
+```
+
+`check_panic_error_code` returns the diagnostic as a `Result<(), String>`
+without panicking, for tests that assert on the message itself.
 
 ## Authorization matching
 
@@ -518,6 +594,33 @@ If a pattern is missing or any unlisted authorization was recorded, the failure
 shows expected and observed authorizations side by side, then identifies missing
 patterns and extra records.
 
+### Exact multiset matching
+
+`assert_auth_exact_multiset!` is the order-insensitive form of the same
+assertion. A contract that triggers several independent `require_auth` demands
+can record them in any order, and the order is not part of the SDK's contract:
+
+```rust
+use soroban_testkit_assert::assert_auth_exact_multiset;
+
+client.settle(&first, &second);
+
+assert_auth_exact_multiset!(env, [
+    { invoker: second, function: "settle", args: [first, _] },
+    { invoker: first, function: "settle", args: [_, second] },
+]);
+```
+
+Matching is one-to-one, so this is a multiset rather than a subset rule:
+
+- every expected pattern must match a **distinct** recorded authorization;
+- every recorded authorization must be consumed by an expected pattern;
+- two identical patterns require two identical records, and an empty list
+  asserts that nothing was authorized.
+
+Missing and surplus authorizations both fail, with the side-by-side table
+followed by the unmatched expectations and the extra records.
+
 ### Sub-tree authorization matching
 
 Multi-hop routing protocols (such as `aggregator -> pool -> vault`) record nested
@@ -596,6 +699,49 @@ invoker Contract(C…1234)                                     | [0] invoker Con
 contract Contract(C…BBBB) function "route"                   | contract Contract(C…AAAA) function "swap" args [...]
 ├── contract Contract(C…CCCC) function "deposit"             | └── contract Contract(C…BBBB) function "route" args [...]
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
+```
+
+### Hierarchical call-tree validation and mock builder (assert_auth_tree!)
+
+In nested multi-contract calls (e.g. `Router -> Pool -> Vault -> Token`), authorizations form recursive trees of `AuthorizedInvocation` structures. `assert_auth_tree!` validates an entire nested delegation hierarchy to arbitrary depth using concise `sub_invokes` lists:
+
+```rust
+use soroban_testkit_assert::assert_auth_tree;
+
+assert_auth_tree!(env, {
+    invoker: user,
+    function: "deposit_and_stake",
+    sub_invokes: [
+        {
+            invoker: router,
+            function: "transfer",
+            args: [user, pool, 1000],
+            sub_invokes: [
+                { invoker: pool, function: "mint_receipt", args: [user, 1000] }
+            ]
+        }
+    ]
+});
+```
+
+To construct mock authorization trees programmatically in tests or mocks, use `AuthTreeMockBuilder`:
+
+```rust
+use soroban_testkit_assert::{auth_tree::tree_depth, AuthTreeMockBuilder};
+
+let mock_invocation = AuthTreeMockBuilder::new(router, "transfer")
+    .arg(&user, &env)
+    .arg(&pool, &env)
+    .arg(&1000i128, &env)
+    .sub_invoke(
+        AuthTreeMockBuilder::new(pool, "mint_receipt")
+            .arg(&user, &env)
+            .arg(&1000i128, &env)
+            .build(&env)
+    )
+    .build(&env);
+
+assert_eq!(tree_depth(&mock_invocation), 2);
 ```
 
 ### Isolating intermediate sub-invocations
@@ -898,6 +1044,35 @@ Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
 | Discrepancy                  |                |                |       -1 (LEAK DETECTED) |
 ------------------------------------------------------------------------------------------------------
 ```
+
+## Cross-invocation token conservation (`assert_token_conservation_across_invocations!`)
+
+When a protocol moves tokens across several invocations — swaps, fee splits,
+batch settlements — the total supply must be conserved. The
+`assert_token_conservation_across_invocations!` macro records balances before and
+after each invocation, credits declared protocol fees to their treasury accounts,
+and panics with a debit/credit reconciliation table when an invocation leaks
+value:
+
+```rust
+use soroban_testkit_assert::assert_token_conservation_across_invocations;
+
+let report = assert_token_conservation_across_invocations!(
+    accounts: [(&alice, "Alice"), (&bob, "Bob")],
+    balance: |address| token_client.balance(address),
+    fees: [(&treasury, "Treasury", 10i128)],
+    invocations: [
+        { router.swap(&alice, &bob, &1000); },
+        { router.settle_fees(&treasury); },
+    ],
+);
+assert!(report.is_conserved());
+```
+
+Declared `fees` are internal transfers to treasury accounts and are auto-added
+to the tracked set. A fee that never reaches its treasury is reported as a
+missing credit. `TokenConservationReport` exposes `is_conserved`,
+`invocations`, and `fees` for further assertions.
 
 ## Comparative budget differential and relative gas savings
 

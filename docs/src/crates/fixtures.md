@@ -223,94 +223,59 @@ restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
 
-`reset_full` exists because SDK v28 mints test addresses from a counter that
-restarts at 1 in every `Env`. Generating straight away would hand back exactly
-the addresses you replaced, so it first walks the new env's counter past the
-range the old identities occupied.
+## Named branches and speculative paths
 
-## Checkpointing and rollback
+`reset` is destructive: it throws the chain away. When several paths start from
+the *same* protocol state — five trade routes from one liquidity pool, three
+liquidation scenarios from one debt position — build the state once and take a
+named checkpoint instead:
 
-Complex integration tests frequently require branching multiple test paths from a shared heavy setup (e.g. deploy protocol, seed 50 accounts, mint initial liquidity) or testing speculative execution and failure rollbacks without completely rebuilding the environment from scratch. `TestContext` provides checkpointing and rollback:
+```rust
+use soroban_testkit_fixtures::branching::BranchingContext;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+
+let mut ctx = BranchingContext::new(TestContextBuilder::new().with_users(2).build());
+let pool_id = ctx.env.register(Pool, ());
+let pool = PoolClient::new(&ctx.env, &pool_id);
+
+pool.deposit(&1_000);           // setup, executed once
+ctx.create_branch("initial_pool");
+
+for route in routes {
+    ctx.switch_branch("initial_pool").create_branch(route.name);
+    // ... run the route against the pool's original 1,000 ...
+}
+```
+
+`BranchingContext` derefs to `TestContext`, so `ctx.env`, `ctx.users`,
+`advance_time` and the rest keep working. Its branch API is:
 
 | Method | Effect |
 |--------|--------|
-| `ctx.checkpoint()` | Captures the current environment state (storage, ledger, events, auth) and returns an opaque `ContextCheckpoint` |
-| `ctx.rollback_to(&checkpoint)` | Restores the environment to the exact state at the checkpoint |
-| `ctx.checkpoint_count()` | Returns the number of checkpoints in the stack |
-| `ctx.clear_checkpoints()` | Clears all checkpoints |
+| `create_branch(name)` | Snapshot the ledger under `name` and make it current |
+| `switch_branch(name)` | Rewrite the live ledger to the checkpoint |
+| `current_branch()` | The last created or switched-to name |
+| `branch_names()` | Every checkpoint, in sorted order |
+| `has_branch(name)` | Whether a checkpoint exists |
+| `delete_branch(name)` | Drop one checkpoint, returning whether it existed |
 
-```rust
-use soroban_testkit_fixtures::{TestContext, TestContextBuilder};
-use soroban_testkit_core::storage::StorageSnapshot;
+A switch restores every captured ledger entry with its value and `live_until`
+TTL, removes contract data keys written after the checkpoint (including entries
+the contract deleted, which come back), and resets the full ledger clock:
+sequence, timestamp, protocol version, network id, base reserve and the TTL
+thresholds.
 
-let mut ctx = TestContextBuilder::new().with_users(5).build();
+The environment itself is kept rather than rebuilt, which is what makes the
+rest of the fixture keep working:
 
-// ... deploy protocols and seed state ...
-let checkpoint = ctx.checkpoint();
+- native test contracts stay registered, so no setup is re-executed;
+- `ctx.admin`, `ctx.users`, contract addresses and clients remain valid;
+- the auth policy (`mock_all_auths`) and the network profile still apply.
 
-// Branch A: successful transfer
-client.transfer(&ctx.user(0), &ctx.user(1), &100);
-assert_eq!(client.balance(&ctx.user(0)), 900);
-
-// Rollback to clean setup
-ctx.rollback_to(&checkpoint);
-assert_eq!(client.balance(&ctx.user(0)), 1000);
-
-// Branch B: test different path
-client.transfer(&ctx.user(1), &ctx.user(2), &50);
-// ... verify different behavior ...
-```
-
-### What a checkpoint captures
-
-A `ContextCheckpoint` captures the complete environment state:
-
-- **Contract storage** — Instance, persistent, and temporary entries for all registered contracts
-- **Ledger state** — Sequence number and timestamp
-- **Auth configuration** — Whether `mock_all_auths` was active
-- **Network profile** — The active network conditions
-- **Events** — All events emitted up to the checkpoint (discarded on rollback)
-
-### Multiple checkpoints and nested rollback
-
-Checkpoints form a stack. You can create multiple checkpoints and rollback to any of them:
-
-```rust
-let mut ctx = TestContextBuilder::new().with_users(5).build();
-
-// Checkpoint 1: after protocol deployment
-let cp1 = ctx.checkpoint();
-
-// ... seed initial state ...
-let cp2 = ctx.checkpoint();
-
-// Branch A: test scenario 1
-ctx.rollback_to(&cp2);
-assert_eq!(ctx.checkpoint_count(), 2); // cp2 is still in stack
-
-// Branch B: test scenario 2  
-ctx.rollback_to(&cp1);
-assert_eq!(ctx.checkpoint_count(), 1); // cp2 was removed
-```
-
-After rollback, all checkpoints created after the target are discarded. The checkpoint stack maintains proper nesting semantics.
-
-### What rollback restores
-
-| State | Restored |
-|-------|----------|
-| Contract storage (instance, persistent, temporary) | ✅ |
-| Ledger sequence & timestamp | ✅ |
-| Mock auth configuration | ✅ |
-| Network profile | ✅ |
-| Events | ✅ (events after checkpoint are discarded) |
-| Auth invocations | ✅ (cleared after checkpoint) |
-
-### Limitations
-
-- **Instance storage restoration** is partially implemented — persistent and temporary storage are fully restored, while instance storage restoration is best-effort
-- Checkpoints are scoped to the `TestContext` that created them; rolling back to a checkpoint from a different context will panic
-- The checkpoint stack is not persisted across `reset()` or `reset_full()` calls
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Two things a branch cannot rewind</span>
+  <p>A contract registered <em>after</em> a checkpoint keeps its code and instance entries — its storage is cleared, but it remains callable, because the SDK exposes no API to delete those entries. Register every contract before the checkpoint. Recorded authorizations (<code>env.auths()</code>) belong to the most recent invocation rather than to the ledger, so assert them immediately after the call that produced them.</p>
+</div>
 
 ## Persistent storage eviction
 
@@ -884,6 +849,42 @@ flowchart TD
   C_0 -. resolves .-> ORACLE
   C_0 -. resolves .-> VAULT
 ```
+
+## Declared dependency topology validation (`TopologyValidator`)
+
+For multi-contract protocols, `TopologyValidator` lets a test declare the
+expected dependency graph and then scan each deployed contract's instance
+storage for `Address` references. It flags three failure modes:
+
+- **Uninitialized link** — a declared dependency that no contract stores yet.
+- **Dangling reference** — a stored address that points at a contract that was
+  never registered.
+- **Inactive contract** — a registered contract whose address is not deployed.
+
+```rust
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::TopologyValidator;
+
+let env = Env::default();
+env.mock_all_auths();
+
+let mut topology = TopologyValidator::new(&env);
+let token = Address::generate(&env);
+let oracle = env.register_contract(None, ...); // deployed contract id
+let pool = env.register_contract(None, ...);
+
+topology.register_contract("token", &token);
+topology.register_contract("oracle", &oracle);
+topology.register_contract("pool", &pool);
+topology.require_link("pool", "token");
+topology.require_link("pool", "oracle");
+
+topology.assert_valid(); // panics with the full report on any violation
+```
+
+`TopologyValidator::validate` returns a `TopologyReport` whose `is_valid`,
+`violations`, `to_mermaid`, and `render_topology` helpers support non-fatal
+assertions and diagram generation for documentation.
 
 ## Failure injection for mock dependencies (`FailureInjector`)
 

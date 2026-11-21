@@ -1,4 +1,5 @@
 pub mod archival;
+pub mod branching;
 pub mod builder;
 pub mod checkpoint;
 pub mod congestion;
@@ -10,11 +11,11 @@ pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
 pub mod protocol_registry;
-
-pub use checkpoint::ContextCheckpoint;
+pub mod topology;
 #[cfg(test)]
 mod ttl_tests;
 
+pub use branching::BranchingContext;
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
 };
@@ -30,6 +31,10 @@ pub use protocol_registry::{
     ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
     ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
     ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
+pub use topology::{
+    AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
+    TopologyReport, TopologyValidator, UninitializedLink,
 };
 
 pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};

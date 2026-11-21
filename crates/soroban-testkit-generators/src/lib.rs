@@ -21,6 +21,8 @@ pub mod storage_tier;
 #[cfg(feature = "proptest")]
 pub mod strategies;
 #[cfg(feature = "proptest")]
+pub mod strkey;
+#[cfg(feature = "proptest")]
 pub mod temporal;
 #[cfg(feature = "proptest")]
 pub mod ttl;
@@ -65,12 +67,15 @@ pub use storage_tier::{
 };
 pub use strategies::fuzzed_invocation_args;
 #[cfg(feature = "proptest")]
-pub use strategies::{
-    soroban_map, soroban_vec, soroban_bytes, soroban_string, soroban_ascii_string,
+pub use strkey::{
+    account_strkey, contract_strkey, corrupted_strkey, valid_strkey, zero_account_strkey,
+    zero_contract_strkey, Strkey, StrkeyError, StrkeyKind,
 };
 #[cfg(feature = "proptest")]
 pub use temporal::{
-    ledger_sequence_interval, soroban_duration, soroban_timepoint, MAX_LEDGER_SEQUENCE,
+    ledger_sequence_interval, realistic_ledger_window, soroban_duration, soroban_timepoint,
+    LedgerWindow, MAX_LEDGER_SEQUENCE, MAX_LEDGER_TIMESTAMP, MAX_LEDGER_WINDOW_LEDGERS,
+    MIN_LEDGER_TIMESTAMP, SECONDS_PER_LEDGER,
 };
 #[cfg(feature = "proptest")]
 pub use ttl::{
