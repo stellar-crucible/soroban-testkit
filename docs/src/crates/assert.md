@@ -25,6 +25,7 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
+| `assert_event_emitted!(env, contract, topic, { field: value, .. })` | Asserts at least one matching event was emitted with expected contract, topic(s), and data fields |
 | `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
 | `assert_emitted_matches!(env, { .. })` | Asserts emitted events matching glob wildcards (`*`, `?`) or regex topic patterns and data fields |
 | `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
@@ -324,6 +325,47 @@ Types are checked by Soroban value deserialization, including `i128`, `u64`,
 `Address`, `Symbol`, and `bool`. A failure names each offending field and shows
 the expected type and observed type/value. The assertion requires at least one
 event matching the topic.
+
+### Declarative event assertion with `assert_event_emitted!`
+
+`assert_event_emitted!` provides ergonomic declarative assertions for contract events. It filters by contract ID, topic name(s), and data payload fields, asserting that at least one matching event was published:
+
+```rust
+use soroban_testkit_assert::assert_event_emitted;
+
+client.increment(&caller, &5);
+
+// Assert by contract, topic, and struct/map fields:
+assert_event_emitted!(&env, &contract_id, "incremented", {
+    caller: caller,
+    new_count: 5u32,
+});
+
+// Assert with multiple topics:
+assert_event_emitted!(&env, &contract_id, ["counter", "incremented"], {
+    new_count: 5u32,
+});
+
+// Assert by contract and topic only:
+assert_event_emitted!(&env, &contract_id, "incremented");
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Scope: the invocation that just ran</span>
+  <p>Like <code>EventMatcher::new(&amp;env)</code>, <code>assert_event_emitted!</code> inspects <code>env.events().all()</code>, which in Soroban SDK v28 returns events from the <strong>most recent contract invocation</strong> only. Invoke the assertion immediately after the contract call that should emit the event.</p>
+</div>
+
+When multiple events match the filters, the assertion succeeds (at least one match). If no event matches, it panics with a detailed diagnostic message displaying what was expected versus all events emitted during the invocation:
+
+```text
+panicked at 'assert_event_emitted! failed: no matching event found.
+Expected event:
+  contract: Contract(CAAAAA...)
+  topic(s): ["incremented"]
+  data: { new_count: 5u32 }
+Emitted events (1 in scope):
+  [1] contract: Contract(CAAAAA...), topics: [counter, incremented], data: {"caller": Contract(...), "new_count": 10}'
+```
 
 ## Regex and wildcard topic matching (assert_emitted_matches!)
 
