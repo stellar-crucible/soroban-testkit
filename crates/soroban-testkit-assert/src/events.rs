@@ -466,7 +466,7 @@ macro_rules! assert_event_topic_count {
 }
 
 /// Whether any topic of `event` is the symbol `topic`.
-fn has_topic(event: &soroban_sdk::xdr::ContractEvent, topic: &str) -> bool {
+pub(crate) fn has_topic(event: &soroban_sdk::xdr::ContractEvent, topic: &str) -> bool {
     let bytes = topic.as_bytes();
     let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
     body.topics.iter().any(|topic| match topic {
@@ -975,6 +975,10 @@ impl<'a> EventLog<'a> {
         &self.events
     }
 
+    pub fn env(&self) -> &'a Env {
+        self.env
+    }
+
     pub fn len(&self) -> usize {
         self.events.len()
     }
@@ -1019,7 +1023,7 @@ pub struct EventData<'a> {
 }
 
 impl<'a> EventData<'a> {
-    fn new(env: &'a Env, raw: soroban_sdk::xdr::ScVal) -> Self {
+    pub(crate) fn new(env: &'a Env, raw: soroban_sdk::xdr::ScVal) -> Self {
         Self { env, raw }
     }
 
