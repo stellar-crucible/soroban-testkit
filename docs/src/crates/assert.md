@@ -28,6 +28,8 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
 | `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
 | `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
+| `assert_contract_error!(client.try_call(..), MyError::Variant)` | The call failed with exactly that `#[contracterror]` variant |
+| `assert_host_error!(client.try_call(..), ScErrorType::Auth)` | The call failed with a host error of that category, category and code, or exact `Error` |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
@@ -338,6 +340,74 @@ Both macros evaluate the call once and distinguish a returned contract/host
 error from an invocation failure. `assert_no_contract_error!` returns the
 successful value; `assert_call_success_with_value!` compares it with the
 expected value.
+
+## Asserting exact contract and host errors
+
+`#[should_panic]` passes for *any* panic, so a test written to prove
+"unauthorized callers are refused" keeps passing when the call starts failing
+on a budget overflow instead. `assert_contract_error!` takes the result of a
+`try_*` client call and fails unless it carries exactly the expected variant:
+
+```rust
+use soroban_testkit_assert::assert_contract_error;
+
+assert_contract_error!(
+    client.try_transfer(&sender, &receiver, &1000),
+    TokenError::InsufficientBalance
+);
+```
+
+It handles every arm of the SDK v28 `try_*` shape,
+`Result<Result<T, ConversionError>, Result<E, InvokeError>>`:
+
+| The call returned | The macro |
+|-------------------|-----------|
+| `Err(Ok(e))` with `e == expected` | passes |
+| `Err(Ok(e))` with another variant | fails, naming both variants with code and category |
+| `Err(Err(InvokeError::Contract(code)))` | fails: a code the client's error enum has no variant for |
+| `Err(Err(InvokeError::Abort))` | fails: a panic or host failure |
+| `Ok(..)` | fails: the call unexpectedly succeeded, printing the returned value |
+
+```text
+assert_contract_error! failed: the call failed with a different error
+  expected: InsufficientBalance (code 1, category contract)
+  received: Unauthorized (code 2, category contract)
+  decoded:  Soroban Error [2]: unregistered contract error — add it to an ErrorRegistry to read it as text
+```
+
+The expected value can be the contract's error enum or a raw
+`soroban_sdk::Error::from_contract_error(code)`; codes and categories come
+from `DecodedError` in `soroban-testkit-core`.
+
+### Host errors
+
+`assert_host_error!` matches a host error at the precision you need:
+
+```rust
+use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
+use soroban_testkit_assert::assert_host_error;
+
+assert_host_error!(outcome, ScErrorType::Storage);                             // any storage error
+assert_host_error!(outcome, ScErrorType::Storage, ScErrorCode::MissingValue);  // exact category and code
+assert_host_error!(outcome, Error::from_contract_error(101));                  // an exact Error value
+```
+
+The last form is how to assert an error code that propagated from a
+*different* contract — a token's `InsufficientBalance` surfacing through a
+pool whose client only knows `AmmError`.
+
+Three things the host decides, not the macro:
+
+- A `#[contracterror]` client can only carry contract codes; a host failure
+  arrives as `InvokeError::Abort` with its category lost. The diagnostic says
+  so — call `env.try_invoke_contract::<_, soroban_sdk::Error>(..)` to keep it.
+- A host failure inside a native (non-Wasm) test contract surfaces as
+  `context/InvalidAction`: the host catches it as a failed contract frame.
+- Budget exhaustion is unrecoverable and escalates to a panic even through
+  `try_*`; catch it with `#[should_panic(expected = "Error(Budget, ExceededLimit)")]`.
+
+`check_contract_error` and `check_host_error` return the diagnostic as a
+`Result<(), String>` instead of panicking.
 
 ## Authorization matching
 

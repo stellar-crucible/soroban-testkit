@@ -51,6 +51,11 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `CoverageReport` | Aggregates execution metrics, coverage percentages, Markdown tables, and plaintext summaries |
 | `ClientDefinition` | Typed representation of contract client entry points for coverage auditing |
 | `client_definition!` | Macro for concise client entry point declaration |
+| `CallTracer` | Recovers the cross-contract call tree of an invocation: depth, contract, function, metered CPU/memory and outcome per frame; renders ASCII trees and Mermaid sequence diagrams |
+| `TraceFrame`, `CallOutcome` | One traced contract frame, and whether it returned, failed (with the host error) or is unknown |
+| `TtlInspector` | Live TTL of a storage entry in any tier, read without triggering eviction or auto-restore, with the ledger's rent thresholds |
+| `TtlStatus`, `RentThresholds` | `Live` / `Expired` (temporary) / `Archived` (persistent, instance), and the ledger's min/max TTL parameters |
+| `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
 
 ## Budget snapshots
 
