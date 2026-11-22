@@ -346,7 +346,7 @@ macro_rules! __assert_event_payload_field {
 }
 
 /// Reads a ledger value as `T`, or `None` when `T` does not describe it.
-fn read_as<T>(env: &Env, value: &ScVal) -> Option<T>
+pub(crate) fn read_as<T>(env: &Env, value: &ScVal) -> Option<T>
 where
     T: TryFromVal<Env, Val>,
 {

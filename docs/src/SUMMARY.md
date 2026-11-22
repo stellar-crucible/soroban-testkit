@@ -18,6 +18,7 @@
 - [Worked Example: Counter](./guides/counter-example.md)
 - [Worked Example: Token](./guides/token-example.md)
 - [Worked Example: Bounty Escrow](./guides/bounty-escrow-example.md)
+- [Worked Example: Vesting Escrow](./guides/vesting-escrow-example.md)
 - [Worked Example: Multisig Vault](./guides/multisig-vault-example.md)
 - [Worked Example: Flash Mint](./guides/flash-mint-example.md)
 - [Worked Example: Crowdfunding and Milestone Escrow](./guides/crowdfunding-example.md)
@@ -27,8 +28,7 @@
 - [Worked Example: Constant Product AMM](./guides/amm-example.md)
 - [Worked Example: Order Book DEX](./guides/orderbook-example.md)
 - [Worked Example: Non-Fungible Token (NFT)](./guides/nft-example.md)
-- [Worked Example: Governance DAO with Timelock](./guides/governance-example.md)
-- [Mocking Dependency Contracts](./guides/mocking.md)
+- [Worked Example: Dutch and Batch Auction](./guides/auction-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 
