@@ -19,6 +19,7 @@
 //!     }
 //! }
 //!
+//! # fn main() {
 //! let env = Env::default();
 //! let id = env.register(Ping, ());
 //! let client = PingClient::new(&env, &id);
@@ -27,6 +28,7 @@
 //! let mut auditor = DiagnosticEventAuditor::new();
 //! auditor.observe(&env);
 //! auditor.assert_within_limits();
+//! # }
 //! ```
 
 use soroban_env_host::events::HostEvent;
