@@ -4,6 +4,7 @@ members = [
     "crates/soroban-testkit-core",
     "crates/soroban-testkit-assert",
     "crates/soroban-testkit-fixtures",
+    "crates/soroban-testkit-fixtures-macros",
     "crates/soroban-testkit-generators",
     "examples/counter",
     "examples/domain_service",
