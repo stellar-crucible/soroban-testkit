@@ -1,0 +1,28 @@
+[package]
+name = "soroban-testkit-example-auction"
+version.workspace = true
+description = "A no_std Dutch and batch (uniform clearing price) auction exercising every soroban-testkit crate."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+soroban-testkit-fixtures = { path = "../../crates/soroban-testkit-fixtures" }
+soroban-testkit-core = { path = "../../crates/soroban-testkit-core" }
+soroban-testkit-assert = { path = "../../crates/soroban-testkit-assert" }
+soroban-testkit-generators = { path = "../../crates/soroban-testkit-generators", features = ["proptest"] }
+proptest = { workspace = true }
+
+[features]
+default = []
+testutils = ["soroban-sdk/testutils"]
+
