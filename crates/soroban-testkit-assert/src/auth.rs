@@ -4,10 +4,7 @@ use soroban_sdk::Address;
 
 /// Verifies that an invocation was authorized by *only* the expected address
 /// and no other unauthorized addresses or co-signers.
-pub fn assert_auth_invoker_distinct_internal(
-    expected_addr: &Address,
-    authorizations: &[Address],
-) {
+pub fn assert_auth_invoker_distinct_internal(expected_addr: &Address, authorizations: &[Address]) {
     for auth in authorizations {
         if auth != expected_addr {
             panic!(
@@ -19,7 +16,7 @@ pub fn assert_auth_invoker_distinct_internal(
 }
 
 /// Assert that a function invocation or block was authorized exclusively by
-    /// the declared authorized address and no others.
+/// the declared authorized address and no others.
 ///
 /// # Examples
 ///
@@ -102,6 +99,24 @@ macro_rules! __assert_auth_sub_tree_root {
             $($($rest)*)?
         )
     };
+    ($env:expr; $matcher:expr; sub_invokes: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.any_sub_invocations();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $matcher:expr; sub_invokes: [$($children:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_root!(
+            $env;
+            $matcher.sub_invocations($crate::__assert_auth_sub_tree_children!(
+                $env;
+                $crate::auth::SubInvocations::new();
+                $($children)*
+            ));
+            $($($rest)*)?
+        )
+    };
 }
 
 /// Parses nested node fields inside `sub_invocations: [ { ... } ]`.
@@ -118,6 +133,16 @@ macro_rules! __assert_auth_sub_tree_node {
         $crate::__assert_auth_sub_tree_node!(
             $env;
             $node.contract(&$contract);
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; invoker: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!($env; $node; $($($rest)*)?)
+    };
+    ($env:expr; $node:expr; invoker: $invoker:expr $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.contract(&$invoker);
             $($($rest)*)?
         )
     };
@@ -153,6 +178,24 @@ macro_rules! __assert_auth_sub_tree_node {
         )
     };
     ($env:expr; $node:expr; sub_invocations: [$($children:tt)*] $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.sub_invocations($crate::__assert_auth_sub_tree_children!(
+                $env;
+                $crate::auth::SubInvocations::new();
+                $($children)*
+            ));
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; sub_invokes: _ $(, $($rest:tt)*)?) => {
+        $crate::__assert_auth_sub_tree_node!(
+            $env;
+            $node.any_sub_invocations();
+            $($($rest)*)?
+        )
+    };
+    ($env:expr; $node:expr; sub_invokes: [$($children:tt)*] $(, $($rest:tt)*)?) => {
         $crate::__assert_auth_sub_tree_node!(
             $env;
             $node.sub_invocations($crate::__assert_auth_sub_tree_children!(
@@ -245,6 +288,231 @@ macro_rules! assert_auth_matches {
             $($args)*
         ));)?
         matcher.assert_matches()
+    }};
+}
+
+/// Asserts that the recorded authorizations are exactly the expected patterns.
+///
+/// Every expected pattern must match one distinct recorded authorization, and
+/// every recorded authorization must be used. Matching is one-to-one, so
+/// overlapping argument patterns cannot accidentally accept duplicate or
+/// unexpected authorizations.
+pub struct AuthStrictMatcher<'a> {
+    env: &'a Env,
+    expected: Vec<AuthMatcher<'a>>,
+}
+
+impl<'a> AuthStrictMatcher<'a> {
+    pub fn new(env: &'a Env) -> Self {
+        Self {
+            env,
+            expected: Vec::new(),
+        }
+    }
+
+    /// Adds one expected authorization pattern.
+    pub fn expect(mut self, expected: AuthMatcher<'a>) -> Self {
+        self.expected.push(expected);
+        self
+    }
+
+    /// Fails unless the expected patterns and recorded authorizations form a
+    /// complete one-to-one match, with a side-by-side diagnostic on failure.
+    pub fn assert_matches(&self) {
+        let auths = self.env.auths();
+        let mut observed_to_expected = vec![None; auths.len()];
+
+        for expected_index in 0..self.expected.len() {
+            let mut visited = vec![false; auths.len()];
+            assign_auth_pattern(
+                expected_index,
+                &self.expected,
+                &auths,
+                &mut visited,
+                &mut observed_to_expected,
+            );
+        }
+
+        let mut expected_to_observed = vec![None; self.expected.len()];
+        for (observed_index, expected_index) in observed_to_expected.iter().enumerate() {
+            if let Some(expected_index) = expected_index {
+                expected_to_observed[*expected_index] = Some(observed_index);
+            }
+        }
+
+        if self.expected.len() == auths.len() && expected_to_observed.iter().all(Option::is_some) {
+            return;
+        }
+
+        let expected_lines = self
+            .expected
+            .iter()
+            .enumerate()
+            .map(|(index, expected)| format!("[{index}] {}", expected.describe()))
+            .collect::<Vec<_>>();
+        let observed_lines = auths
+            .iter()
+            .enumerate()
+            .map(|(index, (invoker, invocation))| {
+                format!("[{index}] {}", describe_auth(self.env, invoker, invocation))
+            })
+            .collect::<Vec<_>>();
+        let comparison = format_side_by_side(
+            "Expected authorization(s)",
+            &expected_lines,
+            "Observed authorization(s)",
+            &observed_lines,
+        );
+        let missing = expected_to_observed
+            .iter()
+            .enumerate()
+            .filter(|(_, observed)| observed.is_none())
+            .map(|(index, _)| format!("  [{index}] {}", self.expected[index].describe()))
+            .collect::<Vec<_>>();
+        let unexpected = observed_to_expected
+            .iter()
+            .enumerate()
+            .filter(|(_, expected)| expected.is_none())
+            .map(|(index, _)| {
+                let (invoker, invocation) = &auths[index];
+                format!(
+                    "  [{index}] {}",
+                    describe_auth(self.env, invoker, invocation)
+                )
+            })
+            .collect::<Vec<_>>();
+        let missing = if missing.is_empty() {
+            "  (none)".to_string()
+        } else {
+            missing.join("\n")
+        };
+        let unexpected = if unexpected.is_empty() {
+            "  (none)".to_string()
+        } else {
+            unexpected.join("\n")
+        };
+
+        panic!(
+            "Strict authorization assertion failed: expected {} authorization(s), observed {}\n{}\nMissing expected authorization(s):\n{}\nUnexpected observed authorization(s):\n{}",
+            self.expected.len(),
+            auths.len(),
+            comparison,
+            missing,
+            unexpected,
+        );
+    }
+}
+
+fn assign_auth_pattern(
+    expected_index: usize,
+    expected: &[AuthMatcher<'_>],
+    auths: &[(Address, AuthorizedInvocation)],
+    visited: &mut [bool],
+    observed_to_expected: &mut [Option<usize>],
+) -> bool {
+    for (observed_index, (invoker, invocation)) in auths.iter().enumerate() {
+        if visited[observed_index] || !expected[expected_index].matches(invoker, invocation) {
+            continue;
+        }
+        visited[observed_index] = true;
+
+        let previous_expected = observed_to_expected[observed_index];
+        if previous_expected.is_none()
+            || assign_auth_pattern(
+                previous_expected.unwrap(),
+                expected,
+                auths,
+                visited,
+                observed_to_expected,
+            )
+        {
+            observed_to_expected[observed_index] = Some(expected_index);
+            return true;
+        }
+    }
+    false
+}
+
+/// Asserts that the recorded authorizations are exactly the listed patterns.
+///
+/// Each entry requires a `function` and may include an `invoker` and
+/// position-by-position `args` pattern. `_` in `args` accepts any value at that
+/// position. Unlike [`assert_auth_matches!`], this macro fails for both missing
+/// expected authorizations and any unlisted recorded authorization.
+///
+/// ```text
+/// assert_auth_strict!(env, [
+///     {
+///         invoker: admin,
+///         function: "set_admin",
+///         args: [new_admin],
+///     },
+/// ]);
+/// ```
+///
+/// Failures include a side-by-side list of expected and observed
+/// authorizations, followed by any unmatched expectations and extra records.
+#[macro_export]
+macro_rules! assert_auth_strict {
+    ($env:expr, [
+        $(
+            {
+                $(invoker: $invoker:expr,)?
+                function: $function:expr
+                $(, args: [$($args:tt)*])?
+                $(,)?
+            }
+        ),* $(,)?
+    ]) => {{
+        let env = &$env;
+        let matcher = $crate::auth::AuthStrictMatcher::new(env);
+        $(
+            let matcher = matcher.expect({
+                let expected = $crate::auth::AuthMatcher::new(env).function($function);
+                $(let expected = expected.invoker(&$invoker);)?
+                $(let expected = expected.args($crate::__assert_auth_args!(
+                    env;
+                    $crate::auth::AuthArgs::new();
+                    $($args)*
+                ));)?
+                expected
+            });
+        )*
+        matcher.assert_matches()
+    }};
+}
+
+/// Asserts that the recorded authorizations are exactly the expected ones as
+/// an **unordered multiset**.
+///
+/// `env.auths()` does not promise an order: a call that triggers several
+/// independent `require_auth` demands can record them in any sequence, and the
+/// sequence can change between SDK versions. This macro therefore matches
+/// without regard to order, but still one-to-one: every expected pattern must
+/// match a distinct recorded authorization, and every recorded authorization
+/// must be consumed. Duplicates matter, so two identical patterns require two
+/// identical records.
+///
+/// Each entry accepts the same fields as [`assert_auth_strict!`]: `function`
+/// (required), `invoker` (optional), and positional `args` where `_` accepts
+/// any value.
+///
+/// ```text
+/// assert_auth_exact_multiset!(env, [
+///     { invoker: first, function: "joint", args: [_, second] },
+///     { invoker: second, function: "joint", args: [first, _] },
+/// ]);
+/// ```
+///
+/// On failure the message renders a side-by-side table of expected and observed
+/// authorizations, then lists the expectations that matched nothing and the
+/// observed authorizations that matched no expectation.
+#[macro_export]
+macro_rules! assert_auth_exact_multiset {
+    ($env:expr, [$($expected:tt)*] $(,)?) => {{
+        // The strict matcher already performs the one-to-one multiset
+        // assignment; this macro is the order-insensitive name for it.
+        $crate::assert_auth_strict!($env, [$($expected)*])
     }};
 }
 
@@ -1219,6 +1487,162 @@ mod tests {
     fn assert_auth_count_reports_the_observed_total() {
         let env = Env::default();
         AuthMatcher::new(&env).assert_auth_count(2);
+    }
+
+    #[test]
+    fn strict_auth_matches_the_expected_multiset() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        crate::assert_auth_strict!(env, [
+            {
+                function: "joint",
+                args: [_, _],
+            },
+            {
+                invoker: first,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+        ]);
+    }
+
+    #[test]
+    fn strict_auth_rejects_surplus_authorizations() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::assert_auth_strict!(env, [
+                {
+                    invoker: first,
+                    function: "joint",
+                },
+            ]);
+        }))
+        .expect_err("surplus authorization must fail");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("strict auth failure should have a text diagnostic");
+
+        assert!(message.contains("Expected authorization(s)"));
+        assert!(message.contains("Observed authorization(s)"));
+        assert!(message.contains("Unexpected observed authorization(s)"));
+    }
+
+    #[test]
+    fn exact_multiset_matches_authorizations_in_any_order() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        // The recorded order is first -> second; the expectation is reversed.
+        crate::assert_auth_exact_multiset!(env, [
+            {
+                invoker: second,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+            {
+                invoker: first,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Missing expected authorization(s)")]
+    fn exact_multiset_rejects_a_missing_authorization() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+        let stranger = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        crate::assert_auth_exact_multiset!(env, [
+            {
+                invoker: first,
+                function: "joint",
+                args: [first.clone(), second.clone()],
+            },
+            {
+                invoker: stranger,
+                function: "joint",
+                args: [first, second],
+            },
+        ]);
+    }
+
+    #[test]
+    fn exact_multiset_rejects_surplus_authorizations_with_a_diff_table() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.joint(&first, &second);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::assert_auth_exact_multiset!(env, [
+                {
+                    invoker: first,
+                    function: "joint",
+                    args: [first.clone(), second.clone()],
+                },
+            ]);
+        }))
+        .expect_err("a surplus authorization must fail the multiset assertion");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("the multiset failure should have a text diagnostic");
+
+        assert!(
+            message.contains("Strict authorization assertion failed"),
+            "{message}"
+        );
+        assert!(message.contains("Expected authorization(s)"), "{message}");
+        assert!(message.contains("Observed authorization(s)"), "{message}");
+        assert!(
+            message.contains("Unexpected observed authorization(s)"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Missing expected authorization(s)")]
+    fn strict_auth_rejects_missing_authorizations() {
+        let (env, id) = signing_env();
+        let client = AuthContractClient::new(&env, &id);
+        let signer = Address::generate(&env);
+        let stranger = Address::generate(&env);
+
+        client.guarded(&signer, &5u32);
+
+        crate::assert_auth_strict!(env, [
+            {
+                invoker: stranger,
+                function: "guarded",
+                args: [signer, 5u32],
+            },
+        ]);
     }
 
     #[test]

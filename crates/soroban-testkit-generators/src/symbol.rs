@@ -28,8 +28,7 @@ pub fn soroban_identifier_symbol() -> impl Strategy<Value = Symbol> {
 /// Strategy for generating strings with rejected characters (spaces, special symbols, Unicode)
 /// that are guaranteed to fail `Symbol::try_from` or panic/reject.
 pub fn invalid_symbol_strategy() -> impl Strategy<Value = String> {
-    proptest::string::string_regex("[^a-zA-Z0-9_]+")
-        .expect("invalid symbol regex")
+    proptest::string::string_regex("[^a-zA-Z0-9_]+").expect("invalid symbol regex")
 }
 
 #[cfg(test)]
@@ -44,11 +43,8 @@ mod tests {
         let mut generated_any = false;
 
         for _ in 0..100 {
-            let symbol = strat
-                .new_tree(&mut runner)
-                .unwrap()
-                .current();
-            
+            let symbol = strat.new_tree(&mut runner).unwrap().current();
+
             let s_str = symbol.to_string();
             assert!(!s_str.is_empty());
             assert!(s_str.len() <= 32);
@@ -64,12 +60,14 @@ mod tests {
         let strat = invalid_symbol_strategy();
 
         for _ in 0..50 {
-            let inval = strat
-                .new_tree(&mut runner)
-                .unwrap()
-                .current();
-            
-            assert!(Symbol::try_from(inval.as_str()).is_err() || inval.chars().any(|c| !(c.is_ascii_alphanumeric() || c == '_')));
+            let inval = strat.new_tree(&mut runner).unwrap().current();
+
+            assert!(
+                Symbol::try_from(inval.as_str()).is_err()
+                    || inval
+                        .chars()
+                        .any(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+            );
         }
     }
 }
