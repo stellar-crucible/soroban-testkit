@@ -30,6 +30,7 @@
 - [Worked Example: Non-Fungible Token (NFT)](./guides/nft-example.md)
 - [Worked Example: Portfolio Rebalancing Vault](./guides/portfolio-vault-example.md)
 - [Worked Example: Dutch and Batch Auction](./guides/auction-example.md)
+- [Worked Example: vAMM Perpetuals](./guides/vamm-example.md)
 - [Budget-Aware Testing](./guides/budget-testing.md)
 - [Property Testing](./guides/property-testing.md)
 

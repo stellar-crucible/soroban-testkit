@@ -16,6 +16,7 @@ pub mod migration;
 pub mod mock;
 pub mod profiles;
 pub mod protocol_registry;
+pub mod reentrancy;
 pub mod topology;
 #[cfg(test)]
 mod ttl_tests;
