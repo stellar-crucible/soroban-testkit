@@ -1,12 +1,14 @@
-# `soroban-testkit-assert`
+# soroban-testkit-assert
 
-`soroban-testkit-assert` provides assertions for Soroban contracts, including event counts, state conservation, storage quotas, and least-privilege authorization checks.
+Fluent matchers for contract events, authorizations and storage, so assertions read like the behaviour you expect.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget · panic_msg</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
+
+## API at a glance
 
 | Method | Asserts |
 |--------|---------|
@@ -55,6 +57,22 @@
 ## Event matching
 
 Replace raw tuple iteration with a fluent API:
+
+```rust
+use soroban_testkit_assert::events::EventMatcher;
+
+// Assert at least one event was emitted
+EventMatcher::new(&env).assert_emitted();
+
+// Assert exact count
+EventMatcher::new(&env).assert_count(3);
+
+// Filter by contract and topic
+EventMatcher::new(&env)
+    .from_contract(&contract_id)
+    .with_topic("Transfer")
+    .assert_emitted();
+```
 
 <div class="tk-callout">
   <span class="tk-callout__title">Scope: the invocation that just ran</span>
@@ -1344,3 +1362,4 @@ use soroban_testkit_assert::assert_auth_invoker_distinct;
 // Asserts that only admin_address authorized the operation
 assert_auth_invoker_distinct!(&admin_address, &[admin_address.clone()]);
 ```
+

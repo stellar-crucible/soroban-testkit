@@ -52,6 +52,10 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `contract_cost_model()` | `ContractCostModel` | valid host cost schedule covering all `ContractCostType` variants, shrinking to baseline |
 | `contract_cost_model_with_multipliers(cpu, mem)` | `ContractCostModel` | cost schedule with custom CPU and Memory fee multipliers (percentage) |
 | `contract_cost_model_with_config(config)` | `ContractCostModel` | cost schedule with per-dimension and per-cost-type multiplier overrides |
+| `soroban_symbol(env)` | `Symbol` | valid alphanumeric and underscore symbol (1 to 32 chars) |
+| `sorobans_symbol_strategy(env, min, max)` | `Symbol` | valid symbol constrained to custom length range `min..=max` |
+| `soroban_identifier_symbol(env)` | `Symbol` | standard naming convention identifier starting with letter |
+| `invalid_symbol_strategy()` | `String` | strings with rejected/invalid characters (spaces, special symbols, etc.) |
 | `xdr_symbol(env, max_len)` | `Symbol` | `[a-zA-Z0-9_]`, at most `max_len` (≤ 32) characters |
 | `xdr_string(env, max_len)` | `String` | printable ASCII, at most `max_len` bytes |
 | `xdr_bytes(env, max_len)` | `Bytes` | at most `max_len` bytes |

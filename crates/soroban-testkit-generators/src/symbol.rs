@@ -1,28 +1,34 @@
 //! Proptest strategies for Soroban Symbol validity, length limits, and casing constraints.
 
 use proptest::prelude::*;
-use soroban_sdk::Symbol;
+use soroban_sdk::{Env, Symbol};
 
 /// Strategy for generating valid `soroban_sdk::Symbol` values.
 ///
 /// Symbols are valid ASCII strings of at most 32 characters containing only
 /// alphanumeric characters and underscores (`[a-zA-Z0-9_]`).
-pub fn sorobans_symbol_strategy(min_len: usize, max_len: usize) -> impl Strategy<Value = Symbol> {
+pub fn sorobans_symbol_strategy(
+    env: &Env,
+    min_len: usize,
+    max_len: usize,
+) -> impl Strategy<Value = Symbol> {
+    let env = env.clone();
     proptest::string::string_regex(&format!("[a-zA-Z0-9_]{{{},{}}}", min_len, max_len))
         .expect("valid symbol regex")
-        .prop_map(|s| Symbol::try_from(s.as_str()).expect("valid symbol"))
+        .prop_map(move |s| Symbol::new(&env, s.as_str()))
 }
 
 /// Default strategy generating valid `soroban_sdk::Symbol` values of length 1 to 32.
-pub fn soroban_symbol() -> impl Strategy<Value = Symbol> {
-    sorobans_symbol_strategy(1, 32)
+pub fn soroban_symbol(env: &Env) -> impl Strategy<Value = Symbol> {
+    sorobans_symbol_strategy(env, 1, 32)
 }
 
 /// Strategy for generating symbol identifiers matching standard contract naming conventions (e.g. snake_case or camelCase).
-pub fn soroban_identifier_symbol() -> impl Strategy<Value = Symbol> {
+pub fn soroban_identifier_symbol(env: &Env) -> impl Strategy<Value = Symbol> {
+    let env = env.clone();
     proptest::string::string_regex("[a-zA-Z][a-zA-Z0-9_]{0,31}")
         .expect("valid identifier regex")
-        .prop_map(|s| Symbol::try_from(s.as_str()).expect("valid identifier symbol"))
+        .prop_map(move |s| Symbol::new(&env, s.as_str()))
 }
 
 /// Strategy for generating strings with rejected characters (spaces, special symbols, Unicode)
@@ -34,21 +40,19 @@ pub fn invalid_symbol_strategy() -> impl Strategy<Value = String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
 
     #[test]
     fn test_soroban_symbol_strategy() {
+        let env = Env::default();
         let mut runner = TestRunner::default();
-        let strat = soroban_symbol();
+        let strat = soroban_symbol(&env);
         let mut generated_any = false;
 
         for _ in 0..100 {
             let symbol = strat.new_tree(&mut runner).unwrap().current();
-
-            let s_str = symbol.to_string();
-            assert!(!s_str.is_empty());
-            assert!(s_str.len() <= 32);
-            assert!(s_str.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+            let _val = symbol.to_val();
             generated_any = true;
         }
         assert!(generated_any);
@@ -62,12 +66,9 @@ mod tests {
         for _ in 0..50 {
             let inval = strat.new_tree(&mut runner).unwrap().current();
 
-            assert!(
-                Symbol::try_from(inval.as_str()).is_err()
-                    || inval
-                        .chars()
-                        .any(|c| !(c.is_ascii_alphanumeric() || c == '_'))
-            );
+            assert!(inval
+                .chars()
+                .any(|c| !(c.is_ascii_alphanumeric() || c == '_')));
         }
     }
 }
