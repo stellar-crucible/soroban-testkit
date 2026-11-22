@@ -60,14 +60,14 @@ fn position_write_is_persistent_storage() {
     let trader = Address::generate(&env);
     client.open_position(&trader, &1, &1_000, &2);
     let snapshot = StorageSnapshot::capture(&env, &contract);
-    assert!(snapshot.in_tier(StorageTier::Persistent).len() >= 1);
+    assert!(!snapshot.in_tier(StorageTier::Persistent).is_empty());
 }
 
 #[test]
 fn vamm_state_is_instance_storage() {
     let (env, contract) = setup();
     let snapshot = StorageSnapshot::capture(&env, &contract);
-    assert!(snapshot.in_tier(StorageTier::Instance).len() >= 1);
+    assert!(!snapshot.in_tier(StorageTier::Instance).is_empty());
 }
 
 #[test]
