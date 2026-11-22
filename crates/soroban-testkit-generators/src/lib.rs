@@ -1,4 +1,8 @@
 pub mod event_fuzz;
+pub mod types;
+
+#[cfg(feature = "arbitrary")]
+pub mod arbitrary;
 
 #[cfg(feature = "proptest")]
 pub mod authorization;
@@ -19,11 +23,15 @@ pub mod storage_tier;
 #[cfg(feature = "proptest")]
 pub mod strategies;
 #[cfg(feature = "proptest")]
+pub mod strkey;
+#[cfg(feature = "proptest")]
 pub mod temporal;
 #[cfg(feature = "proptest")]
 pub mod ttl;
 #[cfg(feature = "proptest")]
 pub mod tuples;
+#[cfg(feature = "proptest")]
+pub mod xdr;
 
 #[cfg(feature = "proptest")]
 pub use authorization::{address_with_nonce, authorization_credential, sequential_nonces};
@@ -44,7 +52,9 @@ pub use differential::{
     DivergenceKind, ExecutionTrace, IntoTrace,
 };
 #[cfg(feature = "proptest")]
-pub use errors::{host_error_code_coverage, HostError};
+pub use errors::{
+    contract_error_code, error_with_type, host_error, host_error_code_coverage, HostError,
+};
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 #[cfg(feature = "proptest")]
@@ -55,10 +65,18 @@ pub use storage_tier::{
     storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
     MixedTierTtlAllocation, StorageTierWithTtl,
 };
+#[cfg(feature = "proptest")]
 pub use strategies::fuzzed_invocation_args;
 #[cfg(feature = "proptest")]
+pub use strkey::{
+    account_strkey, contract_strkey, corrupted_strkey, valid_strkey, zero_account_strkey,
+    zero_contract_strkey, Strkey, StrkeyError, StrkeyKind,
+};
+#[cfg(feature = "proptest")]
 pub use temporal::{
-    ledger_sequence_interval, soroban_duration, soroban_timepoint, MAX_LEDGER_SEQUENCE,
+    ledger_sequence_interval, realistic_ledger_window, soroban_duration, soroban_timepoint,
+    LedgerWindow, MAX_LEDGER_SEQUENCE, MAX_LEDGER_TIMESTAMP, MAX_LEDGER_WINDOW_LEDGERS,
+    MIN_LEDGER_TIMESTAMP, SECONDS_PER_LEDGER,
 };
 #[cfg(feature = "proptest")]
 pub use ttl::{
@@ -68,4 +86,9 @@ pub use ttl::{
 #[cfg(feature = "proptest")]
 pub use tuples::{
     byte_array, byte_array_32, byte_array_64, soroban_tuple_2, soroban_tuple_3, ByteArrayStrategy,
+};
+pub use types::{AddressBytes, AddressType};
+#[cfg(feature = "proptest")]
+pub use xdr::{
+    xdr_bytes, xdr_map, xdr_string, xdr_symbol, xdr_val, xdr_value, xdr_vec, XdrBounds, XdrValue,
 };

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "cases": {
+    "claim": {
+      "cpu_insns": 266893,
+      "mem_bytes": 43436
+    },
+    "create_schedule": {
+      "cpu_insns": 215374,
+      "mem_bytes": 36671
+    },
+    "revoke": {
+      "cpu_insns": 253386,
+      "mem_bytes": 41154
+    }
+  }
+}

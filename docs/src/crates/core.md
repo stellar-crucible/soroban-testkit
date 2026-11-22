@@ -951,6 +951,71 @@ When uninvoked functions are detected, `report.to_markdown()` renders detailed s
 > **2 uninvoked contract entry point(s) detected.** Unexercised administrative, emergency, or recovery functions leave critical code paths untested.
 ```
 
+## Memory Allocation and Footprint Profiler
+
+The Soroban host enforces strict memory limits alongside CPU limits. Contracts with nested collections or recursive data structures frequently exhaust host memory on-chain despite passing CPU metering locally.
+
+[`MemoryProfiler`] captures memory allocation deltas, measures memory bytes metered per execution step via `env.budget().memory_bytes_cost()`, tracks host object allocations, identifies peak allocation spikes, and generates structured reports with configurable threshold warnings:
+
+```rust
+use soroban_testkit_core::memory_profiler::MemoryProfiler;
+
+let mut profiler = MemoryProfiler::new(&ctx.env)
+    .with_warning_threshold(500_000);
+
+profiler.profile_call("batch_mint", || {
+    token_client.batch_mint(&recipients, &amounts);
+});
+
+assert!(profiler.peak_memory_bytes() < 500_000);
+println!("{}", profiler.report());
+```
+
+Structured output formats:
+- Parseable text summary: `println!("{}", profiler.report())`
+- JSON profile report: `profiler.report().to_json()`
+
+## Comparative Budget Benchmarking and Diff Reporting
+
+While `budget_guard!` and `BudgetBaseline` check costs against fixed ceilings, protocol upgrades require comparative reports across versions or PRs to detect subtle gas regressions across multiple functions before merging.
+
+[`BudgetComparison`] diffs two `budget.json` baseline files, calculates delta CPU instructions, memory bytes, and percentage shifts per contract function, and flags regressions exceeding configurable thresholds (e.g. `> 5%`):
+
+```rust
+use soroban_testkit_core::budget_report::BudgetComparison;
+
+let report = BudgetComparison::diff_files("budget_base.json", "budget_head.json")?;
+println!("{}", report.to_markdown_table());
+
+if report.has_regressions_above(0.05) {
+    panic!("Gas regression detected: {}", report.summary());
+}
+```
+
+### GitHub PR Comment Markdown Table
+
+`report.to_markdown_table()` generates clean Markdown tables formatted for automated CI pull request comment injection:
+
+```markdown
+### 📊 Soroban Budget Comparison Report
+
+| Function | Status | CPU (Base → Head) | CPU Shift | Mem (Base → Head) | Mem Shift |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| `batch_mint` | 🔴 Regressed | 1,000,000 → 1,120,000 | +12.0% | 50,000 → 55,000 | +10.0% |
+| `transfer` | 🟢 Improved | 500,000 → 450,000 | -10.0% | 20,000 → 18,000 | -10.0% |
+| `balance` | ⚪ Unchanged | 100,000 → 100,000 | 0.0% | 5,000 → 5,000 | 0.0% |
+```
+
+### Standalone Responsive HTML Reports
+
+`report.to_html_report()` generates a standalone HTML document with KPI summary cards, responsive tables, and visual diff bars:
+
+```rust
+let html = report.to_html_report();
+std::fs::write("target/budget_report.html", html).unwrap();
+```
+
+
 <hr class="tk-divider" />
 
 <p class="tk-muted">Next: <a href="./assert.html">soroban-testkit-assert</a> — turn these measurements into readable assertions.</p>

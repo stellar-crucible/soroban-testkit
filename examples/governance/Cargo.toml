@@ -1,0 +1,20 @@
+[package]
+name = "governance"
+description = "Multi-party governance DAO with weighted voting, quorum and a timelock — worked example"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+soroban-testkit-assert = { path = "../../crates/soroban-testkit-assert" }
+soroban-testkit-core = { path = "../../crates/soroban-testkit-core" }
+soroban-testkit-fixtures = { path = "../../crates/soroban-testkit-fixtures" }
+soroban-testkit-generators = { path = "../../crates/soroban-testkit-generators" }

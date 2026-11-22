@@ -56,9 +56,12 @@ soroban-testkit-generators = { git = "https://github.com/stellar-crucible/soroba
 
 | Feature | Description |
 |---------|-------------|
-| `proptest` (default) | Enable proptest strategies — the whole `strategies` module is gated on it |
+| `proptest` (default) | Enable proptest strategies — the `strategies` and `xdr` modules are gated on it |
+| `arbitrary` | `Arbitrary` implementations for cargo-fuzz and afl harnesses — see [Fuzzing with `arbitrary`](../crates/generators.md#fuzzing-with-arbitrary-cargo-fuzz-afl). Builds without `proptest` |
 
-An `arbitrary` backend for the fuzzers that drive inputs through that crate instead of proptest is tracked as [#16](https://github.com/stellar-crucible/soroban-testkit/issues/16). There is no flag for it yet.
+For a fuzz-only crate, turn proptest off: `soroban-testkit-generators = { version = "0.4.1", default-features = false, features = ["arbitrary"] }`.
+
+`#[mock_contract]` lives in its own crate, `soroban-testkit-mock`; add it as a dev-dependency to generate mock dependency contracts — see [Mocking Dependency Contracts](../guides/mocking.md).
 
 <div class="tk-callout">
   <span class="tk-callout__title">Versioning</span>
