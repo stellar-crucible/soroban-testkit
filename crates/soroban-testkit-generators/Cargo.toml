@@ -1,7 +1,7 @@
 [package]
 name = "soroban-testkit-generators"
-description = "Soroban-aware property testing generators for proptest"
-keywords = ["soroban", "stellar", "testing", "proptest", "property-testing"]
+description = "Soroban-aware property testing generators for proptest and arbitrary"
+keywords = ["soroban", "stellar", "proptest", "arbitrary", "fuzzing"]
 categories = ["development-tools::testing"]
 homepage = "https://stellar-crucible.github.io/soroban-testkit/"
 readme = "README.md"
@@ -20,7 +20,14 @@ proptest = { workspace = true, optional = true }
 ed25519-dalek = { version = "2.2.0", default-features = false, optional = true }
 k256 = { version = "0.13.4", default-features = false, features = ["ecdsa", "arithmetic"], optional = true }
 sha2 = { version = "0.10.9", default-features = false, optional = true }
+arbitrary = { version = "1.3.2", optional = true }
 
 [features]
 default = ["proptest"]
+arbitrary = ["dep:arbitrary"]
 proptest = ["dep:proptest", "dep:ed25519-dalek", "dep:k256", "dep:sha2", "dep:soroban-testkit-core", "dep:soroban-env-host"]
+
+[dev-dependencies]
+# Turns the `arbitrary` feature on for this crate's own tests, so
+# `cargo test --workspace` runs the cargo-fuzz harness integration test.
+soroban-testkit-generators = { path = ".", features = ["arbitrary"] }

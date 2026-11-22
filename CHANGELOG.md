@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/src/roadmap.md` and `docs/src/crates/fixtures.md` both linked the funded builder-registration issue, which no longer exists. The roadmap row is gone and the fixtures card keeps the idea without the dead link
 - The locally-runnable test count that `README.md`, `CONTRIBUTING.md` and `docs/src/contributing.md` quote was stale: all three said 182 where `cargo test --workspace --locked` measured 183 on untouched `main` before this example landed, and 220 with it. The `Budget baseline` jobs still ignored stay ignored, so the `+ 2` half of the sentence was already correct. The roadmap's next-cycle row for the token example is now a landed card, and `docs/src/guides/property-testing.md` names the package whose suite demonstrates what the page describes rather than leaving it hypothetical
 
+### Fixed
+- `soroban-testkit-generators` builds with `--no-default-features` again: the crate root re-exported `strategies::fuzzed_invocation_args` without the `proptest` gate, so the crate failed to compile whenever proptest was off. `AddressBytes` and `AddressType` moved to the always-compiled `types` module and are still re-exported from `strategies`
+
 ## [0.4.1] - 2026-11-02
 
 No new API. This release stops the toolkit claiming a capability it does not have — `soroban-testkit-generators` advertised an `arbitrary` backend in its published description, its manifest and five places in the documentation, while not one line of Rust was gated on the flag — and gives a first-time contributor somewhere to start, since the funded tracker's smallest task was previously `complexity:medium`.

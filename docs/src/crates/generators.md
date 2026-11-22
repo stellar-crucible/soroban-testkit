@@ -4,8 +4,8 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default)</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · errors · tuples · ttl · storage_tier · cost_model</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default) · arbitrary</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · xdr · arbitrary · errors · tuples · ttl · storage_tier · cost_model</span></div>
 </div>
 
 ## Available strategies
@@ -52,6 +52,13 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `contract_cost_model()` | `ContractCostModel` | valid host cost schedule covering all `ContractCostType` variants, shrinking to baseline |
 | `contract_cost_model_with_multipliers(cpu, mem)` | `ContractCostModel` | cost schedule with custom CPU and Memory fee multipliers (percentage) |
 | `contract_cost_model_with_config(config)` | `ContractCostModel` | cost schedule with per-dimension and per-cost-type multiplier overrides |
+| `xdr_symbol(env, max_len)` | `Symbol` | `[a-zA-Z0-9_]`, at most `max_len` (≤ 32) characters |
+| `xdr_string(env, max_len)` | `String` | printable ASCII, at most `max_len` bytes |
+| `xdr_bytes(env, max_len)` | `Bytes` | at most `max_len` bytes |
+| `xdr_vec(env, element, max_len)` | `Vec<T>` | at most `max_len` elements drawn from any XDR strategy |
+| `xdr_map(env, key, value, max_len)` | `Map<K, V>` | at most `max_len` entries; duplicate keys collapse |
+| `xdr_value(bounds)` | `XdrValue` | an env-free value tree inside an `XdrBounds` |
+| `xdr_val(env, bounds)` | `Val` | a host value built from an `xdr_value` tree |
 
 ## Usage with proptest
 
@@ -752,6 +759,149 @@ proptest! {
   <span class="tk-callout__title">Shrinking goes to the baseline protocol fee schedule</span>
   <p>proptest shrinks integer offsets towards zero. <code>contract_cost_model()</code> generates fee shifts as offsets relative to 100% baseline, so failing runs simplify towards the standard on-chain protocol fee schedule (<code>100%</code> / <code>1.0x</code>) rather than stopping at an arbitrary random multiplier.</p>
 </div>
+
+## XDR values: symbols, strings, bytes, vectors and maps
+
+The `xdr` module generates the complex argument types contract interfaces
+take, with configurable size bounds, and composes them into nested shapes.
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::Env;
+use soroban_testkit_generators::xdr::{xdr_bytes, xdr_map, xdr_string, xdr_symbol, xdr_vec};
+
+let env = Env::default();
+
+// Map<Symbol, Vec<Symbol>>: at most 5 keys, each with at most 4 symbols.
+let tags = xdr_map(&env, xdr_symbol(&env, 10), xdr_vec(&env, xdr_symbol(&env, 10), 4), 5);
+
+// A full argument tuple for `index(label: String, tags: Map<..>, payload: Bytes)`.
+let args = (xdr_string(&env, 24), tags, xdr_bytes(&env, 32));
+```
+
+Each typed strategy returns a host value owned by `env`, so it can be passed
+straight to a generated client. Element strategies can be any other strategy
+whose value converts to and from `Val`, so `xdr_vec(&env, xdr_vec(&env,
+xdr_symbol(&env, 8), 2), 3)` is a `Vec<Vec<Symbol>>`.
+
+### Recursive values and depth limits
+
+When a contract accepts a bare `Val` — or you want to fuzz any shape at all —
+use `xdr_value` / `xdr_val` with an `XdrBounds`:
+
+```rust
+use soroban_testkit_generators::xdr::{xdr_val, xdr_value, XdrBounds};
+
+let bounds = XdrBounds::default()       // symbol ≤ 32, string ≤ 64, bytes ≤ 64,
+    .with_max_collection_len(4)         // vectors / maps ≤ 4 entries
+    .with_max_depth(3);                 // at most 3 levels of nesting
+
+proptest! {
+    #[test]
+    fn echo_round_trips(value in xdr_val(&env, bounds)) {
+        let echoed = client.echo(&value);
+        // compare via ScVal::try_from_val(&env, &value)
+    }
+}
+```
+
+| `XdrBounds` field | Default | Meaning |
+|-------------------|---------|---------|
+| `max_symbol_len` | 32 | longest symbol, clamped to the host's 32-character limit |
+| `max_string_len` | 64 | longest string, in bytes |
+| `max_bytes_len` | 64 | longest byte array |
+| `max_collection_len` | 8 | most elements per vector / entries per map |
+| `max_depth` | 3 | container nesting: `0` = scalars only, `1` = a vector or map of scalars, … |
+
+`xdr_value` produces an `XdrValue` — an environment-free description covering
+`Void`, `Bool`, `U32`, `I32`, `U64`, `I64`, `U128`, `I128`, `Symbol`, `String`,
+`Bytes`, `Vec` and `Map` — that prints readably when a case fails and is turned
+into a `Val` with `to_val(&env)`. Generation uses `prop_recursive`, so the
+depth bound is a hard cap rather than a probability: a tree can never recurse
+past `max_depth`, which keeps generation off the stack-overflow path and inside
+the host's object limits. `XdrValue::depth()` and `max_collection_len()` let a
+test assert the bounds held. Map keys are scalars and are de-duplicated, and
+every generated value converts to a valid `ScVal`.
+
+`tests/xdr_contract.rs` drives a sample contract that takes `String`,
+`Map<Symbol, Vec<Symbol>>`, `Bytes`, `Val` and `Vec<Val>` arguments with these
+strategies and checks every value round-trips through storage and across the
+contract boundary.
+
+## Fuzzing with `arbitrary` (cargo-fuzz, afl)
+
+Coverage-guided fuzzers such as [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz)
+and [afl.rs](https://github.com/rust-fuzz/afl.rs) build typed inputs with the
+[`arbitrary`](https://docs.rs/arbitrary) crate rather than proptest. The
+`arbitrary` feature implements `Arbitrary` for the same value ranges the
+proptest strategies use. It compiles on its own — proptest is not required:
+
+```toml
+[dependencies]
+soroban-testkit-generators = { version = "0.4", default-features = false, features = ["arbitrary"] }
+```
+
+| Type | Generated value |
+|------|-----------------|
+| `AddressBytes` | an account (`G...`) or contract (`C...`) address, 32 arbitrary bytes |
+| `AddressType` | `Account` or `Contract` |
+| `TokenAmount` | `i128` in `0..=TOKEN_AMOUNT_MAX` (10^15) |
+| `LedgerSequence` | `u32` in `1..=10_000_000` |
+| `Timestamp` | `u64` in `1_600_000_000..=2_000_000_000` |
+| `ArbitraryLedgerInfo` | a `LedgerInfo` the test host accepts (see below) |
+
+The range constants (`TOKEN_AMOUNT_MAX`, `LEDGER_SEQUENCE_MIN/MAX`,
+`TIMESTAMP_MIN/MAX`) live in the always-compiled `types` module and back both
+the proptest strategies and the `Arbitrary` implementations, so the two
+ecosystems can never disagree on what is valid. The bounded newtypes expose
+`get()`, `MIN`, `MAX` and a checked `new(value)`.
+
+`ArbitraryLedgerInfo` always reports protocol version 28, a valid sequence and
+timestamp, minimum temporary and persistent TTLs of at least one ledger, a
+`max_entry_ttl` no smaller than either minimum, and a sequence that cannot
+overflow when the maximum TTL is added. Install it with `info.apply(&env)`.
+
+**Generation never panics.** Every implementation draws with
+`Unstructured::int_in_range` or fixed-size byte copies, which fall back to the
+low end of the range when the fuzzer's input runs out. An empty, truncated or
+all-`0xFF` input still produces a valid value.
+
+### A cargo-fuzz harness
+
+```rust
+#![no_main]
+use arbitrary::{Arbitrary, Unstructured};
+use libfuzzer_sys::fuzz_target;
+use soroban_sdk::Env;
+use soroban_testkit_generators::arbitrary::{AddressBytes, ArbitraryLedgerInfo, TokenAmount};
+
+fuzz_target!(|data: &[u8]| {
+    let mut u = Unstructured::new(data);
+    let ledger = ArbitraryLedgerInfo::arbitrary(&mut u).unwrap();
+    let payer = AddressBytes::arbitrary(&mut u).unwrap();
+    let amount = TokenAmount::arbitrary(&mut u).unwrap();
+
+    let env = Env::default();
+    ledger.apply(&env);
+    let payer = payer.to_address(&env);
+    // ... call the contract under test with `payer` and `amount.get()` ...
+});
+```
+
+The crate ships this as a ready-made project in
+`crates/soroban-testkit-generators/fuzz/`, kept outside the workspace because
+libFuzzer needs nightly:
+
+```bash
+cargo install cargo-fuzz
+cd crates/soroban-testkit-generators
+cargo +nightly fuzz run arbitrary_values
+```
+
+The target's body lives in `fuzz/fuzz_targets/harness.rs`, and the stable
+integration test `tests/arbitrary_fuzz_harness.rs` runs the same harness over
+empty, short, saturated and pseudo-random inputs, so `cargo test --workspace`
+checks the "never panics, always valid" guarantee on every CI run.
 
 ## Custom strategies
 
