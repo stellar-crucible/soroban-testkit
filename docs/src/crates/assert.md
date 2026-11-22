@@ -38,6 +38,7 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `assert_auth_strict!(env, [ .. ])` | Every expected authorization matches exactly one record, with no records left over |
+| `assert_auth_invoker_distinct!(expected, auths)` | Verifies that an invocation was authorized exclusively by the declared authorized address |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
 | `assert_auth_tree!(env, { .. })` | Validates hierarchical authorization call-trees down to arbitrary depth with visual tree diffs |
@@ -1350,3 +1351,15 @@ assert_budget_consumed! failed:
 ```
 
 The same check is available without the macro: build a `BudgetBounds` (`.cpu(..)`, `.max_cpu(..)`, `.mem(..)`, `.max_mem(..)`) and call `check(&snapshot)` or `assert_within(&snapshot)` on any `BudgetSnapshot`.
+
+## Distinct Invoker Authorization
+
+To enforce least-privilege delegation across addresses:
+
+```rust
+use soroban_testkit_assert::assert_auth_invoker_distinct;
+
+// Asserts that only admin_address authorized the operation
+assert_auth_invoker_distinct!(&admin_address, &[admin_address.clone()]);
+```
+

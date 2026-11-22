@@ -13,15 +13,14 @@ pub mod storage;
 pub mod token_conservation;
 
 pub use auth::{
-    AuthArgs, AuthMatcher, AuthStrictMatcher, AuthSubInvocationMatcher, AuthSubTree,
-    AuthSubTreeMatcher, SubInvocations,
+    assert_auth_invoker_distinct_internal, AuthArgs, AuthMatcher, AuthStrictMatcher,
+    AuthSubInvocationMatcher, AuthSubTree, AuthSubTreeMatcher, SubInvocations,
 };
 pub use auth_tree::AuthTreeMockBuilder;
 pub use balance::{
     assert_balance_conserved_internal, AccountBalanceEntry, BalanceConservationReport,
     IntoTrackedAccount, TrackedAccount,
 };
-pub use budget::{BreachSide, BudgetBounds, BudgetBreach, ConsumedMetric, MetricBound};
 pub use budget_diff::{
     measure_invocation_budget, BudgetDiffMatcher, BudgetDiffReport, BudgetDiffViolation,
 };

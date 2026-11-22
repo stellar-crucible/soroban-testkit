@@ -25,6 +25,8 @@ pub mod strategies;
 #[cfg(feature = "proptest")]
 pub mod strkey;
 #[cfg(feature = "proptest")]
+pub mod symbol;
+#[cfg(feature = "proptest")]
 pub mod temporal;
 #[cfg(feature = "proptest")]
 pub mod ttl;
@@ -71,6 +73,10 @@ pub use strategies::fuzzed_invocation_args;
 pub use strkey::{
     account_strkey, contract_strkey, corrupted_strkey, valid_strkey, zero_account_strkey,
     zero_contract_strkey, Strkey, StrkeyError, StrkeyKind,
+};
+#[cfg(feature = "proptest")]
+pub use symbol::{
+    invalid_symbol_strategy, soroban_identifier_symbol, soroban_symbol, sorobans_symbol_strategy,
 };
 #[cfg(feature = "proptest")]
 pub use temporal::{
