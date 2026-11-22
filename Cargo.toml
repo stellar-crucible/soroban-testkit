@@ -9,6 +9,7 @@ members = [
     "examples/counter",
     "examples/domain_service",
     "examples/token",
+    "examples/subscription",
     "examples/bounty_escrow",
     "examples/vesting_escrow",
     "examples/auction",
