@@ -1078,6 +1078,105 @@ Breached tiers: persistent (found 12, expected max 10)
 | temporary   | 0     | exact 0        | PASS   | (none)                                     |
 ```
 
+| `assert_budget_consumed!(..)` | Bounds the most recent invocation's CPU and memory consumption |
+
+## Storage diff assertions
+
+The `assert_storage_diff!` macro provides a declarative way to assert contract storage changes between two points in time. It captures a storage snapshot before operations, executes the test logic, and then verifies the expected changes against the actual storage diff.
+
+```rust
+use soroban_testkit_assert::assert_storage_diff;
+use soroban_testkit_core::storage::{StorageSnapshot, StorageTier};
+
+// Capture storage state before operations
+let before = StorageSnapshot::capture(&env, &contract_id);
+
+// ... perform contract operations ...
+client.transfer(&from, &to, &100);
+
+// Assert storage changes declaratively
+assert_storage_diff!(before, env, contract_id, {
+    added: [
+        { key: "new_key" },
+        { key: "allowance:*", tier: StorageTier::Temporary },
+    ],
+    modified: [
+        { key: "balances", from: 1000u64, to: 900u64 },
+    ],
+    removed: [
+        { key: "old_key" },
+    ],
+    unchanged: [
+        { key: "admin", tier: StorageTier::Instance },
+    ],
+});
+```
+
+### Clauses
+
+The macro supports four declarative clauses:
+
+| Clause | Purpose | Example |
+|--------|---------|---------|
+| `added` | Keys that should be newly present | `{ key: "new_key" }` |
+| `modified` | Keys whose values should change | `{ key: "balances", from: 1000u64, to: 900u64 }` |
+| `removed` | Keys that should be deleted | `{ key: "old_key" }` |
+| `unchanged` | Keys that should remain exactly the same | `{ key: "admin", tier: StorageTier::Instance }` |
+
+### Key matching
+
+Keys can be exact strings or glob patterns:
+- Exact: `{ key: "exact_key" }`
+- Prefix wildcard: `{ key: "prefix_*" }`
+- Suffix wildcard: `{ key: "*_suffix" }`
+- Match all: `{ key: "*" }`
+
+Each entry can optionally specify a storage tier: `tier: StorageTier::Instance`, `StorageTier::Persistent`, or `StorageTier::Temporary`.
+
+### Value matching
+
+Values can be specified in multiple ways:
+- Exact value: `{ key: "count", from: 42u32, to: 43u32 }`
+- Typed value (with type annotation): `{ key: "count", from: u32 => 42, to: u32 => 43 }`
+- Wildcard (match any value): `{ key: "count", from: _, to: _ }` (using `soroban_testkit_assert::__storage_diff_value!`)
+
+### Failure diagnostics
+
+When an assertion fails, the macro prints a detailed side-by-side diff table showing expected vs actual changes:
+
+```
+Storage diff assertion failed:
+Expected modified key 'balances' (tier: persistent): from: expected '1000', found '999'
+
+═══════════════════════════════════════════════════════════════════════════════
+                           STORAGE DIFF REPORT
+═══════════════════════════════════════════════════════════════════════════════
+
+Summary: 1 added, 1 modified, 0 removed | Failures: 1
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ MODIFIED                                                                      │
+├────────┬──────────────────────┬──────────────────────┬──────────────────────┤
+│ Tier   │ Key                  │ Before               │ After                │
+├────────┼──────────────────────┼──────────────────────┼──────────────────────┤
+│ persis │ balances             │ 1000                 │ 999                  │ ✗ UNEXPECTED
+└────────┴──────────────────────┴──────────────────────┴──────────────────────┘
+```
+
+### Using without pre-captured snapshot
+
+The macro can also capture the "before" snapshot automatically when called without a pre-captured snapshot:
+
+```rust
+// Captures current state as "before", then asserts after operations
+assert_storage_diff!(env, contract_id, {
+    added: [{ key: "new_key" }],
+    modified: [{ key: "count", from: 0u32, to: 1u32 }],
+});
+```
+
+**Note:** This form captures the current state as the "before" snapshot when the macro is invoked, so any operations before the macro call are included in the baseline.
+
 ## Multi-party balance conservation
 
 Asserting balance conservation across multi-user operations (e.g., swaps, multi-hop routes, fee splits, or batch transfers) commonly leads to repetitive boilerplate when querying balances before and after calls. The `assert_balance_conserved!` macro captures pre-invocation balances, runs the operation, verifies that total tokens across all tracked participants plus reserves are conserved, and accounts for explicit external mints or burns:

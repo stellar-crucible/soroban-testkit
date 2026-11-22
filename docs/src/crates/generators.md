@@ -308,7 +308,209 @@ proptest! {
         let env = Env::default();
         let digest = BytesN::from_array(&env, &digest);
         let signature = BytesN::from_array(&env, &signature);
-## Entry TTLs and storage rent
+## Host-allocated collection generators
+
+Soroban contracts work with host-allocated collection types (`Map`, `Vec`, `Bytes`, `String`) that live in the contract's environment. The `strategies` module provides generators that construct these types directly in the test's `Env`, with configurable size bounds and proper shrinking.
+
+### Map generator
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Env, Map};
+use soroban_testkit_generators::{soroban_map, token_amount};
+
+proptest! {
+    #[test]
+    fn test_batch_process(
+        ref map in soroban_map(token_amount(), token_amount(), 20, Env::default())
+    ) {
+        // map is a soroban_sdk::Map<i128, i128> with at most 20 entries
+        prop_assert!(map.len() <= 20);
+    }
+}
+```
+
+**Signature:**
+```rust
+soroban_map<K, V, KS, VS>(key_strategy: KS, value_strategy: VS, max_entries: u32, env: Env)
+```
+
+- `key_strategy` / `value_strategy`: proptest strategies for keys and values
+- `max_entries`: maximum number of entries (shrinking reduces entry count)
+- `env`: the Soroban environment to allocate the map in
+
+### Vec generator
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Env, Vec};
+use soroban_testkit_generators::{soroban_vec, token_amount};
+
+proptest! {
+    #[test]
+    fn test_batch_process(
+        ref vec in soroban_vec(token_amount(), 50, Env::default())
+    ) {
+        // vec is a soroban_sdk::Vec<i128> with at most 50 elements
+        prop_assert!(vec.len() <= 50);
+    }
+}
+```
+
+**Signature:**
+```rust
+soroban_vec<T, S>(elem_strategy: S, max_entries: u32, env: Env)
+```
+
+### Bytes generator
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{Bytes, Env};
+use soroban_testkit_generators::soroban_bytes;
+
+proptest! {
+    #[test]
+    fn test_bytes_processing(
+        ref bytes in soroban_bytes(256, Env::default())
+    ) {
+        // bytes is a soroban_sdk::Bytes with at most 256 bytes
+        prop_assert!(bytes.len() <= 256);
+    }
+}
+```
+
+**Signature:**
+```rust
+soroban_bytes(max_len: u32, env: Env)
+```
+
+### String generator
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{String, Env};
+use soroban_testkit_generators::{soroban_string, soroban_ascii_string};
+
+proptest! {
+    #[test]
+    fn test_string_processing(
+        ref s in soroban_string(128, Env::default())
+    ) {
+        // s is a soroban_sdk::String with at most 128 bytes
+        prop_assert!(s.len() <= 128);
+    }
+
+    #[test]
+    fn test_ascii_string(
+        ref s in soroban_ascii_string(64, Env::default())
+    ) {
+        // s is a soroban_sdk::String with only printable ASCII, up to 64 bytes
+        prop_assert!(s.len() <= 64);
+    }
+}
+```
+
+**Signatures:**
+```rust
+soroban_string(max_len: u32, env: Env) -> Strategy<Value = soroban_sdk::String>
+soroban_ascii_string(max_len: u32, env: Env) -> Strategy<Value = soroban_sdk::String>
+```
+
+- `soroban_string`: generates printable ASCII strings (valid UTF-8)
+- `soroban_ascii_string`: generates only printable ASCII characters (subset of `soroban_string`)
+
+All collection generators:
+- Respect the configured size bounds
+- Shrink towards empty collections (reducing entries/elements/bytes)
+- Construct the collection directly in the provided `Env`
+- Work with any key/value/element types that implement `IntoVal<Env, Val>` and `TryFromVal<Env, Val>`
+
+## Stateful property-based testing with state machines
+
+The `state_machine` module provides a Soroban-aware state machine harness built on `proptest::state_machine`. It enables testing contracts with sequences of transactions, verifying invariants after each step, and automatically shrinking failing sequences to the minimal reproducible call sequence.
+
+### Defining a state machine
+
+```rust
+use soroban_testkit_generators::state_machine::{SorobanStateMachine, SorobanStateMachineRunner, prop_state_machine_test};
+use soroban_sdk::{Env, Address, testutils::Address as _};
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TokenModel {
+    balances: std::collections::HashMap<Address, i128>,
+    total_supply: i128,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TokenAction {
+    Mint { to: Address, amount: i128 },
+    Transfer { from: Address, to: Address, amount: i128 },
+    Burn { from: Address, amount: i128 },
+}
+
+struct TokenStateMachine {
+    env: Env,
+}
+
+impl SorobanStateMachine for TokenStateMachine {
+    type Action = TokenAction;
+    type Model = TokenModel;
+    type Context = TokenTestContext;
+
+    fn generate_action(&self, model: &Self::Model) -> BoxedStrategy<Self::Action> {
+        // Generate actions based on current model state
+    }
+
+    fn check_precondition(&self, model: &Self::Model, action: &Self::Action) -> bool {
+        // Validate action against model state
+    }
+
+    fn execute(&self, context: &mut Self::Context, action: &Self::Action) -> Result<(), String> {
+        // Execute action against real contract
+    }
+
+    fn apply_to_model(&self, model: &mut Self::Model, action: &Self::Action) {
+        // Update expected model state
+    }
+
+    fn check_invariant(&self, model: &Self::Model, context: &Self::Context) -> TestCaseResult {
+        // Verify invariant (e.g., total supply conservation)
+    }
+
+    fn initial_model(&self) -> Self::Model {
+        TokenModel::default()
+    }
+
+    fn create_context(&self) -> Self::Context {
+        TokenTestContext { ... }
+    }
+}
+```
+
+### Running the state machine
+
+```rust
+let machine = TokenStateMachine::new();
+let runner = SorobanStateMachineRunner::new(machine).cases(100);
+runner.run().unwrap();
+```
+
+Or use the simpler `prop_state_machine_test` function:
+
+```rust
+prop_state_machine_test(machine, 20, 100).unwrap();
+```
+
+### Key features
+
+- **Automated invariant verification** after each transition
+- **Precondition checking** to filter invalid actions
+- **Automated shrinking** of failing action sequences to the minimal failing sequence
+- **Sequence length ≥ 50** actions supported
+- **Integration example**: Token balance conservation invariant verification
+
+## State machine for property testing
 
 Every contract data entry has a *live-until* ledger — the last ledger it can
 be read on — and rent bugs sit at the edges of that interval. The `ttl` module

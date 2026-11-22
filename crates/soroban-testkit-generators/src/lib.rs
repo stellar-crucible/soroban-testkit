@@ -19,6 +19,8 @@ pub mod executables;
 #[cfg(feature = "proptest")]
 pub mod multisig;
 #[cfg(feature = "proptest")]
+pub mod state_machine;
+#[cfg(feature = "proptest")]
 pub mod storage_tier;
 #[cfg(feature = "proptest")]
 pub mod strategies;
@@ -61,6 +63,8 @@ pub use errors::{
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
 #[cfg(feature = "proptest")]
 pub use multisig::{multisig_policy, MultisigPolicy, Signer};
+#[cfg(feature = "proptest")]
+pub use state_machine::{prop_state_machine_test, SorobanStateMachine, SorobanStateMachineRunner};
 #[cfg(feature = "proptest")]
 pub use storage_tier::{
     mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
