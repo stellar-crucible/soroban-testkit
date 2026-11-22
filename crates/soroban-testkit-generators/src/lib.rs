@@ -17,6 +17,8 @@ pub mod errors;
 #[cfg(feature = "proptest")]
 pub mod executables;
 #[cfg(feature = "proptest")]
+pub mod financial;
+#[cfg(feature = "proptest")]
 pub mod multisig;
 #[cfg(feature = "proptest")]
 pub mod state_machine;
@@ -61,6 +63,11 @@ pub use errors::{
 };
 #[cfg(feature = "proptest")]
 pub use executables::{contract_executable, contract_executable_wasm_hash, deployer_salt};
+#[cfg(feature = "proptest")]
+pub use financial::{
+    basis_points, exchange_rate_ratio, extreme_stroop_amount, priced_stroop_amount, split_fee,
+    stroop_amount, stroop_boundaries, MAX_BASIS_POINTS, MAX_TOKEN_SUPPLY, STROOPS_PER_UNIT,
+};
 #[cfg(feature = "proptest")]
 pub use multisig::{multisig_policy, MultisigPolicy, Signer};
 #[cfg(feature = "proptest")]
