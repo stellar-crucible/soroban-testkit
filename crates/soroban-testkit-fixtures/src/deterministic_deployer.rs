@@ -221,10 +221,7 @@ mod tests {
         let client = FactoryClient::new(&env, &factory_id);
         let salt = BytesN::from_array(&env, &[11u8; 32]);
 
-        let predicted = env
-            .deployer()
-            .with_current_contract(salt.clone())
-            .deployed_address();
+        let predicted = DeterministicDeployer::predicted_address(&env, &factory_id, &salt);
         let deployed = client.deploy_child(&salt, &wasm_hash);
 
         assert_eq!(predicted, deployed);
