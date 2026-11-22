@@ -28,7 +28,7 @@ pub use contract_error::{
     check_contract_error, check_host_error, check_panic_error_code, HostErrorExpectation,
     IntoPanicExpectation, PanicErrorExpectation, ReceivedError, TryCallResult,
 };
-pub use events::{EventCountBound, EventSource};
+pub use events::{EventCountBound, EventMatcher, EventSource};
 pub use panic_msg::{
     check_panic_msg, CapturedPanic, MatchMode, PanicMsgFailure, PanicOrigin, PanicPattern,
 };

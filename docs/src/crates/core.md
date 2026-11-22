@@ -10,7 +10,7 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · reentrancy · conservation</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · diagnostic_event · error · storage · dependency · footprint · reentrancy · conservation</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -66,6 +66,8 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `TtlInspector` | Live TTL of a storage entry in any tier, read without triggering eviction or auto-restore, with the ledger's rent thresholds |
 | `TtlStatus`, `RentThresholds` | `Live` / `Expired` (temporary) / `Archived` (persistent, instance), and the ledger's min/max TTL parameters |
 | `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
+| `DiagnosticEventAuditor` | Inspects host diagnostic events, categorizes them, enforces count limits, and flags suspicious payloads |
+| `DiagnosticEventReport` | Structured audit result with counts, categories, events, and findings; renders text logs |
 
 ## Budget snapshots
 
@@ -1060,3 +1062,28 @@ discrepancy       : -1 — LEAK: 1 stroop(s) left the tracked set
 ```
 
 `check()` returns the same `ConservationReport` as `Ok`/`Err` instead of panicking, and `checkpoint()` makes the current balances the new opening position so each step of a long workflow can be checked on its own.
+
+## Diagnostic event auditing
+
+`DiagnosticEventAuditor` inspects Soroban host diagnostic events emitted during
+contract execution. It categorizes events (function call/return, error, contract,
+system diagnostic), enforces configurable count thresholds, and flags suspicious
+payload patterns or watched addresses that may indicate credential leakage.
+
+```rust,no_run
+use soroban_sdk::Env;
+use soroban_testkit_core::DiagnosticEventAuditor;
+
+let env = Env::default();
+// ... invoke contract ...
+let mut auditor = DiagnosticEventAuditor::new()
+    .with_max_total_events(200)
+    .with_max_diagnostic_events(150)
+    .watch_sensitive_address("admin", &admin);
+auditor.observe(&env);
+auditor.assert_within_limits();
+println!("{}", auditor.report().to_text());
+```
+
+Use `assert_diagnostic_count_lte` for a focused count check, and `diagnostic_log(&env)`
+for a quick formatted dump on test failure.

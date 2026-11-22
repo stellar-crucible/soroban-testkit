@@ -24,6 +24,7 @@ members = [
     "examples/nft",
     "examples/vamm",
     "examples/amm",
+    "examples/portfolio_vault",
     "examples/governance",
     "crates/soroban-testkit-mock",
 ]
