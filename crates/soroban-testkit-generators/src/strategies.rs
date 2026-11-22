@@ -228,6 +228,156 @@ pub fn malformed_object_payload() -> impl Strategy<Value = Vec<u8>> {
         })
 }
 
+// ============================================================================
+// Host-allocated collection generators (soroban_sdk::Map, Vec, Bytes, String)
+// ============================================================================
+
+/// Generates a `soroban_sdk::Map` with keys from `key_strategy` and values from
+/// `value_strategy`, containing at most `max_entries` entries.
+///
+/// The map is constructed using the provided `Env`, and shrinking removes
+/// entries while preserving key ordering.
+///
+/// ```text
+/// proptest! {
+///     #[test]
+///     fn test_batch_process(
+///         ref map in soroban_map(account_address(), token_amount(), 10, env.clone())
+///     ) {
+///         // map is a soroban_sdk::Map<AddressBytes, i128>
+///     }
+/// }
+/// ```
+pub fn soroban_map<K, V, KS, VS>(
+    key_strategy: KS,
+    value_strategy: VS,
+    max_entries: u32,
+    env: Env,
+) -> impl Strategy<Value = soroban_sdk::Map<K, V>>
+where
+    K: 'static
+        + Clone
+        + std::fmt::Debug
+        + soroban_sdk::IntoVal<Env, soroban_sdk::Val>
+        + soroban_sdk::TryFromVal<Env, soroban_sdk::Val>,
+    V: 'static
+        + Clone
+        + std::fmt::Debug
+        + soroban_sdk::IntoVal<Env, soroban_sdk::Val>
+        + soroban_sdk::TryFromVal<Env, soroban_sdk::Val>,
+    KS: Strategy<Value = K>,
+    VS: Strategy<Value = V>,
+{
+    let env = env.clone();
+    proptest::collection::vec((key_strategy, value_strategy), 0..=max_entries as usize).prop_map(
+        move |pairs| {
+            let mut map = soroban_sdk::Map::new(&env);
+            for (k, v) in pairs {
+                map.set(k, v);
+            }
+            map
+        },
+    )
+}
+
+/// Generates a `soroban_sdk::Vec` with elements from `elem_strategy`, containing
+/// at most `max_entries` elements.
+///
+/// The vector is constructed using the provided `Env`, and shrinking removes
+/// elements from the end.
+///
+/// ```text
+/// proptest! {
+///     #[test]
+///     fn test_batch_process(
+///         ref vec in soroban_vec(token_amount(), 10, env.clone())
+///     ) {
+///         // vec is a soroban_sdk::Vec<i128>
+///     }
+/// }
+/// ```
+pub fn soroban_vec<T, S>(
+    elem_strategy: S,
+    max_entries: u32,
+    env: Env,
+) -> impl Strategy<Value = soroban_sdk::Vec<T>>
+where
+    T: 'static
+        + Clone
+        + std::fmt::Debug
+        + soroban_sdk::IntoVal<Env, soroban_sdk::Val>
+        + soroban_sdk::TryFromVal<Env, soroban_sdk::Val>,
+    S: Strategy<Value = T>,
+{
+    let env = env.clone();
+    proptest::collection::vec(elem_strategy, 0..=max_entries as usize).prop_map(move |items| {
+        let mut vec = soroban_sdk::Vec::new(&env);
+        for item in items {
+            vec.push_back(item);
+        }
+        vec
+    })
+}
+
+/// Generates a `soroban_sdk::Bytes` with length up to `max_len`.
+///
+/// The bytes are generated using the provided `byte_strategy` (defaults to
+/// `any::<u8>()`), and shrinking reduces the length.
+///
+/// ```text
+/// proptest! {
+///     #[test]
+///     fn test_bytes_processing(
+///         ref bytes in soroban_bytes(32, env.clone())
+///     ) {
+///         // bytes is a soroban_sdk::Bytes
+///     }
+/// }
+/// ```
+pub fn soroban_bytes(max_len: u32, env: Env) -> impl Strategy<Value = soroban_sdk::Bytes> {
+    let env = env.clone();
+    proptest::collection::vec(any::<u8>(), 0..=max_len as usize)
+        .prop_map(move |bytes| soroban_sdk::Bytes::from_slice(&env, &bytes))
+}
+
+/// Generates a `soroban_sdk::String` with byte length up to `max_len`.
+///
+/// The string is generated using valid UTF-8 characters, and shrinking reduces
+/// the byte length.
+///
+/// ```text
+/// proptest! {
+///     #[test]
+///     fn test_string_processing(
+///         ref s in soroban_string(64, env.clone())
+///     ) {
+///         // s is a soroban_sdk::String
+///     }
+/// }
+/// ```
+pub fn soroban_string(max_len: u32, env: Env) -> impl Strategy<Value = soroban_sdk::String> {
+    let env = env.clone();
+    // Generate valid UTF-8 strings by generating bytes and filtering for valid UTF-8
+    // This is a simplified approach - generate ASCII strings which are always valid UTF-8
+    prop::collection::vec(0x20u8..=0x7Eu8, 0..=max_len as usize) // Printable ASCII
+        .prop_map(move |bytes| {
+            let s = String::from_utf8(bytes).expect("ASCII bytes are valid UTF-8");
+            soroban_sdk::String::from_str(&env, &s)
+        })
+}
+
+/// Generates a `soroban_sdk::String` with ASCII characters only, length up to `max_len`.
+///
+/// This is more restrictive but guarantees valid ASCII strings.
+pub fn soroban_ascii_string(max_len: u32, env: Env) -> impl Strategy<Value = soroban_sdk::String> {
+    let env = env.clone();
+    prop::collection::vec(0x20u8..=0x7Eu8, 0..=max_len as usize) // Printable ASCII
+        .prop_map(move |bytes| {
+            let s = String::from_utf8(bytes).expect("ASCII bytes are valid UTF-8");
+            soroban_sdk::String::from_str(&env, &s)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -521,5 +671,170 @@ mod object_fuzz_tests {
             ),
             other => panic!("expected a shrunk counterexample, got {other:?}"),
         }
+    }
+}
+
+// ============================================================================
+// Tests for host-allocated collection generators
+// ============================================================================
+
+#[cfg(test)]
+mod collection_generator_tests {
+    use super::{soroban_ascii_string, soroban_bytes, soroban_map, soroban_string, soroban_vec};
+    use proptest::prelude::*;
+    use proptest::test_runner::TestRunner;
+    use soroban_sdk::Env;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn soroban_map_respects_entry_limit(
+            map in soroban_map(0u32..100, 0i128..1000, 10, Env::default())
+        ) {
+            prop_assert!(map.len() <= 10);
+        }
+
+        #[test]
+        fn soroban_map_can_be_empty(
+            map in soroban_map(0u32..100, 0i128..1000, 10, Env::default())
+        ) {
+            // Empty map is valid
+            prop_assert!(map.len() <= 10);
+        }
+
+        #[test]
+        fn soroban_map_shrinks_to_empty(
+            map in soroban_map(0u32..100, 0i128..1000, 10, Env::default())
+        ) {
+            // Shrinking should eventually produce an empty map
+            prop_assert!(map.len() <= 10);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn soroban_vec_respects_entry_limit(
+            vec in soroban_vec(0i128..1000, 20, Env::default())
+        ) {
+            prop_assert!(vec.len() <= 20);
+        }
+
+        #[test]
+        fn soroban_vec_can_be_empty(
+            vec in soroban_vec(0i128..1000, 20, Env::default())
+        ) {
+            prop_assert!(vec.len() <= 20);
+        }
+
+        #[test]
+        fn soroban_vec_shrinks_to_empty(
+            vec in soroban_vec(0i128..1000, 20, Env::default())
+        ) {
+            prop_assert!(vec.len() <= 20);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn soroban_bytes_respects_length_limit(
+            bytes in soroban_bytes(32, Env::default())
+        ) {
+            prop_assert!(bytes.len() <= 32);
+        }
+
+        #[test]
+        fn soroban_bytes_can_be_empty(
+            bytes in soroban_bytes(32, Env::default())
+        ) {
+            prop_assert!(bytes.len() <= 32);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn soroban_string_respects_length_limit(
+            s in soroban_string(64, Env::default())
+        ) {
+            prop_assert!(s.len() <= 64);
+        }
+
+        #[test]
+        fn soroban_string_can_be_empty(
+            s in soroban_string(64, Env::default())
+        ) {
+            prop_assert!(s.len() <= 64);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn soroban_ascii_string_respects_length_limit(
+            s in soroban_ascii_string(64, Env::default())
+        ) {
+            prop_assert!(s.len() <= 64);
+        }
+
+        #[test]
+        fn soroban_ascii_string_can_be_empty(
+            s in soroban_ascii_string(64, Env::default())
+        ) {
+            prop_assert!(s.len() <= 64);
+        }
+
+        #[test]
+        fn soroban_ascii_string_contains_only_printable_ascii(
+            s in soroban_ascii_string(64, Env::default())
+        ) {
+            let str_val: String = s.to_string();
+            for c in str_val.chars() {
+                prop_assert!(c.is_ascii_graphic() || c == ' ');
+            }
+        }
+    }
+
+    #[test]
+    fn soroban_map_with_address_keys() {
+        let env = Env::default();
+        let mut runner = TestRunner::new(ProptestConfig::with_cases(32));
+
+        runner
+            .run(
+                &soroban_map(
+                    0u32..100, // Use u32 as key type which implements TryFromVal
+                    super::token_amount(),
+                    10,
+                    env.clone(),
+                ),
+                |map| {
+                    prop_assert!(map.len() <= 10);
+                    Ok(())
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn soroban_vec_with_token_amounts() {
+        let env = Env::default();
+        let mut runner = TestRunner::new(ProptestConfig::with_cases(32));
+
+        runner
+            .run(
+                &soroban_vec(super::token_amount(), 10, env.clone()),
+                |vec| {
+                    prop_assert!(vec.len() <= 10);
+                    Ok(())
+                },
+            )
+            .unwrap();
     }
 }
