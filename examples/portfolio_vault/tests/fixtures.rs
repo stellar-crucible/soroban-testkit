@@ -64,7 +64,7 @@ fn rebalance_swaps_assets_at_oracle_price() {
     fx.fund_trader(0, 1_000 * ONE, 0);
     // Vault has 50 A (price 2) and 60 B (price 1), 8 C. Sell 10 A for 20 B.
     let bought = fx.client().rebalance(
-        &fx.admin,
+        &fx.trader,
         &fx.token_a,
         &fx.token_b,
         &(10 * ONE),

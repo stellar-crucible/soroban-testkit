@@ -35,7 +35,7 @@ fn rebalance_budget_is_bounded() {
     fx.fund_trader(0, 1_000 * ONE, 0);
     fx.env.cost_estimate().budget().reset_unlimited();
     fx.client().rebalance(
-        &fx.admin,
+        &fx.trader,
         &fx.token_a,
         &fx.token_b,
         &(10 * ONE),
@@ -89,7 +89,7 @@ fn rebalance_preserves_total_value_approximately() {
     fx.fund_trader(0, 1_000 * ONE, 0);
     let before = fx.client().total_value();
     fx.client().rebalance(
-        &fx.admin,
+        &fx.trader,
         &fx.token_a,
         &fx.token_b,
         &(10 * ONE),
@@ -105,10 +105,15 @@ fn deposit_after_rebalance_uses_current_value() {
     let fx = Fixture::new();
     fx.deposit_balanced();
     fx.fund_trader(0, 1_000 * ONE, 0);
-    fx.client()
-        .rebalance(&fx.admin, &fx.token_a, &fx.token_b, &(5 * ONE), &(10 * ONE));
+    fx.client().rebalance(
+        &fx.trader,
+        &fx.token_a,
+        &fx.token_b,
+        &(5 * ONE),
+        &(10 * ONE),
+    );
     fx.fund_user(10 * ONE, 0, 0);
-    let minted = fx.client().deposit(&fx.user, &fx.token_a, &(1 * ONE));
+    let minted = fx.client().deposit(&fx.user, &fx.token_a, &ONE);
     assert!(minted > 0);
 }
 

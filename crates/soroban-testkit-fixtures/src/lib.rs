@@ -21,6 +21,7 @@ pub mod topology;
 mod ttl_tests;
 
 pub use branching::BranchingContext;
+pub use builder::TestContextBuilder;
 pub use checkpoint::ContextCheckpoint;
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,

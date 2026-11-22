@@ -155,6 +155,7 @@ mod tests {
 
     #[contractimpl]
     impl Factory {
+        #[allow(deprecated)]
         pub fn deploy_child(env: Env, salt: BytesN<32>, wasm_hash: BytesN<32>) -> Address {
             env.deployer().with_current_contract(salt).deploy(wasm_hash)
         }

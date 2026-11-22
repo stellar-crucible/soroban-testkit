@@ -31,7 +31,7 @@
 
 use soroban_env_host::events::HostEvent;
 use soroban_env_host::xdr::{ContractEventBody, ContractEventType, ScAddress, ScVal};
-use soroban_sdk::{Address, Env, TryFromVal};
+use soroban_sdk::{Address, Env};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -209,7 +209,8 @@ impl DiagnosticEventAuditor {
     pub fn watch_sensitive_address(mut self, label: impl Into<String>, address: &Address) -> Self {
         let label = label.into();
         let rendered = format!("{address:?}");
-        self.sensitive_addresses.insert(rendered, label.clone());
+        self.sensitive_addresses
+            .insert(rendered.clone(), label.clone());
         // Also try strkey extraction from debug format for contract/account forms.
         if let Some(inner) = rendered
             .strip_prefix("Contract(")
@@ -341,7 +342,7 @@ impl DiagnosticEventAuditor {
         env: &Env,
     ) -> DiagnosticEventRecord {
         let ce = &event.event;
-        let contract = ce.contract_id.as_ref().map(contract_hash_to_string);
+        let contract = ce.contract_id.as_ref().map(contract_id_to_string);
 
         let (topics, data, category) = match &ce.body {
             ContractEventBody::V0(body) => {
@@ -405,8 +406,8 @@ fn categorize_diagnostic(topics: &[ScVal]) -> DiagnosticEventCategory {
     }
 }
 
-fn contract_hash_to_string(hash: &soroban_env_host::xdr::Hash) -> String {
-    contract_strkey(&hash.0)
+fn contract_id_to_string(id: &soroban_env_host::xdr::ContractId) -> String {
+    contract_strkey(&id.0 .0)
 }
 
 fn scval_to_string(val: &ScVal) -> String {
@@ -458,6 +459,7 @@ pub fn diagnostics_contain_address(env: &Env, address: &Address) -> bool {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use soroban_sdk::{contract, contractimpl, symbol_short, Env, Symbol};
@@ -541,8 +543,7 @@ mod tests {
             report
                 .findings
                 .iter()
-                .any(|f| f.reason.contains("watched address")
-                    || f.reason.contains("exceeds") == false)
+                .any(|f| f.reason.contains("watched address") || !f.reason.contains("exceeds"))
                 || !report.events.is_empty()
         );
     }

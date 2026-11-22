@@ -117,7 +117,7 @@ impl PortfolioVault {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(PortfolioError::AlreadyInitialized);
         }
-        if assets.len() == 0 {
+        if assets.is_empty() {
             return Err(PortfolioError::InvalidInput);
         }
         let mut total_bps = 0u32;
@@ -199,7 +199,8 @@ impl PortfolioVault {
             return Err(PortfolioError::InvalidInput);
         }
 
-        token::Client::new(&env, &asset).transfer(&user, &env.current_contract_address(), &amount);
+        let vault = env.current_contract_address();
+        token::Client::new(&env, &asset).transfer(&user, &vault, &amount);
         write_total_shares(
             &env,
             total_shares

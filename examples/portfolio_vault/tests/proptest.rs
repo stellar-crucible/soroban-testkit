@@ -35,7 +35,7 @@ proptest! {
         let before = fx.client().total_value();
         let sell_amt = sell * ONE;
         let buy_amt = sell_amt * 2; // A price 2, B price 1
-        fx.client().rebalance(&fx.admin, &fx.token_a, &fx.token_b, &sell_amt, &buy_amt);
+        fx.client().rebalance(&fx.trader, &fx.token_a, &fx.token_b, &sell_amt, &buy_amt);
         let after = fx.client().total_value();
         prop_assert_eq!(before, after);
     }
@@ -57,7 +57,7 @@ proptest! {
         fx.fund_trader(0, 1_000 * ONE, 0);
         let sell_amt = sell * ONE;
         let buy_amt = sell_amt * 2;
-        fx.client().rebalance(&fx.admin, &fx.token_a, &fx.token_b, &sell_amt, &buy_amt);
+        fx.client().rebalance(&fx.trader, &fx.token_a, &fx.token_b, &sell_amt, &buy_amt);
         // After rebalance, A moves toward target if it was overweight; tolerance check should be boolean.
         let ok_a = fx.client().is_within_tolerance(&fx.token_a, &10_000u32);
         prop_assert!(ok_a || !ok_a);
