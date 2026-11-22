@@ -4,11 +4,15 @@ members = [
     "crates/soroban-testkit-core",
     "crates/soroban-testkit-assert",
     "crates/soroban-testkit-fixtures",
+    "crates/soroban-testkit-fixtures-macros",
     "crates/soroban-testkit-generators",
     "examples/counter",
     "examples/domain_service",
     "examples/token",
+    "examples/subscription",
     "examples/bounty_escrow",
+    "examples/vesting_escrow",
+    "examples/auction",
     "examples/multisig_vault",
     "examples/flash_mint",
     "examples/crowdfunding",
@@ -18,8 +22,13 @@ members = [
     "examples/dynamic_amm",
     "examples/orderbook",
     "examples/nft",
+    "examples/vamm",
     "examples/amm",
+    "examples/governance",
+    "crates/soroban-testkit-mock",
 ]
+# The cargo-fuzz project needs nightly and libFuzzer; it has its own workspace.
+exclude = ["crates/soroban-testkit-generators/fuzz"]
 
 [workspace.package]
 version = "0.4.1"

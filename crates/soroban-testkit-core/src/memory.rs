@@ -354,7 +354,7 @@ impl MemoryPressureAuditor {
 ///
 /// One decimal place, and no trailing `.0` below a kilobyte, so a table of
 /// readings stays aligned and a diff of two runs reads as a number changing.
-fn human_bytes(bytes: u64) -> String {
+pub(crate) fn human_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * 1024.0;
 

@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · mock · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -96,6 +96,27 @@ assert_eq!(unlocked_at, 1_702_592_000);
     <h3 class="tk-card__title">Advance only what you assert</h3>
     <p class="tk-card__body"><code>advance_time</code> leaves the sequence alone and <code>advance_ledger</code> leaves the clock alone. A real ledger close moves both, so a test that wants the full picture calls each — and a test that only cares about TTL expiry does not silently move the clock.</p>
   </div>
+
+  ## Reentrancy guard verification
+
+  `ReentrancyGuardHarness` deploys a target contract and a malicious receiver,
+  then executes a cross-contract callback back into the target:
+
+  ```rust
+  use soroban_testkit_fixtures::reentrancy::ReentrancyGuardHarness;
+
+  let harness = ReentrancyGuardHarness::new();
+
+  assert!(harness.execute(false));
+  assert!(!harness.lock_is_set());
+
+  assert!(!harness.execute(true)); // receiver panics after the callback
+  assert!(!harness.lock_is_set()); // caught panic rolls the lock back
+  ```
+
+  The harness proves that a second invocation is rejected while the guard is
+  held, and that both successful calls and caught receiver panics leave the target
+  lock in its restored unlocked state.
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">A fresh env opens at zero</span>
     <h3 class="tk-card__title">Set before you advance</h3>
@@ -222,6 +243,60 @@ assert_eq!(client.balance(&vault, &ctx.users[0]), 0);
 restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
+
+## Named branches and speculative paths
+
+`reset` is destructive: it throws the chain away. When several paths start from
+the *same* protocol state — five trade routes from one liquidity pool, three
+liquidation scenarios from one debt position — build the state once and take a
+named checkpoint instead:
+
+```rust
+use soroban_testkit_fixtures::branching::BranchingContext;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+
+let mut ctx = BranchingContext::new(TestContextBuilder::new().with_users(2).build());
+let pool_id = ctx.env.register(Pool, ());
+let pool = PoolClient::new(&ctx.env, &pool_id);
+
+pool.deposit(&1_000);           // setup, executed once
+ctx.create_branch("initial_pool");
+
+for route in routes {
+    ctx.switch_branch("initial_pool").create_branch(route.name);
+    // ... run the route against the pool's original 1,000 ...
+}
+```
+
+`BranchingContext` derefs to `TestContext`, so `ctx.env`, `ctx.users`,
+`advance_time` and the rest keep working. Its branch API is:
+
+| Method | Effect |
+|--------|--------|
+| `create_branch(name)` | Snapshot the ledger under `name` and make it current |
+| `switch_branch(name)` | Rewrite the live ledger to the checkpoint |
+| `current_branch()` | The last created or switched-to name |
+| `branch_names()` | Every checkpoint, in sorted order |
+| `has_branch(name)` | Whether a checkpoint exists |
+| `delete_branch(name)` | Drop one checkpoint, returning whether it existed |
+
+A switch restores every captured ledger entry with its value and `live_until`
+TTL, removes contract data keys written after the checkpoint (including entries
+the contract deleted, which come back), and resets the full ledger clock:
+sequence, timestamp, protocol version, network id, base reserve and the TTL
+thresholds.
+
+The environment itself is kept rather than rebuilt, which is what makes the
+rest of the fixture keep working:
+
+- native test contracts stay registered, so no setup is re-executed;
+- `ctx.admin`, `ctx.users`, contract addresses and clients remain valid;
+- the auth policy (`mock_all_auths`) and the network profile still apply.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Two things a branch cannot rewind</span>
+  <p>A contract registered <em>after</em> a checkpoint keeps its code and instance entries — its storage is cleared, but it remains callable, because the SDK exposes no API to delete those entries. Register every contract before the checkpoint. Recorded authorizations (<code>env.auths()</code>) belong to the most recent invocation rather than to the ledger, so assert them immediately after the call that produced them.</p>
+</div>
 
 ## Persistent storage eviction
 
@@ -796,6 +871,42 @@ flowchart TD
   C_0 -. resolves .-> VAULT
 ```
 
+## Declared dependency topology validation (`TopologyValidator`)
+
+For multi-contract protocols, `TopologyValidator` lets a test declare the
+expected dependency graph and then scan each deployed contract's instance
+storage for `Address` references. It flags three failure modes:
+
+- **Uninitialized link** — a declared dependency that no contract stores yet.
+- **Dangling reference** — a stored address that points at a contract that was
+  never registered.
+- **Inactive contract** — a registered contract whose address is not deployed.
+
+```rust
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::TopologyValidator;
+
+let env = Env::default();
+env.mock_all_auths();
+
+let mut topology = TopologyValidator::new(&env);
+let token = Address::generate(&env);
+let oracle = env.register_contract(None, ...); // deployed contract id
+let pool = env.register_contract(None, ...);
+
+topology.register_contract("token", &token);
+topology.register_contract("oracle", &oracle);
+topology.register_contract("pool", &pool);
+topology.require_link("pool", "token");
+topology.require_link("pool", "oracle");
+
+topology.assert_valid(); // panics with the full report on any violation
+```
+
+`TopologyValidator::validate` returns a `TopologyReport` whose `is_valid`,
+`violations`, `to_mermaid`, and `render_topology` helpers support non-fatal
+assertions and diagram generation for documentation.
+
 ## Failure injection for mock dependencies (`FailureInjector`)
 
 A resilient contract has to survive a dependency that fails: an oracle out of budget, a vault whose storage expired, a token that traps. `FailureInjector` decides, per contract and per function, when a mock dependency fails and with which error, without writing a separate crashing contract for each case.
@@ -837,3 +948,47 @@ injector.clear(); // normal execution again (also happens on drop)
 **One difference from a live network.** On a network, exhausting the CPU or memory budget aborts the *whole transaction* and no caller can catch it. The injected `BudgetExceeded` and `OutOfMemory` fail only the dependency's invocation, modelling a dependency that runs out and reports it, so the caller's fallback path is testable. To test transaction-wide exhaustion, run the call under real limits (`NetworkProfile`, or `env.cost_estimate().budget().reset_limits`).
 
 Rules are scoped to the test thread and to the injector that installed them, so one test cannot leak a failure into the next. `injector.calls(&id, "fn")` reports how many calls the injection point has seen.
+
+## Declarative mock contracts
+
+Unit tests rarely want to hand-write a stand-in for every dependency. Declare the interface once with `#[mock_contract]`, then give each test its own behaviour:
+
+```rust
+use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_testkit_fixtures::{mock_contract, MockContractBuilder};
+
+#[contract]
+pub struct RateOracle;
+
+#[mock_contract]
+#[contractimpl]
+impl RateOracle {
+    pub fn get_rate(_env: Env, _asset: Address) -> i128 { unimplemented!() }
+}
+
+let oracle = MockContractBuilder::<RateOracle>::new(&env)
+    .expect_call("get_rate", |_env, _args| 1_500i128)
+    .times(2)
+    .build();
+
+// the contract under test sees a normal contract address
+consumer_client.trade(&oracle.address(), &usdc);
+
+oracle.assert_expectations();
+```
+
+`#[mock_contract]` replaces every function body with a dispatcher, so the placeholder bodies are never compiled; the attribute must sit directly above `#[contractimpl]`.
+
+| Builder call | Meaning |
+| --- | --- |
+| `expect_call(name, handler)` | return whatever `handler(env, args)` produces |
+| `expect_panic(name, message)` | fail the invocation with `message` |
+| `.times(n)` | exactly `n` calls (the default is exactly once) |
+| `.at_least(n)` | `n` or more calls |
+| `.never()` | the function must not be called |
+
+Arguments arrive encoded as `Val`s in declaration order; `mock::arg::<T>(env, args, i)` decodes one and panics with a diagnostic if it is missing or has the wrong type. Expectations are verified by `assert_expectations()` and again when the mock is dropped, so a forgotten assertion still fails the test.
+
+**Why the interface is declared.** A Soroban host resolves an invocation to an exported function symbol before any contract code runs, and no entry point receives the function name as a value. The SDK therefore cannot expose a contract whose exported functions are decided at runtime. `#[mock_contract]` generates a real contract at compile time and dispatches *inside* it, which keeps the address usable by typed clients, including from the contract under test.
+
+Mocks live in a thread-local registry keyed by contract address, which suits `#[test]` functions; they are not shared between threads.

@@ -12,7 +12,7 @@
 //! reproduces it.
 //!
 //! ```
-//! use proptest::strategy::Strategy as _;
+//! use proptest::strategy::{Strategy as _, ValueTree as _};
 //! use proptest::test_runner::TestRunner;
 //! use soroban_testkit_generators::financial::{basis_points, stroop_amount};
 //!
