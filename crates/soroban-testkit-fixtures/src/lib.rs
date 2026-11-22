@@ -7,6 +7,7 @@ pub mod checkpoint;
 pub mod congestion;
 pub mod consensus;
 pub mod crypto;
+pub mod deterministic_deployer;
 pub mod event_indexer;
 pub mod eviction;
 pub mod failure_injector;
@@ -21,6 +22,7 @@ pub mod topology;
 mod ttl_tests;
 
 pub use branching::BranchingContext;
+pub use builder::TestContextBuilder;
 pub use checkpoint::ContextCheckpoint;
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
@@ -30,6 +32,7 @@ pub use consensus::{
     DEFAULT_MAX_CLOSE_INTERVAL_MS, DEFAULT_MIN_CLOSE_INTERVAL_MS, DEFAULT_QUORUM, DEFAULT_SEED,
     DEFAULT_VALIDATORS, QUORUM_ACCEPTANCE_SIGMA,
 };
+pub use deterministic_deployer::{DeterministicDeployer, SaltHierarchy};
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use mock::{MockContract, MockContractBuilder, MockContractType};
