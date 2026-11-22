@@ -6,7 +6,7 @@
 //! assert the on-chain address matches.
 //!
 //! ```rust
-//! use soroban_sdk::{contract, contractimpl, BytesN, Env};
+//! use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, BytesN, Env};
 //! use soroban_testkit_fixtures::deterministic_deployer::DeterministicDeployer;
 //!
 //! #[contract]
@@ -21,8 +21,9 @@
 //!
 //! # fn main() {
 //! let env = Env::default();
+//! env.mock_all_auths();
 //! let wasm_hash = env.upload(Child);
-//! let deployer = env.current_contract_address();
+//! let deployer = Address::generate(&env);
 //! let salt = BytesN::from_array(&env, &[1u8; 32]);
 //!
 //! let predicted = DeterministicDeployer::predicted_address(&env, &deployer, &salt);
