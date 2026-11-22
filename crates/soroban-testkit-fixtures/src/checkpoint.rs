@@ -6,16 +6,16 @@
 use std::collections::BTreeMap;
 
 use soroban_sdk::{
+    testutils::{Events as _, Ledger as _},
     xdr::{LedgerKey, ScAddress, ScVal},
-    Address, Env,
-    testutils::{Ledger as _, Events as _},
-    FromVal,
+    Address, Env, FromVal,
 };
 
 use soroban_testkit_core::storage::{StorageSnapshot, StorageTier};
 
 /// A checkpoint capturing the complete state of a test environment at a point in time.
 #[derive(Debug, Clone)]
+#[allow(clippy::mutable_key_type)]
 pub struct ContextCheckpoint {
     /// Storage snapshots for all contracts that had storage at checkpoint time.
     pub storage: BTreeMap<Address, StorageSnapshot>,
@@ -33,11 +33,16 @@ pub struct ContextCheckpoint {
 
 impl ContextCheckpoint {
     /// Create a new checkpoint from the current environment state.
-    pub fn capture(env: &Env, mock_auths: bool, network_profile: crate::profiles::NetworkProfile) -> Self {
+    #[allow(clippy::mutable_key_type)]
+    pub fn capture(
+        env: &Env,
+        mock_auths: bool,
+        network_profile: crate::profiles::NetworkProfile,
+    ) -> Self {
         let mut storage = BTreeMap::new();
-        
+
         // Capture storage for all contracts that have data
-        for (key, (entry, _live_until)) in env.to_ledger_snapshot().ledger_entries.iter() {
+        for (key, (_entry, _live_until)) in env.to_ledger_snapshot().ledger_entries.iter() {
             if let LedgerKey::ContractData(lookup) = &**key {
                 // lookup.contract is an ScAddress, we need to extract ContractId from it
                 let contract_id = match &lookup.contract {
@@ -52,10 +57,10 @@ impl ContextCheckpoint {
                 }
             }
         }
-        
+
         // Capture events
         let events = env.events().all().events().to_vec();
-        
+
         Self {
             storage,
             ledger_sequence: env.ledger().sequence(),
@@ -65,26 +70,26 @@ impl ContextCheckpoint {
             events,
         }
     }
-    
+
     /// Restore the environment to this checkpoint's state.
     pub fn restore(&self, env: &Env) {
         // Restore ledger state
         env.ledger().set_sequence_number(self.ledger_sequence);
         env.ledger().set_timestamp(self.ledger_timestamp);
-        
+
         // Restore auth mocking
         if self.mock_auths {
             env.mock_all_auths();
         }
-        
+
         // Restore network profile
         self.network_profile.apply(env);
-        
+
         // Restore storage for each contract
         for (contract, snapshot) in &self.storage {
             // Clear existing storage for this contract first
             clear_storage(env, contract, snapshot);
-            
+
             // Restore instance storage - skip for now due to SDK limitations
             // for entry in snapshot.entries() {
             //     if entry.tier == StorageTier::Instance {
@@ -93,21 +98,25 @@ impl ContextCheckpoint {
             //         });
             //     }
             // }
-            
+
             // Restore persistent storage
             for entry in snapshot.entries() {
                 if entry.tier == StorageTier::Persistent {
                     env.as_contract(contract, || {
-                        env.storage().persistent().set(&parse_key(&entry.key), &parse_scval(&entry.value));
+                        env.storage()
+                            .persistent()
+                            .set(&parse_key(&entry.key), &parse_scval(&entry.value));
                     });
                 }
             }
-            
+
             // Restore temporary storage
             for entry in snapshot.entries() {
                 if entry.tier == StorageTier::Temporary {
                     env.as_contract(contract, || {
-                        env.storage().temporary().set(&parse_key(&entry.key), &parse_scval(&entry.value));
+                        env.storage()
+                            .temporary()
+                            .set(&parse_key(&entry.key), &parse_scval(&entry.value));
                     });
                 }
             }
@@ -128,10 +137,11 @@ fn clear_storage(env: &Env, contract: &Address, snapshot: &StorageSnapshot) {
     //         env.storage().instance().remove(&key);
     //     }
     // });
-    
+
     // Clear persistent storage
     env.as_contract(contract, || {
-        let keys: Vec<_> = snapshot.entries()
+        let keys: Vec<_> = snapshot
+            .entries()
             .iter()
             .filter(|e| e.tier == StorageTier::Persistent)
             .map(|e| parse_key(&e.key))
@@ -140,10 +150,11 @@ fn clear_storage(env: &Env, contract: &Address, snapshot: &StorageSnapshot) {
             env.storage().persistent().remove(&key);
         }
     });
-    
+
     // Clear temporary storage
     env.as_contract(contract, || {
-        let keys: Vec<_> = snapshot.entries()
+        let keys: Vec<_> = snapshot
+            .entries()
             .iter()
             .filter(|e| e.tier == StorageTier::Temporary)
             .map(|e| parse_key(&e.key))
@@ -188,7 +199,7 @@ fn parse_key(s: &str) -> ScVal {
     if s == "instance" || s == "void" || s == "true" || s == "false" {
         return parse_scval(s);
     }
-    
+
     // Try numeric types
     if let Ok(v) = s.parse::<i32>() {
         return ScVal::I32(v);
@@ -202,7 +213,7 @@ fn parse_key(s: &str) -> ScVal {
     if let Ok(v) = s.parse::<u64>() {
         return ScVal::U64(v);
     }
-    
+
     // Check for boolean
     if s == "true" {
         return ScVal::Bool(true);
@@ -210,7 +221,7 @@ fn parse_key(s: &str) -> ScVal {
     if s == "false" {
         return ScVal::Bool(false);
     }
-    
+
     // Default to symbol (most common for storage keys)
     ScVal::Symbol(s.try_into().unwrap())
 }
@@ -218,7 +229,7 @@ fn parse_key(s: &str) -> ScVal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{contract, contractimpl, symbol_short, testutils::Address as _, Env};
+    use soroban_sdk::{contract, contractimpl, symbol_short, Env};
 
     #[contract]
     pub struct StorageContract;
@@ -227,18 +238,20 @@ mod tests {
     impl StorageContract {
         pub fn set_all(env: Env) {
             env.storage().instance().set(&symbol_short!("inst"), &1u32);
-            env.storage().persistent().set(&symbol_short!("persist"), &2u32);
+            env.storage()
+                .persistent()
+                .set(&symbol_short!("persist"), &2u32);
             env.storage().temporary().set(&symbol_short!("temp"), &3u32);
         }
-        
+
         pub fn get_instance(env: Env) -> Option<u32> {
             env.storage().instance().get(&symbol_short!("inst"))
         }
-        
+
         pub fn get_persistent(env: Env) -> Option<u32> {
             env.storage().persistent().get(&symbol_short!("persist"))
         }
-        
+
         pub fn get_temporary(env: Env) -> Option<u32> {
             env.storage().temporary().get(&symbol_short!("temp"))
         }
@@ -248,17 +261,18 @@ mod tests {
     fn checkpoint_captures_storage_state() {
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let contract = env.register(StorageContract, ());
         StorageContractClient::new(&env, &contract).set_all();
-        
-        let checkpoint = ContextCheckpoint::capture(&env, true, crate::profiles::NetworkProfile::Local);
-        
+
+        let checkpoint =
+            ContextCheckpoint::capture(&env, true, crate::profiles::NetworkProfile::Local);
+
         // Verify storage was captured
         assert!(checkpoint.storage.contains_key(&contract));
         let snapshot = &checkpoint.storage[&contract];
         assert!(!snapshot.is_empty());
-        
+
         // Verify ledger state
         assert_eq!(checkpoint.ledger_sequence, 0);
         assert_eq!(checkpoint.ledger_timestamp, 0);
@@ -269,44 +283,53 @@ mod tests {
     fn checkpoint_captures_multiple_contracts() {
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let contract1 = env.register(StorageContract, ());
         let contract2 = env.register(StorageContract, ());
-        
+
         StorageContractClient::new(&env, &contract1).set_all();
         StorageContractClient::new(&env, &contract2).set_all();
-        
-        let checkpoint = ContextCheckpoint::capture(&env, true, crate::profiles::NetworkProfile::Local);
-        
+
+        let checkpoint =
+            ContextCheckpoint::capture(&env, true, crate::profiles::NetworkProfile::Local);
+
         assert!(checkpoint.storage.contains_key(&contract1));
         assert!(checkpoint.storage.contains_key(&contract2));
     }
-    
+
     #[test]
     #[ignore = "Restore functionality needs SDK support for as_contract with storage operations"]
     fn checkpoint_restore_restores_storage() {
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let contract = env.register(StorageContract, ());
         let client = StorageContractClient::new(&env, &contract);
         client.set_all();
-        
+
         // Capture checkpoint
-        let checkpoint = ContextCheckpoint::capture(&env, true, crate::profiles::NetworkProfile::Local);
-        
+        let checkpoint =
+            ContextCheckpoint::capture(&env, true, crate::profiles::NetworkProfile::Local);
+
         // Modify storage
-        env.storage().persistent().set(&symbol_short!("new_key"), &999u32);
-        
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("new_key"), &999u32);
+
         // Restore checkpoint
         checkpoint.restore(&env);
-        
+
         // Verify persistent and temporary storage was restored
         // (Instance storage restoration is not yet implemented)
         assert_eq!(client.get_persistent(), Some(2));
         assert_eq!(client.get_temporary(), Some(3));
-        
+
         // Verify new key is gone
-        assert_eq!(env.storage().persistent().get::<_, u32>(&symbol_short!("new_key")), None);
+        assert_eq!(
+            env.storage()
+                .persistent()
+                .get::<_, u32>(&symbol_short!("new_key")),
+            None
+        );
     }
 }

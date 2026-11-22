@@ -4,7 +4,7 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget · panic_msg</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -25,17 +25,20 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
+| `assert_event_emitted!(env, contract, topic, { field: value, .. })` | Asserts at least one matching event was emitted with expected contract, topic(s), and data fields |
 | `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
 | `assert_emitted_matches!(env, { .. })` | Asserts emitted events matching glob wildcards (`*`, `?`) or regex topic patterns and data fields |
 | `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
 | `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
 | `assert_contract_error!(client.try_call(..), MyError::Variant)` | The call failed with exactly that `#[contracterror]` variant |
 | `assert_host_error!(client.try_call(..), ScErrorType::Auth)` | The call failed with a host error of that category, category and code, or exact `Error` |
+| `assert_panic_msg!(expr, "text")` / `contains:` / `glob:` / `regex:` | The expression panicked with a message matching a substring, glob (`*`, `?`) or regular expression, including a contract panic surfaced through a host error |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
 | `assert_auth_strict!(env, [ .. ])` | Every expected authorization matches exactly one record, with no records left over |
+| `assert_auth_invoker_distinct!(expected, auths)` | Verifies that an invocation was authorized exclusively by the declared authorized address |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
 | `assert_auth_tree!(env, { .. })` | Validates hierarchical authorization call-trees down to arbitrary depth with visual tree diffs |
@@ -324,6 +327,47 @@ Types are checked by Soroban value deserialization, including `i128`, `u64`,
 the expected type and observed type/value. The assertion requires at least one
 event matching the topic.
 
+### Declarative event assertion with `assert_event_emitted!`
+
+`assert_event_emitted!` provides ergonomic declarative assertions for contract events. It filters by contract ID, topic name(s), and data payload fields, asserting that at least one matching event was published:
+
+```rust
+use soroban_testkit_assert::assert_event_emitted;
+
+client.increment(&caller, &5);
+
+// Assert by contract, topic, and struct/map fields:
+assert_event_emitted!(&env, &contract_id, "incremented", {
+    caller: caller,
+    new_count: 5u32,
+});
+
+// Assert with multiple topics:
+assert_event_emitted!(&env, &contract_id, ["counter", "incremented"], {
+    new_count: 5u32,
+});
+
+// Assert by contract and topic only:
+assert_event_emitted!(&env, &contract_id, "incremented");
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Scope: the invocation that just ran</span>
+  <p>Like <code>EventMatcher::new(&amp;env)</code>, <code>assert_event_emitted!</code> inspects <code>env.events().all()</code>, which in Soroban SDK v28 returns events from the <strong>most recent contract invocation</strong> only. Invoke the assertion immediately after the contract call that should emit the event.</p>
+</div>
+
+When multiple events match the filters, the assertion succeeds (at least one match). If no event matches, it panics with a detailed diagnostic message displaying what was expected versus all events emitted during the invocation:
+
+```text
+panicked at 'assert_event_emitted! failed: no matching event found.
+Expected event:
+  contract: Contract(CAAAAA...)
+  topic(s): ["incremented"]
+  data: { new_count: 5u32 }
+Emitted events (1 in scope):
+  [1] contract: Contract(CAAAAA...), topics: [counter, incremented], data: {"caller": Contract(...), "new_count": 10}'
+```
+
 ## Regex and wildcard topic matching (assert_emitted_matches!)
 
 When contract events contain prefixes, variable identifiers, or structured multi-part topics (e.g. `Transfer:XLM`, `Order:Created:104`), exact string topic matching can be brittle. `assert_emitted_matches!` allows matching topics using wildcard glob patterns (`*`, `?`) and regular expressions, while validating data payload fields in the same assertion:
@@ -489,6 +533,158 @@ assert_contract_call_panics_with_error_code! failed: the call panicked with a di
 
 `check_panic_error_code` returns the diagnostic as a `Result<(), String>`
 without panicking, for tests that assert on the message itself.
+
+## Matching a panic message (`assert_panic_msg!`)
+
+`#[should_panic(expected = "...")]` applies to the whole test, passes for a
+panic raised anywhere in it, and only does a substring match.
+`assert_panic_msg!` scopes the expectation to a single expression, runs that
+expression exactly once inside `catch_unwind`, and matches the message it
+panicked with by substring, glob, or regular expression. On a match it
+evaluates to a `CapturedPanic` you can inspect further.
+
+### Matching modes
+
+The mode is chosen by a keyword. The macro never guesses it from what the
+pattern contains, so `"a*b"` with no keyword is a literal substring:
+
+| Form | Mode | Rule |
+|------|------|------|
+| `assert_panic_msg!(expr, "text")` | substring | The message contains `text` (same rule as `#[should_panic(expected)]`) |
+| `assert_panic_msg!(expr, contains: "text")` | substring | The same rule, written out |
+| `assert_panic_msg!(expr, glob: "pat")` | glob | The **whole** message matches; `*` is any run of characters (newlines included), `?` exactly one character |
+| `assert_panic_msg!(expr, regex: r"pat")` | regex | [`regex`](https://docs.rs/regex) crate syntax; unanchored unless the pattern uses `^`/`$` |
+
+The pattern can be any expression that gives a `&str` or `String`, so
+`format!` with runtime values works. A closure written in place (`|| expr` or
+`move || expr`) is called once, not just constructed.
+
+```rust
+use soroban_testkit_assert::assert_panic_msg;
+
+fn withdraw(amount: u64) {
+    assert!(amount <= 100, "withdrawal of {amount} exceeds the limit of 100");
+}
+
+// Substring
+assert_panic_msg!(withdraw(250), "exceeds the limit");
+assert_panic_msg!(withdraw(250), contains: "exceeds the limit");
+
+// Glob: the whole message, with * and ?
+assert_panic_msg!(withdraw(250), glob: "withdrawal of * exceeds the limit of ???");
+
+// Regex
+assert_panic_msg!(withdraw(250), regex: r"^withdrawal of \d+ exceeds the limit of \d+$");
+
+// Dynamic values in the pattern, and inspecting what was caught
+let amount = 250;
+let captured = assert_panic_msg!(withdraw(amount), contains: format!("withdrawal of {amount}"));
+assert_eq!(captured.message(), "withdrawal of 250 exceeds the limit of 100");
+```
+
+Panics from `panic!` and from failed `assert!`, `assert_eq!` and
+`unwrap` all work. A bare `assert!(ready)` or `panic!("literal")` carries a
+`&'static str` payload and a formatted message a `String`; both are read.
+
+### Contract panics and host diagnostics
+
+A contract called through its generated client does not unwind with the
+contract's own payload. The test host catches the contract's panic, turns it
+into a host error, and re-panics with a `String` like this:
+
+```text
+HostError: Error(WasmVm, InvalidAction)
+
+Event log (newest first):
+   ...
+   3: [Failed Diagnostic Event (not emitted)] contract:CA..., topics:[log], data:["caught panic 'withdrawal of 250 exceeds the limit of 100' from contract function 'Symbol(withdraw)'", 250]
+   ...
+```
+
+`CapturedPanic` splits that text into parts. `host_error` holds the
+`Error(..)` from the first line, and `contract_panics` holds the message
+from each `caught panic '..'` entry. A pattern passes if it matches **any**
+of the candidates below, tried in this order:
+
+1. each contract panic message;
+2. the host error (`Error(WasmVm, InvalidAction)`, `Error(Contract, #7)`, ...);
+3. the `HostError: ...` header line;
+4. the full raw panic text.
+
+That is how a whole-message glob or anchored regex can match the contract's
+own words even though the raw payload also carries the event log:
+
+```rust
+let captured = assert_panic_msg!(
+    client.withdraw(&250),
+    glob: "withdrawal of * exceeds the limit of 100"
+);
+assert_eq!(captured.host_error.as_deref(), Some("Error(WasmVm, InvalidAction)"));
+
+// An error raised with panic_with_error! carries a code, not text:
+assert_panic_msg!(client.locked(), glob: "Error(Contract, #7)");
+```
+
+For a Rust panic raised by test-side code, the raw message is the only
+candidate.
+
+### Failure diagnostics
+
+A failure says which of four things went wrong.
+
+**The invocation did not panic:**
+
+```text
+assert_panic_msg! failed: the invocation completed without panicking
+  expected a panic matching (contains): "exceeds"
+```
+
+**No candidate matched.** The failure prints the expected pattern, its mode,
+and the actual message. For a host panic it also prints the host error and
+each contract panic message:
+
+```text
+assert_panic_msg! failed: the panic message did not match
+  expected (glob): "deposit of *"
+  origin: Soroban host error
+  host error: Error(WasmVm, InvalidAction)
+  contract panic message: "withdrawal of 250 exceeds the limit of 100"
+  actual (full host panic):
+    | HostError: Error(WasmVm, InvalidAction)
+    | ...
+```
+
+**The payload has no text.** This happens with `std::panic::panic_any(42u32)`
+and similar. The failure reports the payload as having no message instead of
+matching the pattern against an empty string.
+
+**The regex pattern is invalid.** The failure prints the compile error, and
+the invocation is never run.
+
+`check_panic_msg(capture_panic(|| ...), &PanicPattern::glob("..."))` gives
+you the same result as a `Result<CapturedPanic, PanicMsgFailure>` without
+panicking. `PanicPattern::matches_text` and `panic_msg::glob_match` let you test the
+matching on its own.
+
+### Limitations
+
+- The contract's own panic text is only available from the host's
+  **diagnostic event log**. `Env::default()` in testutils records that log.
+  If diagnostics are off, only the host error is available, and a mismatch
+  reports `contract panic message: unavailable` instead of matching against
+  empty text. The crate's tests cover this case.
+- `panic_with_error!` and `#[contracterror]` returns carry a numeric code,
+  not text. Match them by their `Error(Contract, #N)` rendering, or use
+  `assert_contract_call_panics_with_error_code!` to compare the decoded code.
+- The text is matched exactly as the host renders it in the event log. A
+  contract message containing quotes or control characters may appear
+  escaped.
+- Only the native test host has been exercised. A Wasm contract built with
+  `panic = "abort"` traps without a message, so all you get there is the
+  host error.
+- The default panic hook still prints the caught panic to stderr. The macro
+  does not replace the process-wide hook, because doing that is not safe
+  while tests run in parallel.
 
 ## Authorization matching
 
@@ -1146,6 +1342,65 @@ Failure Summary:
   • Failed to achieve target CPU savings: achieved 15.00%, expected at least 25.00%
 ```
 
+## Event Sequence Assertions
+
+While `EventLog` collects events across multiple invocations, verifying that events occurred in an exact sequence—or that a specific sequence occurred with allowed interleaving—is streamlined by `assert_event_sequence!`.
+
+### Strict and Relaxed Sequence Modes
+
+`assert_event_sequence!` supports two modes:
+- **`Strict`** (`exact_sequence`): Every expected event must match consecutively 1:1 in length and order without unexpected or interleaved intermediate events.
+- **`Relaxed`** (`ordered_subsequence`): Expected events must appear in order, allowing intermediate unrelated events between them.
+
+```rust
+use soroban_testkit_assert::assert_event_sequence;
+use soroban_testkit_assert::sequence::{Relaxed, Strict};
+
+// Relaxed mode: allows intermediate noise/transfer events
+assert_event_sequence!(event_log, [
+    { topic: "Deposit", contract: vault_id },
+    { topic: "Mint", contract: token_id },
+    { topic: "Transfer", contract: token_id },
+], mode = Relaxed);
+
+// Strict mode: exact 1:1 sequence match
+assert_event_sequence!(event_log, [
+    { topic: "Deposit", contract: vault_id },
+    { topic: "Mint", contract: token_id },
+], mode = Strict);
+```
+
+### Matching Payload Data Predicates
+
+You can match topics, contract IDs, and payload data predicates:
+
+```rust
+assert_event_sequence!(event_log, [
+    {
+        topic: "Deposit",
+        contract: vault_id,
+        data: |data| data.deserialize::<u64>() == Some(500)
+    },
+    { topic: "Transfer", contract: token_id },
+], mode = Relaxed);
+```
+
+### Detailed Failure Diagnostics
+
+When an event sequence fails, `assert_event_sequence!` outputs detailed diagnostics showing matched events, divergence points, and missing expectations:
+
+```text
+Event sequence diverged at index 1 (mode = Strict / exact_sequence):
+Expected event: { topic: "Mint", contract: CAAA... }
+Observed event: topics: [Noise], contract: CAAA...
+
+Full sequence breakdown:
+  [ 0] ✓ MATCHED  | Expected: { topic: "Deposit" } | Observed: topics: [Deposit]
+  [ 1] ✗ DIVERGED | Expected: { topic: "Mint" }    | Observed: topics: [Noise]
+  [ 2]   PENDING  | Expected: { topic: "Transfer" }| Observed: topics: [Transfer]
+```
+
+
 <div class="tk-grid tk-grid--2">
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">Next step</span>
@@ -1195,3 +1450,15 @@ assert_budget_consumed! failed:
 ```
 
 The same check is available without the macro: build a `BudgetBounds` (`.cpu(..)`, `.max_cpu(..)`, `.mem(..)`, `.max_mem(..)`) and call `check(&snapshot)` or `assert_within(&snapshot)` on any `BudgetSnapshot`.
+
+## Distinct Invoker Authorization
+
+To enforce least-privilege delegation across addresses:
+
+```rust
+use soroban_testkit_assert::assert_auth_invoker_distinct;
+
+// Asserts that only admin_address authorized the operation
+assert_auth_invoker_distinct!(&admin_address, &[admin_address.clone()]);
+```
+

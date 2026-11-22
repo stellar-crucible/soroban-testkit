@@ -5,7 +5,7 @@
 
 use proptest::collection;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use proptest::test_runner::{TestCaseError, TestCaseResult, TestRunner, Config as ProptestConfig};
+use proptest::test_runner::{Config as ProptestConfig, TestCaseError, TestCaseResult, TestRunner};
 use std::fmt::Debug;
 
 /// A trait defining a state machine for Soroban contract testing.
@@ -78,50 +78,51 @@ impl<SM: SorobanStateMachine + Clone> SorobanStateMachineRunner<SM> {
         let config = self.config.clone();
 
         let mut runner = TestRunner::new(config);
-        
+
         // Strategy to generate a sequence of actions
         let action_sequence = Self::generate_action_sequence(&machine);
-        
-        runner.run(&action_sequence, |actions| {
-            let model = machine.initial_model();
-            let mut context = machine.create_context();
-            
-            // Execute each action in sequence
-            for action in actions {
-                // Check precondition
-                if !machine.check_precondition(&model, &action) {
-                    return Err(TestCaseError::fail("Precondition failed"));
+
+        runner
+            .run(&action_sequence, |actions| {
+                let model = machine.initial_model();
+                let mut context = machine.create_context();
+
+                // Execute each action in sequence
+                for action in actions {
+                    // Check precondition
+                    if !machine.check_precondition(&model, &action) {
+                        return Err(TestCaseError::fail("Precondition failed"));
+                    }
+
+                    // Apply to model
+                    machine.apply_to_model(&mut model.clone(), &action);
+
+                    // Execute against real contract
+                    machine
+                        .execute(&mut context, &action)
+                        .map_err(TestCaseError::fail)?;
+
+                    // Check invariant after each action
+                    machine.check_invariant(&model, &context)?;
                 }
-                
-                // Apply to model
-                machine.apply_to_model(&mut model.clone(), &action);
-                
-                // Execute against real contract
-                machine.execute(&mut context, &action)
-                    .map_err(|e| TestCaseError::fail(e))?;
-                
-                // Check invariant after each action
-                machine.check_invariant(&model, &context)?;
-            }
-            
-            Ok(())
-        }).map_err(|e| format!("State machine test failed: {}", e))
+
+                Ok(())
+            })
+            .map_err(|e| format!("State machine test failed: {}", e))
     }
 
     /// Generate a strategy for action sequences.
     fn generate_action_sequence(machine: &SM) -> BoxedStrategy<Vec<SM::Action>> {
         let initial_model = machine.initial_model();
-        
+
         // Generate sequences of actions up to a reasonable length
         // We use a recursive strategy to build sequences
-        let gen_actions = move |model: SM::Model| {
-            machine.generate_action(&model)
-        };
-        
+        let gen_actions = move |model: SM::Model| machine.generate_action(&model);
+
         // For simplicity, generate sequences of fixed length
         // In a full implementation, this would be more sophisticated
         let single_action = gen_actions(initial_model.clone());
-        
+
         // Generate sequences of length 1 to 20
         collection::vec(single_action, 1..=20).boxed()
     }
@@ -143,50 +144,52 @@ where
         cases,
         ..ProptestConfig::default()
     };
-    
+
     let mut runner = TestRunner::new(config);
-    
+
     // Strategy to generate action sequences
     let action_strategy = {
         let machine = machine.clone();
         let initial_model = machine.initial_model();
         let gen_actions = move |model: SM::Model| machine.generate_action(&model);
-        
+
         // Generate sequences of actions
         collection::vec(gen_actions(initial_model.clone()), 1..=max_actions).boxed()
     };
-    
-    runner.run(&action_strategy, move |actions| {
-        let mut model = machine.initial_model();
-        let mut context = machine.create_context();
-        
-        for action in actions {
-            // Check precondition
-            if !machine.check_precondition(&model, &action) {
-                return Err(TestCaseError::fail("Precondition failed"));
+
+    runner
+        .run(&action_strategy, move |actions| {
+            let mut model = machine.initial_model();
+            let mut context = machine.create_context();
+
+            for action in actions {
+                // Check precondition
+                if !machine.check_precondition(&model, &action) {
+                    return Err(TestCaseError::fail("Precondition failed"));
+                }
+
+                // Apply to model
+                machine.apply_to_model(&mut model, &action);
+
+                // Execute against real contract
+                machine
+                    .execute(&mut context, &action)
+                    .map_err(TestCaseError::fail)?;
+
+                // Check invariant
+                machine.check_invariant(&model, &context)?;
             }
-            
-            // Apply to model
-            machine.apply_to_model(&mut model, &action);
-            
-            // Execute against real contract
-            machine.execute(&mut context, &action)
-                .map_err(|e| TestCaseError::fail(e))?;
-            
-            // Check invariant
-            machine.check_invariant(&model, &context)?;
-        }
-        
-        Ok(())
-    }).map_err(|e| format!("State machine test failed: {}", e))
+
+            Ok(())
+        })
+        .map_err(|e| format!("State machine test failed: {}", e))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use proptest::test_runner::TestRunner;
-    use soroban_sdk::{Env, Address, testutils::Address as _};
+    use soroban_sdk::{testutils::Address as _, Address, Env};
     use std::collections::HashMap;
     use std::hash::{Hash, Hasher};
 
@@ -199,7 +202,8 @@ mod tests {
             // Hash the underlying bytes using the XDR representation
             use soroban_sdk::xdr::{ScAddress, WriteXdr};
             let sc_address: ScAddress = self.0.clone().into();
-            let bytes = sc_address.to_xdr(soroban_sdk::xdr::Limits::none())
+            let bytes = sc_address
+                .to_xdr(soroban_sdk::xdr::Limits::none())
                 .expect("Address should serialize to XDR");
             bytes.hash(state);
         }
@@ -225,6 +229,7 @@ mod tests {
     }
 
     impl TokenModel {
+        #[expect(dead_code)]
         fn total_supply(&self) -> i128 {
             self.total_supply
         }
@@ -233,14 +238,25 @@ mod tests {
     /// Actions for the token state machine.
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum TokenAction {
-        Mint { to: AddrWrapper, amount: i128 },
-        Transfer { from: AddrWrapper, to: AddrWrapper, amount: i128 },
-        Burn { from: AddrWrapper, amount: i128 },
+        Mint {
+            to: AddrWrapper,
+            amount: i128,
+        },
+        Transfer {
+            from: AddrWrapper,
+            to: AddrWrapper,
+            amount: i128,
+        },
+        Burn {
+            from: AddrWrapper,
+            amount: i128,
+        },
     }
 
     /// Test context with Soroban environment.
     #[derive(Clone)]
     struct TokenTestContext {
+        #[expect(dead_code)]
         env: Env,
         contract: Address,
         admin: Address,
@@ -263,7 +279,9 @@ mod tests {
 
     impl TokenStateMachine {
         fn new() -> Self {
-            Self { env: Env::default() }
+            Self {
+                env: Env::default(),
+            }
         }
     }
 
@@ -285,9 +303,9 @@ mod tests {
             let mint = {
                 let env = self.env.clone();
                 (1i128..1_000_000)
-                    .prop_map(move |amount| TokenAction::Mint { 
-                        to: AddrWrapper(Address::generate(&env)), 
-                        amount 
+                    .prop_map(move |amount| TokenAction::Mint {
+                        to: AddrWrapper(Address::generate(&env)),
+                        amount,
                     })
                     .boxed()
             };
@@ -304,7 +322,6 @@ mod tests {
             };
 
             let burn = if has_balances {
-                let env = self.env.clone();
                 (prop::sample::select(addresses), 1i128..1_000_000)
                     .prop_map(move |(from, amount)| TokenAction::Burn { from, amount })
                     .boxed()
@@ -325,15 +342,29 @@ mod tests {
             match action {
                 TokenAction::Mint { amount, .. } => *amount > 0,
                 TokenAction::Transfer { from, amount, .. } => {
-                    *amount > 0 && model.balances.get(from).map(|b| *b >= *amount).unwrap_or(false)
+                    *amount > 0
+                        && model
+                            .balances
+                            .get(from)
+                            .map(|b| *b >= *amount)
+                            .unwrap_or(false)
                 }
                 TokenAction::Burn { from, amount } => {
-                    *amount > 0 && model.balances.get(from).map(|b| *b >= *amount).unwrap_or(false)
+                    *amount > 0
+                        && model
+                            .balances
+                            .get(from)
+                            .map(|b| *b >= *amount)
+                            .unwrap_or(false)
                 }
             }
         }
 
-        fn execute(&self, _context: &mut Self::Context, _action: &Self::Action) -> Result<(), String> {
+        fn execute(
+            &self,
+            _context: &mut Self::Context,
+            _action: &Self::Action,
+        ) -> Result<(), String> {
             // In a real test, this would call the contract
             // For this test, we just simulate success
             Ok(())
@@ -376,7 +407,11 @@ mod tests {
             let env = Env::default();
             let contract = Address::generate(&env);
             let admin = Address::generate(&env);
-            TokenTestContext { env, contract, admin }
+            TokenTestContext {
+                env,
+                contract,
+                admin,
+            }
         }
     }
 
