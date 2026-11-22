@@ -1,5 +1,11 @@
 # soroban-testkit-core
 
+Budget tracking, error decoding, storage inspection, contract dependency graphs,
+WASM analysis and host execution profiling — the primitives the rest of Testkit is built on.
+
+<div class="tk-spec">
+  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · wasm · profiler · reentrancy · conservation</span></div>
 Budget tracking, error decoding, storage inspection and contract dependency graphs — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
@@ -38,6 +44,8 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
 | `BudgetDiff`, `BudgetCaseDiff` | Base vs head baselines: signed deltas, growth percent, a Markdown report and the cases past a threshold |
 | `budget-diff` | Binary wrapping `BudgetDiff` for CI |
+| `HostExecutionProfiler`, `HostExecutionSummary` | Repeated call latency and explicit host-operation measurements |
+| `WasmSectionAnalyzer`, `WasmAnalysis` | WASM section sizes, deployment limits and debug/bloat warnings |
 | `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
 | `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
 | `StackDepthAuditor` | Reconstructs a contract call chain from host diagnostic events and checks it against a depth cap |
@@ -339,6 +347,58 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
   <span class="tk-callout__title">Scope</span>
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
+
+## WASM section analysis
+
+`WasmSectionAnalyzer` validates the WebAssembly 1.0 header, walks standard
+binary sections and reports each section's payload size:
+
+```rust
+use soroban_testkit_core::wasm::WasmSectionAnalyzer;
+
+let wasm = std::fs::read("target/wasm32v1-none/release/contract.wasm")?;
+let report = WasmSectionAnalyzer::new(64 * 1024).analyze(&wasm)?;
+
+println!("{}", report.to_markdown());
+for warning in &report.warnings {
+    eprintln!("warning: {warning}");
+}
+```
+
+The report includes Code, Type, Function, Table, Memory, Data and Custom
+sections. It warns when the binary reaches 90% of the configured deployment
+limit, exceeds it, contains a debug/name custom section, or has oversized string
+or data sections.
+
+Use `to_json()` when section footprints feed a continuous performance artifact;
+the JSON shape is stable and contains the configured limit, total bytecode size,
+section list and warnings.
+
+## Host execution profiling
+
+`HostExecutionProfiler` repeatedly times an invocation and summarizes mean,
+p50, p95 and p99 wall-clock latency. Because stable Soroban host APIs do not
+expose per-call map/object counters, explicit counters are recorded in the
+invocation closure:
+
+```rust
+use soroban_testkit_core::profiler::HostExecutionProfiler;
+
+let summary = HostExecutionProfiler::new(100).run(|metrics| {
+    contract_client.increment(&caller, &1);
+    metrics.record_map_lookup();
+    metrics.record_object_created();
+    metrics.record_memory_copy(4_096);
+})?;
+
+println!("{}", summary.to_markdown());
+std::fs::write("host-profile.json", summary.to_json()?)?;
+```
+
+The return value contains every timing sample plus mean map lookup, object
+creation and memory-copy totals. A percentile uses nearest-rank ordering, so
+small benchmark sets are deterministic. JSON exports use the same complete
+sample and summary shape for continuous benchmarking.
 
 ## Storage Namespace Auditing
 
@@ -892,6 +952,71 @@ When uninvoked functions are detected, `report.to_markdown()` renders detailed s
 > [!WARNING]
 > **2 uninvoked contract entry point(s) detected.** Unexercised administrative, emergency, or recovery functions leave critical code paths untested.
 ```
+
+## Memory Allocation and Footprint Profiler
+
+The Soroban host enforces strict memory limits alongside CPU limits. Contracts with nested collections or recursive data structures frequently exhaust host memory on-chain despite passing CPU metering locally.
+
+[`MemoryProfiler`] captures memory allocation deltas, measures memory bytes metered per execution step via `env.budget().memory_bytes_cost()`, tracks host object allocations, identifies peak allocation spikes, and generates structured reports with configurable threshold warnings:
+
+```rust
+use soroban_testkit_core::memory_profiler::MemoryProfiler;
+
+let mut profiler = MemoryProfiler::new(&ctx.env)
+    .with_warning_threshold(500_000);
+
+profiler.profile_call("batch_mint", || {
+    token_client.batch_mint(&recipients, &amounts);
+});
+
+assert!(profiler.peak_memory_bytes() < 500_000);
+println!("{}", profiler.report());
+```
+
+Structured output formats:
+- Parseable text summary: `println!("{}", profiler.report())`
+- JSON profile report: `profiler.report().to_json()`
+
+## Comparative Budget Benchmarking and Diff Reporting
+
+While `budget_guard!` and `BudgetBaseline` check costs against fixed ceilings, protocol upgrades require comparative reports across versions or PRs to detect subtle gas regressions across multiple functions before merging.
+
+[`BudgetComparison`] diffs two `budget.json` baseline files, calculates delta CPU instructions, memory bytes, and percentage shifts per contract function, and flags regressions exceeding configurable thresholds (e.g. `> 5%`):
+
+```rust
+use soroban_testkit_core::budget_report::BudgetComparison;
+
+let report = BudgetComparison::diff_files("budget_base.json", "budget_head.json")?;
+println!("{}", report.to_markdown_table());
+
+if report.has_regressions_above(0.05) {
+    panic!("Gas regression detected: {}", report.summary());
+}
+```
+
+### GitHub PR Comment Markdown Table
+
+`report.to_markdown_table()` generates clean Markdown tables formatted for automated CI pull request comment injection:
+
+```markdown
+### 📊 Soroban Budget Comparison Report
+
+| Function | Status | CPU (Base → Head) | CPU Shift | Mem (Base → Head) | Mem Shift |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| `batch_mint` | 🔴 Regressed | 1,000,000 → 1,120,000 | +12.0% | 50,000 → 55,000 | +10.0% |
+| `transfer` | 🟢 Improved | 500,000 → 450,000 | -10.0% | 20,000 → 18,000 | -10.0% |
+| `balance` | ⚪ Unchanged | 100,000 → 100,000 | 0.0% | 5,000 → 5,000 | 0.0% |
+```
+
+### Standalone Responsive HTML Reports
+
+`report.to_html_report()` generates a standalone HTML document with KPI summary cards, responsive tables, and visual diff bars:
+
+```rust
+let html = report.to_html_report();
+std::fs::write("target/budget_report.html", html).unwrap();
+```
+
 
 <hr class="tk-divider" />
 

@@ -478,21 +478,24 @@ mod tests {
             val_seed in 1u64..=1_000u64,
         ) {
             let mut cache = MockTieredCache::new();
+            let mut expected: HashMap<(String, StorageTier), u64> = HashMap::new();
 
             // Populate according to generated tier allocations
             for (idx, (key, tier)) in allocations.entries.iter().enumerate() {
-                cache.put(key.clone(), val_seed + idx as u64, *tier);
+                let val = val_seed + idx as u64;
+                cache.put(key.clone(), val, *tier);
+                expected.insert((key.clone(), *tier), val);
             }
 
             // Verify retrieval per tier
-            for (idx, (key, tier)) in allocations.entries.iter().enumerate() {
+            for ((key, tier), val) in &expected {
                 let found = cache.get(key, *tier);
-                assert_eq!(found, Some(val_seed + idx as u64));
+                assert_eq!(found, Some(*val));
             }
 
             // Purge temporary tier: temporary keys gone, instance and persistent intact
             cache.purge_ephemeral();
-            for (key, tier) in &allocations.entries {
+            for (key, tier) in expected.keys() {
                 match tier {
                     StorageTier::Temporary => assert_eq!(cache.get(key, *tier), None),
                     StorageTier::Instance | StorageTier::Persistent => {

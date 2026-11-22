@@ -1099,9 +1099,14 @@ mod tests {
 
     #[test]
     fn a_baseline_round_trips_through_disk() {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
         let path = std::env::temp_dir().join(format!(
-            "soroban-testkit-baseline-{}.json",
-            std::process::id()
+            "soroban-testkit-baseline-{id}-{nonce}.json"
         ));
         let mut baseline = BudgetBaseline::new();
         baseline.record("transfer", cost(7, 11));
@@ -1445,13 +1450,14 @@ mod tests {
     }
 
     fn temp_path(label: &str) -> std::path::PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!(
-            "testkit-budget-diff-{}-{label}-{nonce}.json",
-            std::process::id()
+            "testkit-budget-diff-{id}-{label}-{nonce}.json"
         ))
     }
 

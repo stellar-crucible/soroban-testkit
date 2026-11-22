@@ -1,0 +1,19 @@
+[package]
+name = "soroban-testkit-fixtures-macros"
+description = "Procedural macros backing soroban-testkit-fixtures' declarative mock contracts"
+keywords = ["soroban", "stellar", "testing", "fixtures", "mocks"]
+categories = ["development-tools::testing"]
+homepage = "https://stellar-crucible.github.io/soroban-testkit/"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

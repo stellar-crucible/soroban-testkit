@@ -15,6 +15,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aho-corasick"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -933,6 +942,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "governance"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1504,10 +1525,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "regex-syntax"
-version = "0.8.11"
+name = "regex"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+checksum = "9807af0e638c12e753aa1b4e601791bf2a8f71274023c8bbeec12fc149950857"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-automata"
+version = "0.4.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41d60ef07df457506a0a1a2073112eb4aae5733dbd2813c3da77d1b0fd441158"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-syntax"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rfc6979"
@@ -1923,6 +1967,8 @@ dependencies = [
 name = "soroban-testkit-assert"
 version = "0.4.1"
 dependencies = [
+ "regex",
+ "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",
 ]
@@ -1939,6 +1985,18 @@ dependencies = [
 
 [[package]]
 name = "soroban-testkit-example-amm"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
+name = "soroban-testkit-example-auction"
 version = "0.4.1"
 dependencies = [
  "proptest",
@@ -2068,7 +2126,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-subscription"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-token"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
+name = "soroban-testkit-example-vamm"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
+name = "soroban-testkit-example-vesting-escrow"
 version = "0.4.1"
 dependencies = [
  "proptest",
@@ -2083,15 +2177,28 @@ dependencies = [
 name = "soroban-testkit-fixtures"
 version = "0.4.1"
 dependencies = [
+ "ed25519-dalek",
+ "rand_core 0.6.4",
  "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",
+ "soroban-testkit-fixtures-macros",
+]
+
+[[package]]
+name = "soroban-testkit-fixtures-macros"
+version = "0.4.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
 name = "soroban-testkit-generators"
 version = "0.4.1"
 dependencies = [
+ "arbitrary",
  "ed25519-dalek",
  "k256",
  "proptest",
@@ -2099,6 +2206,17 @@ dependencies = [
  "soroban-env-host",
  "soroban-sdk",
  "soroban-testkit-core",
+ "soroban-testkit-generators",
+]
+
+[[package]]
+name = "soroban-testkit-mock"
+version = "0.4.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "soroban-sdk",
+ "syn 2.0.119",
 ]
 
 [[package]]

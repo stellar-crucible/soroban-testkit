@@ -1,17 +1,27 @@
+extern crate self as soroban_testkit_fixtures;
+
 pub mod archival;
+pub mod branching;
 pub mod builder;
+pub mod checkpoint;
 pub mod congestion;
 pub mod consensus;
+pub mod crypto;
 pub mod event_indexer;
 pub mod eviction;
 pub mod failure_injector;
 pub mod gas_exhaustion;
 pub mod migration;
+pub mod mock;
 pub mod profiles;
 pub mod protocol_registry;
+pub mod reentrancy;
+pub mod topology;
 #[cfg(test)]
 mod ttl_tests;
 
+pub use branching::BranchingContext;
+pub use checkpoint::ContextCheckpoint;
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
 };
@@ -22,11 +32,17 @@ pub use consensus::{
 };
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
+pub use mock::{MockContract, MockContractBuilder, MockContractType};
 pub use profiles::NetworkProfile;
 pub use protocol_registry::{
     ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
     ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
     ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
+pub use soroban_testkit_fixtures_macros::mock_contract;
+pub use topology::{
+    AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
+    TopologyReport, TopologyValidator, UninitializedLink,
 };
 
 pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
@@ -58,6 +74,8 @@ pub struct TestContext {
     /// The network conditions the builder installed and [`TestContext::reset`]
     /// re-applies to the fresh env.
     pub network_profile: NetworkProfile,
+    /// Stack of checkpoints for nested rollback support.
+    checkpoint_stack: Vec<ContextCheckpoint>,
 }
 
 impl Default for TestContext {
@@ -88,6 +106,7 @@ impl TestContext {
             users: Vec::new(),
             mock_auths: true,
             network_profile: NetworkProfile::Local,
+            checkpoint_stack: Vec::new(),
         }
     }
 
@@ -396,6 +415,123 @@ impl TestContext {
         self.users = (0..user_count)
             .map(|_| Address::generate(&self.env))
             .collect();
+    }
+
+    /// Create a checkpoint of the current environment state.
+    ///
+    /// This captures:
+    /// - Storage for all contracts (instance, persistent, temporary)
+    /// - Ledger sequence and timestamp
+    /// - Mock auth configuration
+    /// - Network profile
+    /// - Events
+    ///
+    /// Returns an opaque [`ContextCheckpoint`] that can be used with
+    /// [`TestContext::rollback_to`] to restore this exact state.
+    ///
+    /// Multiple checkpoints can be created and they form a stack.
+    /// Use [`TestContext::rollback_to`] to restore to a specific checkpoint.
+    pub fn checkpoint(&mut self) -> ContextCheckpoint {
+        let checkpoint = crate::checkpoint::ContextCheckpoint::capture(
+            &self.env,
+            self.mock_auths,
+            self.network_profile,
+        );
+        self.checkpoint_stack.push(checkpoint.clone());
+        checkpoint
+    }
+
+    /// Roll back the environment to a previously created checkpoint.
+    ///
+    /// This restores:
+    /// - All contract storage (instance, persistent, temporary)
+    /// - Ledger sequence and timestamp
+    /// - Mock auth configuration
+    /// - Network profile
+    /// - Events (discards events generated after the checkpoint)
+    ///
+    /// The checkpoint must have been created by this context's [`checkpoint`] method.
+    /// After rollback, all checkpoints created after the target are discarded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the checkpoint was not created by this context.
+    pub fn rollback_to(&mut self, checkpoint: &ContextCheckpoint) {
+        // Find the checkpoint in our stack
+        let idx = self.checkpoint_stack.iter().position(|c| {
+            c.ledger_sequence == checkpoint.ledger_sequence
+                && c.ledger_timestamp == checkpoint.ledger_timestamp
+                && c.mock_auths == checkpoint.mock_auths
+        });
+
+        let Some(idx) = idx else {
+            panic!("Attempted to rollback to a checkpoint not created by this context");
+        };
+
+        // Restore the checkpoint
+        checkpoint.restore(&self.env);
+
+        // Restore auth mocking
+        if checkpoint.mock_auths {
+            self.env.mock_all_auths();
+        }
+
+        // Restore network profile
+        checkpoint.network_profile.apply(&self.env);
+
+        // Truncate the checkpoint stack to remove checkpoints after the target
+        self.checkpoint_stack.truncate(idx + 1);
+    }
+
+    /// Get the number of checkpoints in the stack.
+    pub fn checkpoint_count(&self) -> usize {
+        self.checkpoint_stack.len()
+    }
+
+    /// Clear all checkpoints.
+    pub fn clear_checkpoints(&mut self) {
+        self.checkpoint_stack.clear();
+    }
+
+    /// Generates a cryptographically signed authorization entry for testing invocation verification.
+    ///
+    /// Constructs a valid [`soroban_sdk::testutils::AuthorizedInvocation`] for `contract::function(args)`
+    /// and signs the authorization digest using `signer`.
+    pub fn generate_signed_auth(
+        &self,
+        signer: &crypto::SignerKeypair,
+        contract: &Address,
+        function: soroban_sdk::Symbol,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+    ) -> crypto::SignedAuth {
+        self.generate_signed_auth_with_nonce(signer, contract, function, args, 0)
+    }
+
+    /// Generates a signed authorization entry with an explicit nonce for replay testing.
+    pub fn generate_signed_auth_with_nonce(
+        &self,
+        signer: &crypto::SignerKeypair,
+        contract: &Address,
+        function: soroban_sdk::Symbol,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+        nonce: u64,
+    ) -> crypto::SignedAuth {
+        use soroban_sdk::testutils::{AuthorizedFunction, AuthorizedInvocation};
+
+        let message = crypto::construct_auth_message(&self.env, contract, &function, &args, nonce);
+        let signature = signer.sign(&message);
+        let invocation = AuthorizedInvocation {
+            function: AuthorizedFunction::Contract((contract.clone(), function, args)),
+            sub_invocations: Vec::new(),
+        };
+
+        crypto::SignedAuth {
+            invocation,
+            signer: signer.address().clone(),
+            signature,
+            message,
+            nonce,
+        }
     }
 }
 
