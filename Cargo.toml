@@ -20,6 +20,7 @@ members = [
     "examples/dynamic_amm",
     "examples/orderbook",
     "examples/nft",
+    "examples/vamm",
     "examples/amm",
     "examples/governance",
     "crates/soroban-testkit-mock",

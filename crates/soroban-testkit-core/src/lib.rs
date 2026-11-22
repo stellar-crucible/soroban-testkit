@@ -8,12 +8,14 @@ pub mod footprint;
 pub mod memory;
 pub mod memory_profiler;
 pub mod namespace_auditor;
+pub mod profiler;
 pub mod reentrancy;
 pub mod stack_depth;
 pub mod storage;
 pub mod storage_fragmentation;
 pub mod tracer;
 pub mod ttl;
+pub mod wasm;
 
 pub use budget_report::{BudgetComparison, DiffStatus, FunctionBudgetDiff};
 pub use compatibility::{
