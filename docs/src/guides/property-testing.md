@@ -158,6 +158,94 @@ Keys are strings you choose rather than symbols read off the ledger, which is wh
   <p>Differential tests belong next to the arithmetic rather than the access control: bonding curves, fee splits, AMM invariants, interest accrual. Anywhere a second, simpler implementation is cheaper to write than the bug is to find. Every case builds a real <code>Env</code> for the contract side, so narrow the strategy with <a href="../crates/generators.html">a generator</a> before you raise the case count.</p>
 </div>
 
+<hr class="tk-divider" />
+
+## Stateful property-based testing with state machines
+
+Stateful property testing generates *sequences* of contract calls and verifies invariants after each step. This catches bugs that only appear across multiple interacting transactions (e.g., deposit → lock → vote → withdraw → claim). Testkit provides a state machine harness built on `proptest::state_machine`.
+
+### Defining a state machine
+
+```rust
+use soroban_testkit_generators::state_machine::{SorobanStateMachine, SorobanStateMachineRunner};
+use soroban_sdk::{Env, Address, testutils::Address as _};
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TokenModel {
+    balances: std::collections::HashMap<Address, i128>,
+    total_supply: i128,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TokenAction {
+    Mint { to: Address, amount: i128 },
+    Transfer { from: Address, to: Address, amount: i128 },
+    Burn { from: Address, amount: i128 },
+}
+
+struct TokenStateMachine {
+    env: Env,
+}
+
+impl SorobanStateMachine for TokenStateMachine {
+    type Action = TokenAction;
+    type Model = TokenModel;
+    type Context = TokenTestContext;
+
+    fn generate_action(&self, model: &Self::Model) -> BoxedStrategy<Self::Action> {
+        // Generate actions based on current model state
+    }
+
+    fn check_precondition(&self, model: &Self::Model, action: &Self::Action) -> bool {
+        // Validate action against model state
+    }
+
+    fn execute(&self, context: &mut Self::Context, action: &Self::Action) -> Result<(), String> {
+        // Execute action against real contract
+    }
+
+    fn apply_to_model(&self, model: &mut Self::Model, action: &Self::Action) {
+        // Update expected model state
+    }
+
+    fn check_invariant(&self, model: &Self::Model, context: &Self::Context) -> TestCaseResult {
+        // Verify invariant (e.g., total supply conservation)
+    }
+
+    fn initial_model(&self) -> Self::Model {
+        TokenModel::default()
+    }
+
+    fn create_context(&self) -> Self::Context {
+        TokenTestContext { ... }
+    }
+}
+```
+
+### Running the state machine
+
+```rust
+let machine = TokenStateMachine::new();
+let runner = SorobanStateMachineRunner::new(machine).cases(100);
+runner.run().unwrap();
+```
+
+Or use the simpler `prop_state_machine_test` function:
+
+```rust
+use soroban_testkit_generators::state_machine::prop_state_machine_test;
+
+prop_state_machine_test(machine, 20, 100).unwrap();
+```
+
+### Key features
+
+- **Automated invariant verification** after each transition
+- **Precondition checking** to filter invalid actions
+- **Automated shrinking** of failing action sequences to the minimal failing sequence
+- **Sequences of length ≥ 50** supported
+- **Integration example**: Token balance conservation invariant verification
+
 ## When to use property testing
 
 <div class="tk-grid tk-grid--2">

@@ -1714,6 +1714,37 @@ fn describe_auth(env: &Env, invoker: &Address, invocation: &AuthorizedInvocation
     )
 }
 
+/// Verifies that an invocation was authorized by *only* the expected address
+/// and no other unauthorized addresses or co-signers.
+pub fn assert_auth_invoker_distinct_internal(expected_addr: &Address, authorizations: &[Address]) {
+    for auth in authorizations {
+        if auth != expected_addr {
+            panic!(
+                "Security diagnostic: Unauthorized co-signer or unintended delegation detected. Expected only authorization from {:?}, but found authorization from {:?}",
+                expected_addr, auth
+            );
+        }
+    }
+}
+
+/// Assert that a function invocation or block was authorized exclusively by
+/// the declared authorized address and no others.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_auth_invoker_distinct!(&admin_address, &[client.auth_list()]);
+/// ```
+#[macro_export]
+macro_rules! assert_auth_invoker_distinct {
+    ($expected:expr, $auths:expr) => {
+        $crate::assert_auth_invoker_distinct_internal($expected, $auths)
+    };
+    ($expected:expr, $auths:expr, $($arg:tt)+) => {
+        $crate::assert_auth_invoker_distinct_internal($expected, $auths)
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2624,5 +2655,25 @@ mod tests {
         assert_auth_sub_invocation!(fx.env, {
             function: "absent",
         });
+    }
+
+    #[test]
+    fn test_assert_auth_invoker_distinct_success() {
+        let env = Env::default();
+        let addr = Address::generate(&env);
+        let auths = vec![addr.clone(), addr.clone()];
+        assert_auth_invoker_distinct!(&addr, &auths);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Security diagnostic: Unauthorized co-signer or unintended delegation detected"
+    )]
+    fn test_assert_auth_invoker_distinct_failure() {
+        let env = Env::default();
+        let addr = Address::generate(&env);
+        let unauthorized = Address::generate(&env);
+        let auths = vec![addr.clone(), unauthorized];
+        assert_auth_invoker_distinct!(&addr, &auths);
     }
 }

@@ -19,11 +19,15 @@ pub mod executables;
 #[cfg(feature = "proptest")]
 pub mod multisig;
 #[cfg(feature = "proptest")]
+pub mod state_machine;
+#[cfg(feature = "proptest")]
 pub mod storage_tier;
 #[cfg(feature = "proptest")]
 pub mod strategies;
 #[cfg(feature = "proptest")]
 pub mod strkey;
+#[cfg(feature = "proptest")]
+pub mod symbol;
 #[cfg(feature = "proptest")]
 pub mod temporal;
 #[cfg(feature = "proptest")]
@@ -60,6 +64,8 @@ pub use executables::{contract_executable, contract_executable_wasm_hash, deploy
 #[cfg(feature = "proptest")]
 pub use multisig::{multisig_policy, MultisigPolicy, Signer};
 #[cfg(feature = "proptest")]
+pub use state_machine::{prop_state_machine_test, SorobanStateMachine, SorobanStateMachineRunner};
+#[cfg(feature = "proptest")]
 pub use storage_tier::{
     mixed_tier_allocations, mixed_tier_allocations_with_ttl, mixed_tier_key_pairs, storage_tier,
     storage_tier_with_default_ttl, storage_tier_with_ttl, MixedTierAllocation,
@@ -71,6 +77,10 @@ pub use strategies::fuzzed_invocation_args;
 pub use strkey::{
     account_strkey, contract_strkey, corrupted_strkey, valid_strkey, zero_account_strkey,
     zero_contract_strkey, Strkey, StrkeyError, StrkeyKind,
+};
+#[cfg(feature = "proptest")]
+pub use symbol::{
+    invalid_symbol_strategy, soroban_identifier_symbol, soroban_symbol, sorobans_symbol_strategy,
 };
 #[cfg(feature = "proptest")]
 pub use temporal::{
