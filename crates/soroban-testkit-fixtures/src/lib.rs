@@ -36,11 +36,11 @@ pub use protocol_registry::{
     ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
     ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
 };
+pub use soroban_testkit_fixtures_macros::mock_contract;
 pub use topology::{
     AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
     TopologyReport, TopologyValidator, UninitializedLink,
 };
-pub use soroban_testkit_fixtures_macros::mock_contract;
 
 pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
 
