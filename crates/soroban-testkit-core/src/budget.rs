@@ -1105,9 +1105,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!(
-            "soroban-testkit-baseline-{id}-{nonce}.json"
-        ));
+        let path = std::env::temp_dir().join(format!("soroban-testkit-baseline-{id}-{nonce}.json"));
         let mut baseline = BudgetBaseline::new();
         baseline.record("transfer", cost(7, 11));
 
@@ -1456,9 +1454,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0);
-        std::env::temp_dir().join(format!(
-            "testkit-budget-diff-{id}-{label}-{nonce}.json"
-        ))
+        std::env::temp_dir().join(format!("testkit-budget-diff-{id}-{label}-{nonce}.json"))
     }
 
     fn cli(args: &[&str]) -> super::BudgetDiffCliOutcome {
