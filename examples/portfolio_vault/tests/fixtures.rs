@@ -63,7 +63,13 @@ fn rebalance_swaps_assets_at_oracle_price() {
     fx.deposit_balanced();
     fx.fund_trader(0, 1_000 * ONE, 0);
     // Vault has 50 A (price 2) and 60 B (price 1), 8 C. Sell 10 A for 20 B.
-    let bought = fx.client().rebalance(&fx.admin, &fx.token_a, &fx.token_b, &(10 * ONE), &(20 * ONE));
+    let bought = fx.client().rebalance(
+        &fx.admin,
+        &fx.token_a,
+        &fx.token_b,
+        &(10 * ONE),
+        &(20 * ONE),
+    );
     assert_eq!(bought, 20 * ONE);
 }
 
@@ -72,7 +78,13 @@ fn rebalance_fails_on_slippage() {
     let fx = Fixture::new();
     fx.deposit_balanced();
     fx.fund_trader(0, 1_000 * ONE, 0);
-    let res = fx.client().try_rebalance(&fx.admin, &fx.token_a, &fx.token_b, &(10 * ONE), &(21 * ONE));
+    let res = fx.client().try_rebalance(
+        &fx.admin,
+        &fx.token_a,
+        &fx.token_b,
+        &(10 * ONE),
+        &(21 * ONE),
+    );
     assert!(res.is_err());
 }
 

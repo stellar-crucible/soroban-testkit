@@ -106,8 +106,10 @@ impl Fixture {
 
     pub fn deposit_balanced(&self) {
         self.fund_user(100 * ONE, 100 * ONE, 100 * ONE);
-        self.client().deposit(&self.user, &self.token_a, &(50 * ONE));
-        self.client().deposit(&self.user, &self.token_b, &(60 * ONE));
+        self.client()
+            .deposit(&self.user, &self.token_a, &(50 * ONE));
+        self.client()
+            .deposit(&self.user, &self.token_b, &(60 * ONE));
         self.client().deposit(&self.user, &self.token_c, &(8 * ONE));
     }
 }

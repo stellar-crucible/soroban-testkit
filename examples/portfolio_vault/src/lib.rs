@@ -41,7 +41,10 @@ fn read_assets(env: &Env) -> Vec<AssetConfig> {
 }
 
 fn read_total_shares(env: &Env) -> i128 {
-    env.storage().instance().get(&DataKey::TotalShares).unwrap_or(0)
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalShares)
+        .unwrap_or(0)
 }
 
 fn write_total_shares(env: &Env, total: i128) {
@@ -72,7 +75,9 @@ fn require_initialized(env: &Env) -> Result<(), PortfolioError> {
 }
 
 fn asset_value(amount: i128, price: i128) -> Result<i128, PortfolioError> {
-    amount.checked_mul(price).ok_or(PortfolioError::InvalidInput)
+    amount
+        .checked_mul(price)
+        .ok_or(PortfolioError::InvalidInput)
 }
 
 pub fn portfolio_total_value(env: &Env) -> Result<i128, PortfolioError> {
@@ -130,7 +135,12 @@ impl PortfolioVault {
         Ok(())
     }
 
-    pub fn set_price(env: Env, caller: Address, asset: Address, price: i128) -> Result<(), PortfolioError> {
+    pub fn set_price(
+        env: Env,
+        caller: Address,
+        asset: Address,
+        price: i128,
+    ) -> Result<(), PortfolioError> {
         require_initialized(&env)?;
         caller.require_auth();
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
@@ -190,9 +200,19 @@ impl PortfolioVault {
         }
 
         token::Client::new(&env, &asset).transfer(&user, &env.current_contract_address(), &amount);
-        write_total_shares(&env, total_shares.checked_add(minted).ok_or(PortfolioError::InvalidInput)?);
+        write_total_shares(
+            &env,
+            total_shares
+                .checked_add(minted)
+                .ok_or(PortfolioError::InvalidInput)?,
+        );
         let bal = read_share_balance(&env, &user);
-        write_share_balance(&env, &user, bal.checked_add(minted).ok_or(PortfolioError::InvalidInput)?);
+        write_share_balance(
+            &env,
+            &user,
+            bal.checked_add(minted)
+                .ok_or(PortfolioError::InvalidInput)?,
+        );
         Ok(minted)
     }
 
@@ -224,7 +244,11 @@ impl PortfolioVault {
                 .and_then(|v| v.checked_div(total_shares))
                 .ok_or(PortfolioError::InvalidInput)?;
             if payout > 0 {
-                token::Client::new(&env, &cfg.token).transfer(&env.current_contract_address(), &user, &payout);
+                token::Client::new(&env, &cfg.token).transfer(
+                    &env.current_contract_address(),
+                    &user,
+                    &payout,
+                );
             }
             payouts.push_back((cfg.token.clone(), payout));
         }
@@ -314,7 +338,8 @@ impl PortfolioVault {
         let assets = read_assets(&env);
         for cfg in assets.iter() {
             if cfg.token == asset {
-                let bal = token::Client::new(&env, &cfg.token).balance(&env.current_contract_address());
+                let bal =
+                    token::Client::new(&env, &cfg.token).balance(&env.current_contract_address());
                 let price: i128 = env
                     .storage()
                     .persistent()
@@ -331,7 +356,11 @@ impl PortfolioVault {
         Err(PortfolioError::InvalidInput)
     }
 
-    pub fn is_within_tolerance(env: Env, asset: Address, tolerance_bps: u32) -> Result<bool, PortfolioError> {
+    pub fn is_within_tolerance(
+        env: Env,
+        asset: Address,
+        tolerance_bps: u32,
+    ) -> Result<bool, PortfolioError> {
         require_initialized(&env)?;
         let assets = read_assets(&env);
         let mut target = 0u32;

@@ -44,8 +44,10 @@ Testkit fills these gaps with domain-specific tooling that complements (not repl
 |-------|-------------|
 | [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, memory pressure profiles, storage inspection |
 | [`soroban-testkit-assert`](crates/soroban-testkit-assert) | Ergonomic assertion matchers for events and authorizations |
-| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder, ledger control and archival sweeps |
-| [`soroban-testkit-generators`](crates/soroban-testkit-generators) | Soroban-aware property testing strategies for proptest |
+| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder, ledger control, archival sweeps and declarative mock contracts |
+| [`soroban-testkit-fixtures-macros`](crates/soroban-testkit-fixtures-macros) | `#[mock_contract]`, the attribute behind declarative mock contracts |
+| [`soroban-testkit-generators`](crates/soroban-testkit-generators) | Soroban-aware property testing strategies for proptest, and `Arbitrary` impls for cargo-fuzz |
+| [`soroban-testkit-mock`](crates/soroban-testkit-mock) | `#[mock_contract]`: generate mock dependency contracts from a trait |
 
 ## Quick Start
 
@@ -173,7 +175,8 @@ soroban-testkit/
 │   ├── soroban-testkit-core/         # Budget, error, storage utilities
 │   ├── soroban-testkit-assert/       # Event and auth assertion matchers
 │   ├── soroban-testkit-fixtures/     # Test context builder and fixtures
-│   └── soroban-testkit-generators/   # Property testing strategies
+│   ├── soroban-testkit-generators/   # Property testing strategies, arbitrary impls
+│   └── soroban-testkit-mock/         # #[mock_contract] proc macro
 ├── examples/
 │   ├── counter/        # Contract + integration tests using every crate
 │   │                   # + budget.json: the costs CI holds them to

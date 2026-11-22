@@ -34,7 +34,13 @@ fn rebalance_budget_is_bounded() {
     fx.deposit_balanced();
     fx.fund_trader(0, 1_000 * ONE, 0);
     fx.env.cost_estimate().budget().reset_unlimited();
-    fx.client().rebalance(&fx.admin, &fx.token_a, &fx.token_b, &(10 * ONE), &(20 * ONE));
+    fx.client().rebalance(
+        &fx.admin,
+        &fx.token_a,
+        &fx.token_b,
+        &(10 * ONE),
+        &(20 * ONE),
+    );
     let snap = BudgetSnapshot::last_invocation(&fx.env);
     assert!(snap.cpu_insns > 0);
 }
@@ -82,7 +88,13 @@ fn rebalance_preserves_total_value_approximately() {
     fx.deposit_balanced();
     fx.fund_trader(0, 1_000 * ONE, 0);
     let before = fx.client().total_value();
-    fx.client().rebalance(&fx.admin, &fx.token_a, &fx.token_b, &(10 * ONE), &(20 * ONE));
+    fx.client().rebalance(
+        &fx.admin,
+        &fx.token_a,
+        &fx.token_b,
+        &(10 * ONE),
+        &(20 * ONE),
+    );
     let after = fx.client().total_value();
     // oracle-priced swap should keep vault total value unchanged
     assert_eq!(before, after);
@@ -93,7 +105,8 @@ fn deposit_after_rebalance_uses_current_value() {
     let fx = Fixture::new();
     fx.deposit_balanced();
     fx.fund_trader(0, 1_000 * ONE, 0);
-    fx.client().rebalance(&fx.admin, &fx.token_a, &fx.token_b, &(5 * ONE), &(10 * ONE));
+    fx.client()
+        .rebalance(&fx.admin, &fx.token_a, &fx.token_b, &(5 * ONE), &(10 * ONE));
     fx.fund_user(10 * ONE, 0, 0);
     let minted = fx.client().deposit(&fx.user, &fx.token_a, &(1 * ONE));
     assert!(minted > 0);

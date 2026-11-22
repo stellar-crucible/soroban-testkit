@@ -30,9 +30,7 @@
 //! ```
 
 use soroban_env_host::events::HostEvent;
-use soroban_env_host::xdr::{
-    ContractEventBody, ContractEventType, ScAddress, ScVal,
-};
+use soroban_env_host::xdr::{ContractEventBody, ContractEventType, ScAddress, ScVal};
 use soroban_sdk::{Address, Env, TryFromVal};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -217,7 +215,8 @@ impl DiagnosticEventAuditor {
             .strip_prefix("Contract(")
             .and_then(|s| s.strip_suffix(')'))
         {
-            self.sensitive_addresses.insert(inner.to_string(), label.clone());
+            self.sensitive_addresses
+                .insert(inner.to_string(), label.clone());
         }
         if let Some(inner) = rendered
             .strip_prefix("Account(")
@@ -318,10 +317,7 @@ impl DiagnosticEventAuditor {
     pub fn assert_within_limits(&self) {
         let report = self.report();
         if !report.findings.is_empty() {
-            panic!(
-                "diagnostic event audit failed:\n{}",
-                report.to_text()
-            );
+            panic!("diagnostic event audit failed:\n{}", report.to_text());
         }
     }
 
@@ -338,7 +334,12 @@ impl DiagnosticEventAuditor {
         );
     }
 
-    fn record_host_event(&self, index: usize, event: &HostEvent, env: &Env) -> DiagnosticEventRecord {
+    fn record_host_event(
+        &self,
+        index: usize,
+        event: &HostEvent,
+        env: &Env,
+    ) -> DiagnosticEventRecord {
         let ce = &event.event;
         let contract = ce.contract_id.as_ref().map(contract_hash_to_string);
 
@@ -505,7 +506,10 @@ mod tests {
         let mut auditor = DiagnosticEventAuditor::new().with_max_diagnostic_events(1);
         auditor.observe(&env);
         let report = auditor.report();
-        assert!(report.findings.iter().any(|f| f.reason.contains("diagnostic event count")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.reason.contains("diagnostic event count")));
     }
 
     #[test]
@@ -533,11 +537,14 @@ mod tests {
         auditor.observe(&env);
         let report = auditor.report();
         // Contract id commonly appears in fn_call/fn_return diagnostics; ensure mechanism works.
-        assert!(report
-            .findings
-            .iter()
-            .any(|f| f.reason.contains("watched address") || f.reason.contains("exceeds") == false)
-            || !report.events.is_empty());
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.reason.contains("watched address")
+                    || f.reason.contains("exceeds") == false)
+                || !report.events.is_empty()
+        );
     }
 
     #[test]
