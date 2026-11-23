@@ -5,6 +5,7 @@ pub mod conservation;
 pub mod coverage;
 pub mod diagnostic_event;
 pub mod error;
+pub mod flamegraph;
 pub mod footprint;
 pub mod instance_bloat;
 pub mod memory;
@@ -33,6 +34,7 @@ pub use diagnostic_event::{
     assert_clean_diagnostics, diagnostic_log, diagnostics_contain_address, DiagnosticEventAuditor,
     DiagnosticEventCategory, DiagnosticEventRecord, DiagnosticEventReport, SensitivePayloadFinding,
 };
+pub use flamegraph::{FlamegraphHotspot, GasFlamegraphGenerator};
 pub use footprint::{
     FootprintSnapshot, RentEstimate, RentParameters, StorageFootprint, StorageFootprintDiff,
     DEFAULT_PROJECTION_LEDGERS,
