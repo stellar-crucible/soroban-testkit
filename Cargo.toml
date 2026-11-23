@@ -15,6 +15,7 @@ members = [
     "examples/auction",
     "examples/multisig_vault",
     "examples/flash_mint",
+    "examples/flash_loan",
     "examples/crowdfunding",
     "examples/liquid_staking",
     "examples/staking",
