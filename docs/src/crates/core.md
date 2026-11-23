@@ -14,6 +14,27 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
+## CPU instruction flamegraphs
+
+`GasFlamegraphGenerator` turns the host's per-frame invocation resources into
+inferno-compatible folded stacks. It also renders terminal hotspots and a
+standalone SVG:
+
+```rust
+use soroban_testkit_core::GasFlamegraphGenerator;
+
+let mut flamegraph = GasFlamegraphGenerator::new();
+flamegraph.capture(&env, || client.swap(&trader, &token_a, &amount));
+
+println!("{}", flamegraph.export_folded());
+println!("{}", flamegraph.terminal_summary(10));
+std::fs::write("swap.svg", flamegraph.to_svg())?;
+```
+
+The folded format attributes each frame's self CPU instructions to that frame
+path, excluding sub-call cost. Pre-built folded stacks can be supplied directly
+with `record_stack(["pool", "swap"], cpu_insns)`.
+
 ## API at a glance
 
 | Type | Purpose |
@@ -68,6 +89,8 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
 | `DiagnosticEventAuditor` | Inspects host diagnostic events, categorizes them, enforces count limits, and flags suspicious payloads |
 | `DiagnosticEventReport` | Structured audit result with counts, categories, events, and findings; renders text logs |
+| `GasFlamegraphGenerator` | Folded CPU instruction stacks, terminal hotspots and standalone SVG flamegraphs |
+| `FlamegraphHotspot` | One call-frame hotspot with attributed CPU instructions |
 
 ## Budget snapshots
 
