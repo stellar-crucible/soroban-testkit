@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · mock · deterministic_deployer · migration · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · mock · deterministic_deployer · migration · upgrade · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -445,6 +445,74 @@ order.
   <span class="tk-callout__title">Atomic by construction, verified anyway</span>
   <p>A single contract call that panics is rolled back by the host, so a broken one-call migration reports <code>Failed</code> with storage untouched. A migration spread over several calls has no such transaction around it: if the second call fails, the first call's writes stay — and the runner reports that as <code>NotAtomic</code>, naming what was left behind.</p>
 </div>
+
+## Testing in-place contract upgrades (`ContractUpgradeHarness`)
+
+A contract upgrades itself with
+`env.deployer().update_current_contract(ContractExecutable::Wasm(new_wasm_hash))`: it keeps its
+address and storage, and only the code changes. `ContractUpgradeHarness`
+drives that upgrade from a test and checks the four things a production
+upgrade can get wrong:
+
+| Check | API |
+| ----- | --- |
+| Instance and persistent entries written by V1 survive byte for byte | `verify_state_preserved()` / `verify_state_preserved_except(&["config"])` |
+| A migration converts legacy data, and a failed one rolls back | `migrate(..)` / `try_migrate(..)` |
+| Entry points V2 dropped stop answering | `assert_function_removed("legacy_ping", args)` |
+| An upgrade without the required signature is refused and V1 stays | `try_upgrade_to_wasm(..)` returning `UpgradeError::Rejected` |
+
+No compiled Wasm is needed. `upload(Version)` registers a contract type from
+the current crate under a Wasm hash (`Env::upload`), and `deploy_uploaded`
+deploys V1 the same way, so the upgrade runs through the real
+`update_current_contract_wasm` host path and later calls go to V2:
+
+```rust,ignore
+use soroban_testkit_fixtures::{deploy_uploaded, ContractUpgradeHarness, TestContext};
+
+let ctx = TestContext::new();
+let id = deploy_uploaded(&ctx.env, VaultV1);
+let v1 = VaultV1Client::new(&ctx.env, &id);
+
+let mut harness = ContractUpgradeHarness::new(&ctx.env, &id);
+harness.populate_v1_state(|_| {
+    v1.init(&ctx.admin);
+    v1.set_config(&30); // legacy layout: a bare u32 fee
+    v1.deposit(&user, &500);
+});
+
+let v2_wasm_hash = harness.upload(VaultV2);
+harness.upgrade_to_wasm(&v2_wasm_hash);
+harness.verify_state_preserved();
+
+let v2 = VaultV2Client::new(&ctx.env, &id);
+let step = harness.migrate(|_| v2.migrate());
+step.assert_removed("config");
+step.assert_added("config2");
+harness.verify_state_preserved_except(&["config", "version"]);
+harness.assert_function_removed("legacy_ping", soroban_sdk::vec![&ctx.env]);
+```
+
+The contract under test must expose an upgrade entry point that takes the new
+Wasm hash as its only argument (`upgrade` by default; change it with
+`with_upgrade_function("name")`). The harness calls it with whatever
+authorization the environment provides, so withholding authorization tests
+the refusal path:
+
+```rust,ignore
+ctx.env.set_auths(&[]);
+let error = harness.try_upgrade_to_wasm(&v2_wasm_hash).unwrap_err();
+assert!(matches!(error, UpgradeError::Rejected { .. }));
+```
+
+`try_migrate` catches a panicking migration and compares storage before and
+after it. A single contract call that panics is rolled back by the host, so it
+reports `MigrationFailed { atomic: true, .. }`. A migration spread over several
+calls whose later call fails reports `atomic: false` and lists the leftover
+changes. `populate_v1_state` (or `mark_baseline`) records the baseline that the
+preservation checks compare against. Temporary entries are left out of that
+comparison because they can expire independently of any upgrade. Each upgrade
+is kept in `history()` as an `UpgradeRecord` holding the storage on either side
+of it.
 
 ## EventIndexerEmulator
 
