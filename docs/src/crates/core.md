@@ -14,6 +14,27 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
+## Instance storage bloat
+
+`InstanceBloatDetector` measures the XDR byte footprint of instance keys after
+test invocations and reports oversized values or growing vectors/maps:
+
+```rust
+use soroban_testkit_core::InstanceBloatDetector;
+
+let mut detector = InstanceBloatDetector::start(&env, &contract);
+// Run one or more contract calls...
+detector.checkpoint(&env, &contract, "after workflow");
+
+detector.assert_no_bloat(&env, &contract);
+println!("{}", detector.report(&env, &contract));
+```
+
+The default threshold is 64 KiB. Use
+`InstanceBloatDetector::with_threshold(bytes)` for a project-specific limit.
+Warnings include the exact key name and distinguish a threshold breach from a
+dynamically growing vector or map.
+
 ## API at a glance
 
 | Type | Purpose |
@@ -68,6 +89,8 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
 | `DiagnosticEventAuditor` | Inspects host diagnostic events, categorizes them, enforces count limits, and flags suspicious payloads |
 | `DiagnosticEventReport` | Structured audit result with counts, categories, events, and findings; renders text logs |
+| `InstanceBloatDetector` | Instance-storage footprint and dynamically growing collection diagnostics |
+| `InstanceBloatWarning` | A threshold or collection-growth diagnostic naming the exact storage key |
 
 ## Budget snapshots
 
