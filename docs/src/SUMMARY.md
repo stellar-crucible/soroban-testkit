@@ -29,6 +29,7 @@
 - [Worked Example: Synthetic Asset CDP](./guides/cdp-example.md)
 - [Worked Example: Dynamic AMM with Volatility Fees](./guides/dynamic-amm-example.md)
 - [Worked Example: Constant Product AMM](./guides/amm-example.md)
+- [Worked Example: Concentrated Liquidity AMM](./guides/concentrated-amm-example.md)
 - [Worked Example: Order Book DEX](./guides/orderbook-example.md)
 - [Worked Example: Non-Fungible Token (NFT)](./guides/nft-example.md)
 - [Worked Example: Portfolio Rebalancing Vault](./guides/portfolio-vault-example.md)
