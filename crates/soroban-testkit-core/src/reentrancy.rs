@@ -17,6 +17,26 @@
 //! ordering timeline detailing every call step, lock state transition, and the
 //! exact sequence that exposed the protocol.
 //!
+//! [`ReentrancyDetector`] complements the auditor with invoke-time detection of
+//! Checks-Effects-Interactions violations and re-entry attempts. It reads host
+//! diagnostic `fn_call` / `fn_return` events for call frames and instrumented
+//! contract events for storage and call ordering.
+//!
+//! # Instrumentation topic protocol
+//!
+//! An instrumented contract emits a contract event whose topics are:
+//!
+//! 1. `Symbol("tk_reentry")` — protocol marker.
+//! 2. `Symbol("storage_read" | "storage_write" | "external_call" | "reentry_attempt")`
+//!    — operation.
+//! 3. `Symbol(key | function)` — storage key or called function name.
+//!
+//! The event data carries the other contract as an `Address` for
+//! `external_call` and `reentry_attempt`; storage events use `()` data. The
+//! emitting contract id comes from the host event itself. The
+//! `emit_storage_read`, `emit_storage_write`, `emit_external_call`, and
+//! `emit_reentry_attempt` helpers emit exactly this shape.
+//!
 //! ```rust
 //! use soroban_testkit_core::{LockState, ReentrancyGuardAuditor};
 //!
@@ -34,10 +54,12 @@
 //! assert!(report.is_safe());
 //! ```
 
+use soroban_env_host::events::HostEvent;
 use soroban_env_host::xdr::{ContractEventBody, ContractEventType, ScVal};
 use soroban_sdk::{
+    contract, contractimpl,
     xdr::{ContractId, Hash, ScAddress},
-    Address, Env, TryFromVal,
+    Address, Env, Symbol, TryFromVal,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -807,6 +829,683 @@ impl ReentrancyGuardAuditor {
     }
 }
 
+/// Marker topic for the reentrancy instrumentation protocol.
+pub const REENTRANCY_EVENT_TOPIC: &str = "tk_reentry";
+/// Operation topic for a storage read.
+pub const REENTRANCY_STORAGE_READ: &str = "storage_read";
+/// Operation topic for a storage write.
+pub const REENTRANCY_STORAGE_WRITE: &str = "storage_write";
+/// Operation topic for a cross-contract call.
+pub const REENTRANCY_EXTERNAL_CALL: &str = "external_call";
+/// Operation topic for a simulated re-entry attempt.
+pub const REENTRANCY_REENTRY_ATTEMPT: &str = "reentry_attempt";
+
+/// Emit a storage-read instrumentation event from a contract.
+#[allow(deprecated)]
+pub fn emit_storage_read(env: &Env, key: Symbol) {
+    env.events().publish(
+        (
+            Symbol::new(env, REENTRANCY_EVENT_TOPIC),
+            Symbol::new(env, REENTRANCY_STORAGE_READ),
+            key,
+        ),
+        (),
+    );
+}
+
+/// Emit a storage-write instrumentation event from a contract.
+#[allow(deprecated)]
+pub fn emit_storage_write(env: &Env, key: Symbol) {
+    env.events().publish(
+        (
+            Symbol::new(env, REENTRANCY_EVENT_TOPIC),
+            Symbol::new(env, REENTRANCY_STORAGE_WRITE),
+            key,
+        ),
+        (),
+    );
+}
+
+/// Emit a cross-contract-call instrumentation event from a contract.
+#[allow(deprecated)]
+pub fn emit_external_call(env: &Env, callee: &Address, function: Symbol) {
+    env.events().publish(
+        (
+            Symbol::new(env, REENTRANCY_EVENT_TOPIC),
+            Symbol::new(env, REENTRANCY_EXTERNAL_CALL),
+            function,
+        ),
+        callee.clone(),
+    );
+}
+
+/// Emit a simulated re-entry attempt from a contract.
+#[allow(deprecated)]
+pub fn emit_reentry_attempt(env: &Env, target: &Address, function: Symbol) {
+    env.events().publish(
+        (
+            Symbol::new(env, REENTRANCY_EVENT_TOPIC),
+            Symbol::new(env, REENTRANCY_REENTRY_ATTEMPT),
+            function,
+        ),
+        target.clone(),
+    );
+}
+
+/// Attacker contract that publishes a re-entry attempt against a target contract.
+///
+/// The host refuses an actual recursive invocation before a nested frame opens,
+/// so the attacker emits a protocol event instead. [`ReentrancyDetector`] reads
+/// that event and reports the attempt when the target is already on the active
+/// call stack.
+#[contract]
+pub struct MockReentrantAttacker;
+
+#[contractimpl]
+impl MockReentrantAttacker {
+    /// Publish an attempt to re-enter `target::function`.
+    pub fn attempt_reentry(env: Env, target: Address, function: Symbol) {
+        emit_reentry_attempt(&env, &target, function);
+    }
+
+    /// Alias of [`MockReentrantAttacker::attempt_reentry`].
+    pub fn attack(env: Env, target: Address, function: Symbol) {
+        emit_reentry_attempt(&env, &target, function);
+    }
+
+    /// Callback-shaped alias of [`MockReentrantAttacker::attempt_reentry`].
+    pub fn callback(env: Env, target: Address, function: Symbol) {
+        emit_reentry_attempt(&env, &target, function);
+    }
+}
+
+/// Kind of flaw found by [`ReentrancyDetector`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DetectorViolationKind {
+    /// A frame called out before writing its state.
+    CeiViolation {
+        contract: String,
+        function: String,
+        external_call: String,
+        depth: u32,
+        step: usize,
+    },
+    /// A contract reappeared on the active call stack.
+    ReentrancyAttempt {
+        contract: String,
+        function: String,
+        depth: u32,
+        step: usize,
+    },
+}
+
+impl DetectorViolationKind {
+    /// True for a Checks-Effects-Interactions ordering violation.
+    pub fn is_cei_violation(&self) -> bool {
+        matches!(self, Self::CeiViolation { .. })
+    }
+
+    /// True for a re-entry attempt.
+    pub fn is_reentrancy_attempt(&self) -> bool {
+        matches!(self, Self::ReentrancyAttempt { .. })
+    }
+}
+
+impl fmt::Display for DetectorViolationKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CeiViolation {
+                contract,
+                function,
+                external_call,
+                depth,
+                step,
+            } => write!(
+                f,
+                "[Step {step}] CEI violation in '{contract}::{function}' at depth {depth}: external call '{external_call}' preceded any storage write"
+            ),
+            Self::ReentrancyAttempt {
+                contract,
+                function,
+                depth,
+                step,
+            } => write!(
+                f,
+                "[Step {step}] Re-entry attempt into '{contract}::{function}' at depth {depth} while the contract is already active"
+            ),
+        }
+    }
+}
+
+/// A violation with its monitor label and human-readable explanation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectorViolation {
+    pub kind: DetectorViolationKind,
+    pub label: Option<String>,
+    pub description: String,
+}
+
+impl fmt::Display for DetectorViolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.label {
+            Some(label) => write!(f, "{} [label={label}]", self.kind),
+            None => write!(f, "{}", self.kind),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DetectorFrame {
+    contract: String,
+    function: String,
+    depth: u32,
+    reads: Vec<String>,
+    writes: Vec<String>,
+    calls: Vec<String>,
+}
+
+impl DetectorFrame {
+    fn new(contract: String, function: String, depth: u32) -> Self {
+        Self {
+            contract,
+            function,
+            depth,
+            reads: Vec::new(),
+            writes: Vec::new(),
+            calls: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DetectorTraceEntry {
+    step: usize,
+    depth: u32,
+    label: Option<String>,
+    contract: String,
+    description: String,
+}
+
+/// Detects CEI violations and re-entry attempts during an invocation.
+///
+/// The detector owns a clone of the test `Env`, so [`ReentrancyDetector::monitor`]
+/// can observe the events produced by a closure without being passed the
+/// environment again. Frames come from host diagnostic events; storage and call
+/// ordering come from the instrumentation protocol documented at the module
+/// level. Manual `record_*` and frame methods are available for harnesses that
+/// cannot publish contract events.
+#[derive(Clone)]
+pub struct ReentrancyDetector {
+    env: Env,
+    consumed_events: usize,
+    step: usize,
+    label: Option<String>,
+    frames: Vec<DetectorFrame>,
+    unframed: BTreeMap<String, DetectorFrame>,
+    trace: Vec<DetectorTraceEntry>,
+    violations: Vec<DetectorViolation>,
+}
+
+impl ReentrancyDetector {
+    /// Create a detector that reads host events from `env`.
+    pub fn new(env: &Env) -> Self {
+        Self {
+            env: env.clone(),
+            consumed_events: 0,
+            step: 0,
+            label: None,
+            frames: Vec::new(),
+            unframed: BTreeMap::new(),
+            trace: Vec::new(),
+            violations: Vec::new(),
+        }
+    }
+
+    /// Run `closure` under `label` and observe only the events it produces.
+    pub fn monitor<T, F>(&mut self, label: impl Into<String>, closure: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        self.consumed_events = 0;
+        self.label = Some(label.into());
+        let result = closure();
+        self.observe();
+        self.label = None;
+        result
+    }
+
+    /// Observe diagnostic and instrumentation events produced since the last observation.
+    pub fn observe(&mut self) -> &mut Self {
+        let events = match self.env.host().get_events() {
+            Ok(events) => events.0,
+            Err(_) => return self,
+        };
+
+        for host_event in events.iter().skip(self.consumed_events) {
+            self.observe_event(host_event);
+        }
+        self.consumed_events = events.len();
+        self
+    }
+
+    /// Switch the environment to observe and ingest its new events.
+    pub fn observe_env(&mut self, env: &Env) -> &mut Self {
+        self.env = env.clone();
+        self.observe()
+    }
+
+    /// Record a storage read by `contract`.
+    pub fn record_storage_read(
+        &mut self,
+        contract: impl Into<String>,
+        key: impl Into<String>,
+    ) -> &mut Self {
+        let contract = contract.into();
+        let key = key.into();
+        let depth = {
+            let frame = self.frame_for(&contract);
+            frame.reads.push(key.clone());
+            frame.depth
+        };
+        self.record_trace(&contract, depth, format!("storage read: {key}"));
+        self
+    }
+
+    /// Record a storage write by `contract`.
+    pub fn record_storage_write(
+        &mut self,
+        contract: impl Into<String>,
+        key: impl Into<String>,
+    ) -> &mut Self {
+        let contract = contract.into();
+        let key = key.into();
+        let depth = {
+            let frame = self.frame_for(&contract);
+            frame.writes.push(key.clone());
+            frame.depth
+        };
+        self.record_trace(&contract, depth, format!("storage write: {key}"));
+        self
+    }
+
+    /// Record a call from `caller` to `callee::function`.
+    pub fn record_external_call(
+        &mut self,
+        caller: impl Into<String>,
+        callee: impl Into<String>,
+        function: impl Into<String>,
+    ) -> &mut Self {
+        let caller = caller.into();
+        let callee = callee.into();
+        let function = function.into();
+        let call = format!("{callee}::{function}");
+        let (depth, current_function, reads, writes, has_write) = {
+            let frame = self.frame_for(&caller);
+            frame.calls.push(call.clone());
+            (
+                frame.depth,
+                frame.function.clone(),
+                frame.reads.len(),
+                frame.writes.len(),
+                !frame.writes.is_empty(),
+            )
+        };
+        let step = self.record_trace(
+            &caller,
+            depth,
+            format!("external call -> {call} ({reads} read(s), {writes} write(s))"),
+        );
+
+        if !has_write {
+            let description = format!(
+                "'{caller}::{current_function}' called '{call}' before writing any state in this frame"
+            );
+            self.push_violation(
+                DetectorViolationKind::CeiViolation {
+                    contract: caller.clone(),
+                    function: current_function,
+                    external_call: call,
+                    depth,
+                    step,
+                },
+                description,
+            );
+        }
+        self
+    }
+
+    /// Record a simulated attempt to re-enter `target::function`.
+    pub fn record_reentry_attempt(
+        &mut self,
+        caller: impl Into<String>,
+        target: impl Into<String>,
+        function: impl Into<String>,
+    ) -> &mut Self {
+        let caller = caller.into();
+        let target = target.into();
+        let function = function.into();
+        let active_depth = self
+            .frames
+            .iter()
+            .position(|frame| frame.contract == target)
+            .map(|position| position as u32 + 1);
+        let depth = active_depth.unwrap_or_else(|| self.frames.len() as u32 + 1);
+        let step = self.record_trace(
+            &caller,
+            depth,
+            format!("reentry attempt -> {target}::{function}"),
+        );
+
+        if active_depth.is_some() {
+            let description = format!(
+                "'{caller}' attempted to re-enter active contract '{target}::{function}' at depth {depth}"
+            );
+            self.push_violation(
+                DetectorViolationKind::ReentrancyAttempt {
+                    contract: target,
+                    function,
+                    depth,
+                    step,
+                },
+                description,
+            );
+        }
+        self
+    }
+
+    /// Record entering `contract::function`.
+    pub fn enter_frame(
+        &mut self,
+        contract: impl Into<String>,
+        function: impl Into<String>,
+    ) -> &mut Self {
+        let contract = contract.into();
+        let function = function.into();
+        let reentered = self.frames.iter().any(|frame| frame.contract == contract);
+        let depth = self.frames.len() as u32 + 1;
+        self.frames.push(DetectorFrame::new(
+            contract.clone(),
+            function.clone(),
+            depth,
+        ));
+        let step = self.record_trace(&contract, depth, format!("enter {contract}::{function}"));
+
+        if reentered {
+            let description = format!(
+                "'{contract}' re-entered at depth {depth} while an earlier frame was still active"
+            );
+            self.push_violation(
+                DetectorViolationKind::ReentrancyAttempt {
+                    contract,
+                    function,
+                    depth,
+                    step,
+                },
+                description,
+            );
+        }
+        self
+    }
+
+    /// Record exiting the matching contract frame.
+    pub fn exit_frame(
+        &mut self,
+        contract: impl Into<String>,
+        function: impl Into<String>,
+    ) -> &mut Self {
+        let contract = contract.into();
+        let function = function.into();
+        let position = self
+            .frames
+            .iter()
+            .rposition(|frame| frame.contract == contract && frame.function == function)
+            .or_else(|| {
+                self.frames
+                    .iter()
+                    .rposition(|frame| frame.contract == contract)
+            });
+
+        let (depth, calls) = match position {
+            Some(position) => {
+                let frame = self.frames.remove(position);
+                (frame.depth, frame.calls.len())
+            }
+            None => (self.frames.len() as u32, 0),
+        };
+        self.record_trace(
+            &contract,
+            depth,
+            format!("exit {contract}::{function} ({calls} call(s))"),
+        );
+        self
+    }
+
+    /// True if any frame called out before writing state.
+    pub fn has_cei_violations(&self) -> bool {
+        self.violations
+            .iter()
+            .any(|violation| violation.kind.is_cei_violation())
+    }
+
+    /// True if a contract reappeared on the active stack or attempted to.
+    pub fn has_reentrancy_attempts(&self) -> bool {
+        self.violations
+            .iter()
+            .any(|violation| violation.kind.is_reentrancy_attempt())
+    }
+
+    /// True if any violation was recorded.
+    pub fn has_violations(&self) -> bool {
+        !self.violations.is_empty()
+    }
+
+    /// All recorded violations.
+    pub fn violations(&self) -> &[DetectorViolation] {
+        &self.violations
+    }
+
+    /// Render the observed trace and every violation as a report.
+    pub fn report(&self) -> String {
+        let mut out = String::new();
+        out.push_str("=== REENTRANCY DETECTION REPORT ===\n");
+        out.push_str("Trace:\n");
+        for entry in &self.trace {
+            out.push_str(&format!(
+                "  [Step {}] depth={} label={} {} :: {}\n",
+                entry.step,
+                entry.depth,
+                entry.label.as_deref().unwrap_or("-"),
+                entry.contract,
+                entry.description
+            ));
+        }
+        out.push_str("Violations:\n");
+        if self.violations.is_empty() {
+            out.push_str("  none\n");
+        } else {
+            for (index, violation) in self.violations.iter().enumerate() {
+                out.push_str(&format!(
+                    "  {}. {}\n     {}\n",
+                    index + 1,
+                    violation,
+                    violation.description
+                ));
+            }
+        }
+        out.push_str(&format!(
+            "Result: {}\n",
+            if self.has_violations() {
+                "UNSAFE"
+            } else {
+                "SAFE"
+            }
+        ));
+        out
+    }
+
+    /// Panic with the report when any violation was recorded.
+    #[track_caller]
+    pub fn assert_safe(&self) {
+        assert!(
+            !self.has_violations(),
+            "Reentrancy safety assertion failed\n{}",
+            self.report()
+        );
+    }
+
+    fn observe_event(&mut self, host_event: &HostEvent) {
+        let event = &host_event.event;
+        let ContractEventBody::V0(body) = &event.body;
+        let Some(ScVal::Symbol(topic)) = body.topics.first() else {
+            return;
+        };
+
+        match event.type_ {
+            ContractEventType::Diagnostic => match topic.0.as_slice() {
+                b"fn_call" => {
+                    let (Some(callee_hash), Some(function)) =
+                        (bytes32_at(&body.topics, 1), symbol_at(&body.topics, 2))
+                    else {
+                        return;
+                    };
+                    let callee = address_label(&self.env, callee_hash);
+                    if let Some(caller_id) = &event.contract_id {
+                        let caller = address_label(&self.env, (caller_id.0).0);
+                        if caller != callee {
+                            self.record_external_call(caller, callee.clone(), function.clone());
+                        }
+                    }
+                    self.enter_frame(callee, function);
+                }
+                b"fn_return" => {
+                    if let (Some(contract_id), Some(function)) =
+                        (&event.contract_id, symbol_at(&body.topics, 1))
+                    {
+                        let contract = address_label(&self.env, (contract_id.0).0);
+                        self.exit_frame(contract, function);
+                    }
+                }
+                _ => {}
+            },
+            ContractEventType::System => {}
+            ContractEventType::Contract => {
+                if topic.0.as_slice() != REENTRANCY_EVENT_TOPIC.as_bytes() {
+                    return;
+                }
+                let (Some(operation), Some(field), Some(contract_id)) = (
+                    symbol_at(&body.topics, 1),
+                    symbol_at(&body.topics, 2),
+                    event.contract_id.as_ref(),
+                ) else {
+                    return;
+                };
+                let contract = address_label(&self.env, (contract_id.0).0);
+                let target = event_value_label(&self.env, &body.data);
+
+                match operation.as_bytes() {
+                    b"storage_read" | b"read" => {
+                        self.record_storage_read(contract, field);
+                    }
+                    b"storage_write" | b"write" => {
+                        self.record_storage_write(contract, field);
+                    }
+                    b"external_call" | b"call" => {
+                        let callee = if target.is_empty() {
+                            symbol_at(&body.topics, 3).unwrap_or_else(|| "<unknown>".to_string())
+                        } else {
+                            target
+                        };
+                        self.record_external_call(contract, callee, field);
+                    }
+                    b"reentry_attempt" | b"reenter" => {
+                        let attempted = if target.is_empty() {
+                            symbol_at(&body.topics, 3).unwrap_or_else(|| "<unknown>".to_string())
+                        } else {
+                            target
+                        };
+                        self.record_reentry_attempt(contract, attempted, field);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn frame_for(&mut self, contract: &str) -> &mut DetectorFrame {
+        if let Some(position) = self
+            .frames
+            .iter()
+            .rposition(|frame| frame.contract == contract)
+        {
+            return &mut self.frames[position];
+        }
+        self.unframed
+            .entry(contract.to_string())
+            .or_insert_with(|| {
+                DetectorFrame::new(contract.to_string(), "<unframed>".to_string(), 0)
+            })
+    }
+
+    fn record_trace(
+        &mut self,
+        contract: impl Into<String>,
+        depth: u32,
+        description: impl Into<String>,
+    ) -> usize {
+        self.step += 1;
+        let step = self.step;
+        self.trace.push(DetectorTraceEntry {
+            step,
+            depth,
+            label: self.label.clone(),
+            contract: contract.into(),
+            description: description.into(),
+        });
+        step
+    }
+
+    fn push_violation(&mut self, kind: DetectorViolationKind, description: String) {
+        self.violations.push(DetectorViolation {
+            label: self.label.clone(),
+            kind,
+            description,
+        });
+    }
+}
+
+fn bytes32_at(topics: &[ScVal], index: usize) -> Option<[u8; 32]> {
+    let ScVal::Bytes(bytes) = topics.get(index)? else {
+        return None;
+    };
+    bytes.0.as_slice().try_into().ok()
+}
+
+fn symbol_at(topics: &[ScVal], index: usize) -> Option<String> {
+    match topics.get(index)? {
+        ScVal::Symbol(symbol) => Some(String::from_utf8_lossy(symbol.0.as_slice()).into_owned()),
+        ScVal::String(value) => Some(String::from_utf8_lossy(value.0.as_slice()).into_owned()),
+        _ => None,
+    }
+}
+
+fn event_value_label(env: &Env, value: &ScVal) -> String {
+    match value {
+        ScVal::Address(ScAddress::Contract(id)) => address_label(env, (id.0).0),
+        ScVal::Symbol(symbol) => String::from_utf8_lossy(symbol.0.as_slice()).into_owned(),
+        ScVal::String(value) => String::from_utf8_lossy(value.0.as_slice()).into_owned(),
+        ScVal::Bytes(bytes) => {
+            if bytes.0.len() == 32 {
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(bytes.0.as_slice());
+                address_label(env, hash)
+            } else {
+                format!("bytes[{}]", bytes.0.len())
+            }
+        }
+        _ => String::new(),
+    }
+}
+
 fn address_label(env: &Env, hash: [u8; 32]) -> String {
     let address = ScAddress::Contract(ContractId(Hash(hash)));
     Address::try_from_val(env, &address)
@@ -997,5 +1696,192 @@ mod tests {
             .exit_frame("CVAULT", "withdraw");
 
         auditor.assert_reentrancy_safe();
+    }
+
+    #[contract]
+    pub struct Vault;
+
+    #[contractimpl]
+    impl Vault {
+        pub fn unsafe_withdraw(env: Env, attacker: Address) {
+            emit_storage_read(&env, Symbol::new(&env, "balance"));
+            let self_address = env.current_contract_address();
+            MockReentrantAttackerClient::new(&env, &attacker)
+                .attempt_reentry(&self_address, &Symbol::new(&env, "withdraw"));
+        }
+
+        pub fn safe_withdraw(env: Env, attacker: Address) {
+            emit_storage_read(&env, Symbol::new(&env, "balance"));
+            emit_storage_write(&env, Symbol::new(&env, "balance"));
+            let self_address = env.current_contract_address();
+            MockReentrantAttackerClient::new(&env, &attacker)
+                .attempt_reentry(&self_address, &Symbol::new(&env, "withdraw"));
+        }
+    }
+
+    fn detector_fixture() -> (Env, Address, Address) {
+        let env = Env::default();
+        let attacker = env.register(MockReentrantAttacker, ());
+        let vault = env.register(Vault, ());
+        (env, attacker, vault)
+    }
+
+    #[test]
+    fn detector_accepts_a_safe_cei_sequence() {
+        let env = Env::default();
+        let mut detector = ReentrancyDetector::new(&env);
+        detector
+            .enter_frame("CVAULT", "withdraw")
+            .record_storage_read("CVAULT", "balance")
+            .record_storage_write("CVAULT", "balance")
+            .record_external_call("CVAULT", "CTOKEN", "transfer")
+            .exit_frame("CVAULT", "withdraw");
+
+        assert!(!detector.has_cei_violations());
+        assert!(!detector.has_violations());
+        detector.assert_safe();
+    }
+
+    #[test]
+    fn detector_flags_a_call_before_the_state_write() {
+        let env = Env::default();
+        let mut detector = ReentrancyDetector::new(&env);
+        detector
+            .enter_frame("CVAULT", "withdraw")
+            .record_storage_read("CVAULT", "balance")
+            .record_external_call("CVAULT", "CTOKEN", "transfer")
+            .record_storage_write("CVAULT", "balance")
+            .exit_frame("CVAULT", "withdraw");
+
+        assert!(detector.has_cei_violations());
+        assert!(!detector.has_reentrancy_attempts());
+        assert_eq!(detector.violations().len(), 1);
+        assert!(matches!(
+            detector.violations()[0].kind,
+            DetectorViolationKind::CeiViolation { .. }
+        ));
+    }
+
+    #[test]
+    fn detector_flags_reentry_into_an_active_frame() {
+        let env = Env::default();
+        let mut detector = ReentrancyDetector::new(&env);
+        detector
+            .enter_frame("CVAULT", "withdraw")
+            .enter_frame("CATTACKER", "callback")
+            .enter_frame("CVAULT", "withdraw")
+            .exit_frame("CVAULT", "withdraw")
+            .exit_frame("CATTACKER", "callback")
+            .exit_frame("CVAULT", "withdraw");
+
+        assert!(detector.has_reentrancy_attempts());
+        assert!(!detector.has_cei_violations());
+        assert!(detector.violations().iter().any(|violation| matches!(
+            violation.kind,
+            DetectorViolationKind::ReentrancyAttempt { depth: 3, .. }
+        )));
+    }
+
+    #[test]
+    fn report_names_the_label_and_the_violation() {
+        let env = Env::default();
+        let mut detector = ReentrancyDetector::new(&env);
+        detector.label = Some("unsafe_withdraw".to_string());
+        detector
+            .enter_frame("CVAULT", "withdraw")
+            .record_external_call("CVAULT", "CATTACKER", "callback")
+            .exit_frame("CVAULT", "withdraw");
+
+        let report = detector.report();
+        assert!(report.contains("label=unsafe_withdraw"));
+        assert!(report.contains("CEI violation"));
+        assert!(report.contains("external call 'CATTACKER::callback'"));
+        assert!(report.contains("Result: UNSAFE"));
+    }
+
+    #[test]
+    fn monitor_observes_an_unsafe_instrumented_invocation() {
+        let (env, attacker, vault) = detector_fixture();
+        let mut detector = ReentrancyDetector::new(&env);
+
+        let result = detector.monitor("unsafe_withdraw", || {
+            VaultClient::new(&env, &vault).unsafe_withdraw(&attacker);
+            7u32
+        });
+
+        assert_eq!(result, 7);
+        assert!(detector.has_cei_violations(), "{}", detector.report());
+        assert!(detector.has_reentrancy_attempts(), "{}", detector.report());
+        assert!(detector.report().contains("label=unsafe_withdraw"));
+    }
+
+    #[test]
+    fn monitor_separates_safe_state_order_from_the_attacker_attempt() {
+        let (env, attacker, vault) = detector_fixture();
+        let mut detector = ReentrancyDetector::new(&env);
+
+        detector.monitor("safe_withdraw", || {
+            VaultClient::new(&env, &vault).safe_withdraw(&attacker);
+        });
+
+        assert!(!detector.has_cei_violations(), "{}", detector.report());
+        assert!(detector.has_reentrancy_attempts(), "{}", detector.report());
+    }
+
+    #[test]
+    fn mock_attacker_event_reports_a_reentry_attempt() {
+        let (env, attacker, vault) = detector_fixture();
+        let vault_label = format!("{}", vault.to_string());
+        let mut detector = ReentrancyDetector::new(&env);
+        detector.enter_frame(vault_label.clone(), "withdraw");
+
+        detector.monitor("mock_attacker", || {
+            MockReentrantAttackerClient::new(&env, &attacker)
+                .attack(&vault, &Symbol::new(&env, "withdraw"));
+        });
+
+        assert!(detector.has_reentrancy_attempts(), "{}", detector.report());
+        assert!(detector.violations().iter().any(|violation| matches!(
+            &violation.kind,
+            DetectorViolationKind::ReentrancyAttempt { contract, .. }
+                if contract == &vault_label
+        )));
+    }
+
+    #[test]
+    #[should_panic(expected = "Reentrancy safety assertion failed")]
+    fn detector_assert_safe_panics_on_a_violation() {
+        let env = Env::default();
+        let mut detector = ReentrancyDetector::new(&env);
+        detector
+            .enter_frame("CVAULT", "withdraw")
+            .record_external_call("CVAULT", "CTOKEN", "transfer")
+            .exit_frame("CVAULT", "withdraw");
+        detector.assert_safe();
+    }
+
+    #[test]
+    fn repeated_monitors_only_observe_new_events() {
+        let (env, attacker, vault) = detector_fixture();
+        let mut detector = ReentrancyDetector::new(&env);
+
+        detector.monitor("first", || {
+            VaultClient::new(&env, &vault).safe_withdraw(&attacker);
+        });
+        assert_eq!(detector.violations().len(), 1);
+
+        detector.monitor("second", || {
+            VaultClient::new(&env, &vault).safe_withdraw(&attacker);
+        });
+        assert_eq!(detector.violations().len(), 2);
+        assert_eq!(
+            detector
+                .violations()
+                .iter()
+                .filter(|violation| violation.label.as_deref() == Some("second"))
+                .count(),
+            1
+        );
+        assert!(!detector.has_cei_violations());
     }
 }

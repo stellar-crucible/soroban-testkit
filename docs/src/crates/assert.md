@@ -4,7 +4,7 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget · panic_msg</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget · panic_msg · snapshot</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -53,6 +53,8 @@ Fluent matchers for contract events, authorizations and storage, so assertions r
 | `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
 | `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
 | `assert_budget_diff_within!(..)` | Asserts relative gas savings between baseline and optimized closures with side-by-side failure diff table |
+| `assert_snapshot_matches!(name, value, env)` | Serializes contract state, events or return values to canonical JSON and compares with a committed snapshot |
+| `SnapshotOptions::new()` | Exact comparison by default; opt into address normalization and recursive field removal |
 
 ## Event matching
 
@@ -1460,5 +1462,78 @@ use soroban_testkit_assert::assert_auth_invoker_distinct;
 
 // Asserts that only admin_address authorized the operation
 assert_auth_invoker_distinct!(&admin_address, &[admin_address.clone()]);
+```
+
+## Golden snapshots (`assert_snapshot_matches!`)
+
+`assert_snapshot_matches!` serializes a value into canonical JSON and compares it with a
+committed snapshot stored at `tests/snapshots/<name>.snap.json` (relative to the test crate's
+`CARGO_MANIFEST_DIR`). The first run creates the file. Later runs fail with a colored unified
+diff, so an added, renamed or omitted field is visible as a removed and added line with exact
+line numbers:
+
+```rust
+use soroban_sdk::testutils::Address as _;
+use soroban_testkit_assert::{assert_snapshot_matches, SnapshotOptions};
+
+let state = ContractState { owner: addr, total: 100 };
+
+// Uses an explicit `Env` (works for `Val`, `ScVal`, `Map`, and `#[contracttype]` values):
+assert_snapshot_matches!("state after init", state, env);
+
+// Two-argument form uses a fresh `Env`, so pass `env` explicitly for host objects:
+assert_snapshot_matches!("answer", 42u32);
+
+// Volatile fields and generated addresses can be normalized:
+let options = SnapshotOptions::new()
+    .normalize_addresses(true)
+    .ignore_field("updated_at");
+assert_snapshot_matches!("state after init", state, env, options);
+```
+
+Because `macro_rules!` cannot capture an implicit caller-local identifier, the two-argument arm
+uses a default `Env` and is meant for values that do not reference host objects; use the
+three-argument arm with your test's `env` otherwise.
+
+The conversion is also available directly:
+
+```rust
+use soroban_testkit_assert::{assert_snapshot_matches, snapshot_json};
+
+let json = snapshot_json(&env, &state);
+assert_snapshot_matches("state after init", &json);
+```
+
+`snapshot_json` accepts `Val`, `ScVal`, primitives and user `#[contracttype]` structs through
+`TryIntoVal`. The renderer sorts map keys, escapes strings consistently, writes integers as
+decimal text and covers `Void`, `Bool`, the unsigned and signed integer variants (including
+128-bit), `Symbol`, `String`, `Bytes` (lowercase hex with a `0x` prefix), `Address`,
+`Timepoint`, `Duration`, `Vec` and `Map`. Other `ScVal` variants get a readable debug fallback.
+Map insertion order therefore never changes a snapshot.
+
+`normalize_addresses(true)` replaces addresses with `~address0`, `~address1`, ... in order of
+first appearance, so regenerated addresses do not cause drift. `ignore_field("...")` drops a
+field at every depth from both the stored and current value; timestamps and nonces are typical
+candidates. Note that a missing snapshot is created with normalization applied.
+
+Two environment variables control persistence:
+
+- `SNAPSHOT_DIR` overrides the compile-time `tests/snapshots` location at runtime.
+- `UPDATE_SNAPSHOTS=1` rewrites the snapshot on drift instead of failing, which is convenient
+  when an intentional state change needs to be accepted.
+
+A mismatch looks like this (red for stored lines, green for current lines, cyan for headers):
+
+```text
+snapshot assertion failed for "state after init": stored snapshot does not match the current value
+--- expected (stored): tests/snapshots/state after init.snap.json
++++ actual (current): state after init
+@@ -1,4 +1,4 @@
+ {
+-  "owner": "alice",
++  "owner": "bob",
+   "total": 100
+ }
+set UPDATE_SNAPSHOTS=1 to accept the new snapshot
 ```
 

@@ -14,6 +14,7 @@ pub mod failure_injector;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod mock;
+pub mod oracle;
 pub mod profiles;
 pub mod protocol_registry;
 pub mod reentrancy;
@@ -36,6 +37,10 @@ pub use deterministic_deployer::{DeterministicDeployer, SaltHierarchy};
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use mock::{MockContract, MockContractBuilder, MockContractType};
+pub use oracle::{
+    AssetPrice, MockPriceOracle, MockPriceOracleClient, OracleError, OracleHarness, Sep40Asset,
+    Sep40PriceData,
+};
 pub use profiles::NetworkProfile;
 pub use protocol_registry::{
     ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,

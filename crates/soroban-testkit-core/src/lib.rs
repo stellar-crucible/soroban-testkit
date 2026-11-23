@@ -40,8 +40,11 @@ pub use memory::{AllocationProfile, AllocationReport, MemoryPressureAuditor};
 pub use memory_profiler::{MemoryProfileReport, MemoryProfiler, MemoryStep};
 pub use namespace_auditor::{NamespaceAuditor, NamespaceReport};
 pub use reentrancy::{
-    ActionKind, LockState, ReentrancyGuardAuditor, ReentrancyReport, ReentrancyViolation,
-    ReentrancyViolationKind, TimelineStep,
+    emit_external_call, emit_reentry_attempt, emit_storage_read, emit_storage_write, ActionKind,
+    DetectorViolation, DetectorViolationKind, LockState, MockReentrantAttacker, ReentrancyDetector,
+    ReentrancyGuardAuditor, ReentrancyReport, ReentrancyViolation, ReentrancyViolationKind,
+    TimelineStep, REENTRANCY_EVENT_TOPIC, REENTRANCY_EXTERNAL_CALL, REENTRANCY_REENTRY_ATTEMPT,
+    REENTRANCY_STORAGE_READ, REENTRANCY_STORAGE_WRITE,
 };
 pub use stack_depth::{
     CallFrame, StackDepthAuditor, StackDepthBreach, DEFAULT_WARNING_THRESHOLD,

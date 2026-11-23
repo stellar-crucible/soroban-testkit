@@ -19,6 +19,7 @@ members = [
     "examples/liquid_staking",
     "examples/staking",
     "examples/cdp",
+    "examples/lending",
     "examples/dynamic_amm",
     "examples/orderbook",
     "examples/nft",

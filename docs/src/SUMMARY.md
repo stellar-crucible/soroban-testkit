@@ -25,6 +25,7 @@
 - [Worked Example: Liquid Staking](./guides/liquid-staking-example.md)
 - [Worked Example: Staking and Yield Farming](./guides/staking-example.md)
 - [Worked Example: Synthetic Asset CDP](./guides/cdp-example.md)
+- [Worked Example: Lending](./guides/lending-example.md)
 - [Worked Example: Dynamic AMM with Volatility Fees](./guides/dynamic-amm-example.md)
 - [Worked Example: Constant Product AMM](./guides/amm-example.md)
 - [Worked Example: Order Book DEX](./guides/orderbook-example.md)
