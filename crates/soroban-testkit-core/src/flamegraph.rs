@@ -55,11 +55,7 @@ impl GasFlamegraphGenerator {
 
     fn record_frame(&mut self, frame: &crate::tracer::TraceFrame, path: &mut Vec<String>) {
         let contract = format!("{:?}", frame.contract);
-        let contract_name = self
-            .labels
-            .get(&contract)
-            .cloned()
-            .unwrap_or_else(|| contract);
+        let contract_name = self.labels.get(&contract).cloned().unwrap_or(contract);
         path.push(format!("{contract_name}::{}", frame.function));
         let cpu = frame.self_cpu_insns();
         if cpu > 0 {
@@ -155,7 +151,7 @@ impl GasFlamegraphGenerator {
         for (index, (path, cpu)) in samples.iter().enumerate() {
             let bar_width = ((**cpu as f64 / max as f64) * width as f64).ceil() as u64;
             let y = 36 + index as u64 * 22;
-            let name = xml_escape(&path.last().map_or("", String::as_str));
+            let name = xml_escape(path.last().map_or("", String::as_str));
             let _ = writeln!(
                 svg,
                 "<rect x=\"10\" y=\"{y}\" width=\"{bar_width}\" height=\"18\" fill=\"#ef4444\"><title>{} instructions</title></rect><text x=\"16\" y=\"{}\" fill=\"#fff\" font-family=\"monospace\" font-size=\"12\">{name} ({} insns)</text>",
