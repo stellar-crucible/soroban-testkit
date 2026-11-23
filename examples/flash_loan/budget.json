@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "cases": {
+    "flash_loan_multi_2_tokens": {
+      "cpu_insns": 1221774,
+      "mem_bytes": 206734
+    },
+    "flash_loan_single": {
+      "cpu_insns": 653031,
+      "mem_bytes": 113574
+    }
+  }
+}
