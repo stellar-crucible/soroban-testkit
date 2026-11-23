@@ -13,7 +13,7 @@ proptest! {
     if let Some(out)=quote_swap(a,b,amount,false,30) { let k0=a*b; let k1=(a-out)*(b+amount); prop_assert!(k1>=k0.saturating_sub(a.saturating_add(b))); }
 }
 #[test] fn quote_never_returns_reserve(a in 1i128..100_000, b in 2i128..100_000, amount in 1i128..1000) {
-    prop_assert!(quote_swap(a,b,amount,true,30).map_or(true, |out| out<b));
+    prop_assert!(quote_swap(a,b,amount,true,30).is_none_or(|out| out < b));
 }
 #[test] fn fee_never_reverses_direction(a in 1i128..100_000, b in 1i128..100_000, amount in 1i128..1000, fee in 0u32..100u32) {
     prop_assert!(quote_swap(a,b,amount,true,fee).is_some() || fee>9999);
