@@ -20,6 +20,7 @@ pub mod reentrancy;
 pub mod topology;
 #[cfg(test)]
 mod ttl_tests;
+pub mod upgrade;
 
 pub use branching::BranchingContext;
 pub use builder::TestContextBuilder;
@@ -46,6 +47,9 @@ pub use soroban_testkit_fixtures_macros::mock_contract;
 pub use topology::{
     AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
     TopologyReport, TopologyValidator, UninitializedLink,
+};
+pub use upgrade::{
+    deploy_uploaded, ContractUpgradeHarness, MigrationOutcome, UpgradeError, UpgradeRecord,
 };
 
 pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
