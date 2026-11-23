@@ -20,6 +20,7 @@
 - [Worked Example: Bounty Escrow](./guides/bounty-escrow-example.md)
 - [Worked Example: Vesting Escrow](./guides/vesting-escrow-example.md)
 - [Worked Example: Multisig Vault](./guides/multisig-vault-example.md)
+- [Worked Example: Guardian Treasury](./guides/guardian-treasury-example.md)
 - [Worked Example: Flash Mint](./guides/flash-mint-example.md)
 - [Worked Example: Flash Loan Provider and Receiver](./guides/flash-loan-example.md)
 - [Worked Example: Crowdfunding and Milestone Escrow](./guides/crowdfunding-example.md)
