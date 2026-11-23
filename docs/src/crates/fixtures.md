@@ -449,7 +449,7 @@ order.
 ## Testing in-place contract upgrades (`ContractUpgradeHarness`)
 
 A contract upgrades itself with
-`env.deployer().update_current_contract_wasm(new_wasm_hash)`: it keeps its
+`env.deployer().update_current_contract(ContractExecutable::Wasm(new_wasm_hash))`: it keeps its
 address and storage, and only the code changes. `ContractUpgradeHarness`
 drives that upgrade from a test and checks the four things a production
 upgrade can get wrong:

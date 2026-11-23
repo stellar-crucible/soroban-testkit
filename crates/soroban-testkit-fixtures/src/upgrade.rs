@@ -1,7 +1,7 @@
 //! Drive in-place contract upgrades from a test and check what survives them.
 //!
 //! A Soroban contract upgrades itself by calling
-//! `env.deployer().update_current_contract_wasm(new_wasm_hash)`. The contract
+//! `env.deployer().update_current_contract(ContractExecutable::Wasm(new_wasm_hash))`. The contract
 //! keeps its address and its storage; only the code behind it changes. A
 //! production upgrade can still go wrong in four ways, and
 //! [`ContractUpgradeHarness`] checks each of them:
@@ -47,7 +47,7 @@ use soroban_testkit_core::storage::{StorageDiff, StorageEntry, StorageSnapshot, 
 ///
 /// The type is uploaded with `Env::upload` and deployed through the deployer,
 /// so the instance's executable is a Wasm hash that a later
-/// `update_current_contract_wasm` can replace. Deployment needs the deployer's
+/// `update_current_contract` can replace. Deployment needs the deployer's
 /// authorization, so `env` must mock authorizations (as
 /// [`crate::TestContext::new`] does) when this is called.
 pub fn deploy_uploaded<V>(env: &Env, version: V) -> Address
@@ -431,7 +431,8 @@ mod tests {
     fn upgrade_code(env: &Env, new_wasm_hash: BytesN<32>) {
         let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
         admin.require_auth();
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        env.deployer()
+            .update_current_contract(ContractExecutable::Wasm(new_wasm_hash));
     }
 
     #[contract]
