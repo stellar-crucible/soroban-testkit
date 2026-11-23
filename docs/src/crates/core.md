@@ -14,26 +14,26 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
-## CPU instruction flamegraphs
+## Instance storage bloat
 
-`GasFlamegraphGenerator` turns the host's per-frame invocation resources into
-inferno-compatible folded stacks. It also renders terminal hotspots and a
-standalone SVG:
+`InstanceBloatDetector` measures the XDR byte footprint of instance keys after
+test invocations and reports oversized values or growing vectors/maps:
 
 ```rust
-use soroban_testkit_core::GasFlamegraphGenerator;
+use soroban_testkit_core::InstanceBloatDetector;
 
-let mut flamegraph = GasFlamegraphGenerator::new();
-flamegraph.capture(&env, || client.swap(&trader, &token_a, &amount));
+let mut detector = InstanceBloatDetector::start(&env, &contract);
+// Run one or more contract calls...
+detector.checkpoint(&env, &contract, "after workflow");
 
-println!("{}", flamegraph.export_folded());
-println!("{}", flamegraph.terminal_summary(10));
-std::fs::write("swap.svg", flamegraph.to_svg())?;
+detector.assert_no_bloat(&env, &contract);
+println!("{}", detector.report(&env, &contract));
 ```
 
-The folded format attributes each frame's self CPU instructions to that frame
-path, excluding sub-call cost. Pre-built folded stacks can be supplied directly
-with `record_stack(["pool", "swap"], cpu_insns)`.
+The default threshold is 64 KiB. Use
+`InstanceBloatDetector::with_threshold(bytes)` for a project-specific limit.
+Warnings include the exact key name and distinguish a threshold breach from a
+dynamically growing vector or map.
 
 ## API at a glance
 
@@ -89,8 +89,8 @@ with `record_stack(["pool", "swap"], cpu_insns)`.
 | `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
 | `DiagnosticEventAuditor` | Inspects host diagnostic events, categorizes them, enforces count limits, and flags suspicious payloads |
 | `DiagnosticEventReport` | Structured audit result with counts, categories, events, and findings; renders text logs |
-| `GasFlamegraphGenerator` | Folded CPU instruction stacks, terminal hotspots and standalone SVG flamegraphs |
-| `FlamegraphHotspot` | One call-frame hotspot with attributed CPU instructions |
+| `InstanceBloatDetector` | Instance-storage footprint and dynamically growing collection diagnostics |
+| `InstanceBloatWarning` | A threshold or collection-growth diagnostic naming the exact storage key |
 
 ## Budget snapshots
 
