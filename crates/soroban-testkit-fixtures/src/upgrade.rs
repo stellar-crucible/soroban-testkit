@@ -38,7 +38,9 @@ use std::fmt;
 use std::panic::{self, AssertUnwindSafe};
 
 use soroban_sdk::testutils::{Address as _, ContractFunctionSet};
-use soroban_sdk::{Address, BytesN, Env, Error, IntoVal, Symbol, Val, Vec as SorobanVec};
+use soroban_sdk::{
+    Address, BytesN, ContractExecutable, Env, Error, IntoVal, Symbol, Val, Vec as SorobanVec,
+};
 use soroban_testkit_core::storage::{StorageDiff, StorageEntry, StorageSnapshot, StorageTier};
 
 /// Deploy a contract type from the current crate as if it were uploaded Wasm.
@@ -56,7 +58,7 @@ where
     let deployer = Address::generate(env);
     env.deployer()
         .with_address(deployer, BytesN::from_array(env, &[0; 32]))
-        .deploy_v2(wasm_hash, ())
+        .deploy_contract(ContractExecutable::Wasm(wasm_hash), ())
 }
 
 /// Why an upgrade or migration step was refused or failed.
