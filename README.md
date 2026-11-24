@@ -14,6 +14,11 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 [![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=brightgreen)](https://crates.io/crates/soroban-testkit-core)
 [![Stellar Wave](https://img.shields.io/badge/Stellar%20Wave-Drips-5319E7.svg)](https://www.drips.network/wave/stellar)
 
+> Part of the **Stellar Crucible** smart contract engineering suite:
+> - **[soroban-testkit](https://github.com/stellar-crucible/soroban-testkit)** — Dynamic property testing, mock ledger harnesses, and event matchers.
+> - **[soroban-guard](https://github.com/stellar-crucible/soroban-guard)** — AST static security auditing and testkit invariant synthesizer.
+> - **[soroban-bench](https://github.com/stellar-crucible/soroban-bench)** — Macro-benchmarking, gas regression baselines, and storage rent simulations.
+
 ## Documentation
 
 | Guide | Read it |
