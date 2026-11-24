@@ -12,7 +12,6 @@ all-features = true
 [advisories]
 yanked = "deny"
 unmaintained = "workspace"
-git-fetch-with-cli = true
 ignore = [
     # soroban-env-host 28 pins k256 0.13 -> elliptic-curve 0.13 -> crypto-bigint 0.5,
     # and crypto-bigint 0.5 has no compatible release that carries the fix
