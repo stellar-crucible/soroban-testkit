@@ -78,6 +78,10 @@ dynamically growing vector or map.
 | `LockState` | `Uninitialized`, `Locked`, or `Unlocked` reentrancy guard states |
 | `ReentrancyReport` | Comprehensive violation diagnostics and visual ASCII state access ordering timelines |
 | `ReentrancyViolation` | Flagged uninitialized, unlocked, premature release, dangling, or indirect reentrant calls |
+| `ReentrancyDetector` | Watches one invocation for CEI ordering flaws and re-entry attempts, scoped by `monitor(label, closure)` |
+| `DetectorViolation`, `DetectorViolationKind` | One detector finding: `CeiViolation` or `ReentrancyAttempt` |
+| `MockReentrantAttacker` | Test contract that publishes a re-entry attempt against a target contract |
+| `emit_storage_read`, `emit_storage_write`, `emit_external_call`, `emit_reentry_attempt` | Emit the detector's instrumentation contract events |
 | `CoverageAuditor` | Detects uninvoked functions and dead code across contract WASM, spec XDR, and client definitions |
 | `CoverageReport` | Aggregates execution metrics, coverage percentages, Markdown tables, and plaintext summaries |
 | `ClientDefinition` | Typed representation of contract client entry points for coverage auditing |
@@ -849,6 +853,80 @@ if report.has_violations() {
 }
 # }
 ```
+
+## Per-invocation reentrancy detection
+
+`ReentrancyDetector` answers a narrower question than the guard auditor: did one
+invocation perform an external call before finalizing state, and did any contract
+reappear on the active call stack? It owns a clone of the test `Env`, so
+`monitor(label, closure)` observes only the diagnostic events the closure
+produces and tags every finding with that label.
+
+```rust
+use soroban_testkit_core::ReentrancyDetector;
+# use soroban_sdk::Env;
+# fn withdraw(_env: &Env) {}
+
+let mut detector = ReentrancyDetector::new(&env);
+detector.monitor("vault_withdraw", || {
+    withdraw(&env);
+});
+
+assert!(!detector.has_cei_violations());
+assert!(!detector.has_reentrancy_attempts());
+assert!(!detector.has_violations());
+println!("{}", detector.report());
+detector.assert_safe();
+```
+
+A CEI violation is recorded when a frame makes an external call while it has no
+storage write yet. A re-entry attempt is recorded when `enter_frame` sees a
+contract that is already active, or when an instrumented re-entry event names a
+contract on the active stack. `violations()` returns the findings,
+`report()` renders the ordered trace with each violation, and `assert_safe()`
+panics with that report when any finding exists.
+
+### Frames and instrumentation events
+
+Call frames come from the host diagnostic stream: `fn_call` opens a frame and
+`fn_return` closes it. Storage reads and writes and explicit call/re-entry events
+come from contract events using this topic protocol:
+
+| Topic | Value |
+|-------|-------|
+| `0` | `Symbol("tk_reentry")` — protocol marker |
+| `1` | `Symbol("storage_read")`, `"storage_write"`, `"external_call"`, or `"reentry_attempt"` |
+| `2` | `Symbol(key)` for storage, or `Symbol(function)` for calls |
+| data | `()` for storage events; the other contract as `Address` for calls |
+
+The `emit_*` helpers publish exactly this shape:
+
+```rust
+use soroban_sdk::{Address, Env, Symbol};
+use soroban_testkit_core::{
+    emit_external_call, emit_reentry_attempt, emit_storage_read, emit_storage_write,
+};
+
+#[allow(deprecated)]
+fn finalize_then_call(env: &Env, token: &Address, self_address: &Address) {
+    emit_storage_read(env, Symbol::new(env, "balance"));
+    emit_storage_write(env, Symbol::new(env, "balance"));
+    emit_external_call(env, token, Symbol::new(env, "transfer"));
+    emit_reentry_attempt(env, self_address, Symbol::new(env, "withdraw"));
+}
+```
+
+`MockReentrantAttacker` is a ready-made contract whose `attempt_reentry`,
+`attack`, and `callback` methods publish a re-entry event. The host refuses a
+real recursive invocation before it opens a nested frame, so the mock simulates
+the attempt as a protocol event; the detector still reports it when the target
+contract is active.
+
+Harnesses that cannot publish contract events can record the same actions
+directly with `record_storage_read`, `record_storage_write`,
+`record_external_call`, `enter_frame`, `exit_frame`, and
+`record_reentry_attempt`. `observe()` ingests any new events from the detector's
+environment; `observe_env(&env)` switches the environment first.
 
 ## Contract function coverage auditing (`CoverageAuditor`)
 

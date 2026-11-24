@@ -9,6 +9,7 @@ pub mod invocation;
 pub mod panic_msg;
 pub mod payload;
 pub mod regex_matcher;
+pub mod snapshot;
 pub mod storage;
 pub mod token_conservation;
 
@@ -33,6 +34,11 @@ pub use panic_msg::{
     check_panic_msg, CapturedPanic, MatchMode, PanicMsgFailure, PanicOrigin, PanicPattern,
 };
 pub use regex_matcher::RegexEventMatcher;
+pub use snapshot::{
+    assert_snapshot_matches, assert_snapshot_matches_impl, assert_snapshot_matches_with_options,
+    default_env, snapshot_dir, snapshot_json, snapshot_json_with_options, snapshot_path,
+    SnapshotOptions,
+};
 pub use storage::{StorageQuotaMatcher, TierInspection, TierQuota};
 pub use token_conservation::{
     resolve_fee_credits, FeeClaim, FeeSettlement, IntoFeeClaim, InvocationConservation,

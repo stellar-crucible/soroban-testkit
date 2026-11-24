@@ -801,6 +801,242 @@ assert!((100..=200).contains(&twap));
 
 The fixture's own tests run that shape across a range of seeds and assert that irregular intervals never push the average outside the price range or far from the duration-weighted result.
 
+## Mock price oracle (`OracleHarness`)
+
+Price-dependent contracts need feeds with their own decimals, a round that
+moves when an update arrives, a timestamp that ages, and a way to fail in the
+same ways a real oracle fails. `OracleHarness` registers a `MockPriceOracle`
+contract on an `Env` and drives both its stored data and its failure states.
+It is re-exported at the crate root together with `AssetPrice`, `OracleError`,
+`MockPriceOracle`, `MockPriceOracleClient`, `Sep40Asset` and `Sep40PriceData`.
+The contract exposes both the harness-friendly `get_price` API and the SEP-40
+consumer interface.
+
+### Registering and seeding feeds
+
+`OracleHarness::new(&env)` registers the contract, generates an admin address,
+and installs a 3,600-second heartbeat. It does **not** create a new `Env` or
+change the caller's auth policy: the admin address is a configuration key, and
+admin-gated calls compare the supplied address with the stored one rather than
+calling `require_auth`. Use `with_admin` to replace that key without losing
+seeded prices, and `with_heartbeat` to change the freshness window before
+seeding.
+
+```rust
+use soroban_sdk::{testutils::Ledger as _, Env, Symbol};
+use soroban_testkit_fixtures::OracleHarness;
+
+let env = Env::default();
+env.ledger().set_timestamp(1_700_000_000);
+
+let mut oracle = OracleHarness::new(&env).with_heartbeat(3_600);
+oracle.set_price("BTC", 6_400_000, 2);   // round 1, current ledger time
+oracle.set_price("USD", 1_000_000, 6);   // round 1, independent scale
+
+assert_eq!(oracle.price("BTC").price, 6_400_000);
+assert_eq!(oracle.price("BTC").decimals, 2);
+assert_eq!(oracle.price("USD").decimals, 6);
+
+let btc = Symbol::new(&env, "BTC");
+assert!(oracle.client().try_get_price(&btc).is_ok());
+```
+
+An `AssetPrice` holds four fields: `price`, `decimals`, `round` and
+`last_updated`. Asset names are Soroban `Symbol`s, so the harness converts the
+`&str` you pass through `Symbol::new`; names may be up to 32 characters. Each
+asset keeps its own scale, sequence and clock.
+
+### Validation and error precedence
+
+`get_price` is the validated read. It checks in a fixed order, which matters
+when more than one thing is wrong with a feed:
+
+| Check | Error |
+|-------|-------|
+| Oracle is offline | `OracleError::OracleOffline` |
+| No stored record for the asset | `OracleError::AssetNotFound` |
+| Price is zero or negative | `OracleError::InvalidPrice` |
+| Feed is older than the heartbeat | `OracleError::StalePrice` |
+
+Staleness is measured against `env.ledger().timestamp()`:
+
+```text
+stale when now.saturating_sub(last_updated) > heartbeat
+```
+
+The boundary is inclusive: a quote exactly `heartbeat` seconds old is still
+fresh. A timestamp in the future ages as zero, so moving the ledger clock
+backwards does not make a feed stale.
+
+`peek_price` deliberately skips the offline, sign and freshness checks. It
+still reports `AssetNotFound` for an unknown asset. The harness exposes it as
+`price(asset)`, which is what assertions use to inspect the bad state that
+`get_price` is about to reject.
+
+After `oracle.simulate_stale("BTC")`:
+
+```rust
+assert_eq!(
+    oracle.client().try_get_price(&btc),
+    Err(Ok(OracleError::StalePrice))
+);
+assert_eq!(oracle.price("BTC").price, 6_400_000); // raw record still there
+```
+
+The generated client's `try_get_price` returns the SDK's nested result:
+`Ok(Ok(quote))` on success, `Err(Ok(OracleError))` for a contract error and
+`Err(Err(invoke_error))` for a host-level failure. The plain `get_price` client
+method unwraps that result and panics on an error.
+
+### Rounds, timestamps and explicit updates
+
+`set_price` publishes at the current ledger timestamp and the next round,
+starting at 1 for a new asset. The harness keeps the round counter per asset,
+so `set_price_with_round` can pin a round and timestamp, after which the next
+plain `set_price` continues from that round plus one.
+
+| Method | Effect |
+|--------|--------|
+| `set_price(asset, price, decimals)` | Publish now at the next round |
+| `set_price_with_round(asset, price, decimals, round, timestamp)` | Publish an explicit record |
+| `advance_round(asset, rounds)` | Add to the round, preserving price and time |
+| `set_round(asset, round)` | Set the round absolutely |
+| `set_last_updated(asset, timestamp)` | Set the feed timestamp absolutely |
+| `advance_last_updated_time(asset, delta: i64)` | Shift the timestamp; negative deltas move it backwards and both ends saturate |
+
+```rust
+oracle.set_price_with_round("ETH", 2_000, 2, 40, 1_700_000_000);
+oracle.advance_round("ETH", 3);                    // round 43
+oracle.set_round("ETH", 50);                       // round 50
+oracle.advance_last_updated_time("ETH", -120);     // only this feed's clock moves
+assert_eq!(oracle.price("ETH").last_updated, 1_699_999_880);
+```
+
+Round arithmetic and timestamp shifting saturate at `u64::MAX` and `0` rather
+than wrapping.
+
+### Simulating stale, invalid, deviating and offline feeds
+
+The simulation helpers publish real updates through the contract API at the
+next round and the current ledger time, so a consumer sees the same error it
+would see on a live feed.
+
+| Helper | Produced state |
+|--------|----------------|
+| `simulate_stale(asset)` | Backdates the quote to `now - (heartbeat + 1)`, clamped at zero |
+| `simulate_negative_price(asset)` | Publishes the negated current price, or `-1` when it was zero |
+| `simulate_deviation(asset, percent)` | Publishes `price * (100 + percent) / 100` |
+| `set_offline(bool)` | Takes the whole oracle offline or back online |
+
+`simulate_stale` reads the heartbeat from the contract, so it follows
+`with_heartbeat`. `simulate_deviation` takes a signed percentage: `-30` is a
+30% drop and `50` is a 50% rise. Integer division truncates toward zero;
+`-100` produces a zero price, which `get_price` reports as `InvalidPrice`, and
+a value below `-100` flips the sign.
+
+```rust
+oracle.set_price("ETH", 2_000, 2);
+oracle.simulate_deviation("ETH", -30);
+assert_eq!(oracle.price("ETH").price, 1_400);
+assert_eq!(oracle.price("ETH").round, 2);
+
+oracle.simulate_stale("ETH");
+assert!(matches!(
+    oracle.client().try_get_price(&Symbol::new(&env, "ETH")),
+    Err(Ok(OracleError::StalePrice))
+));
+
+oracle.set_price("ETH", 2_000, 2);
+oracle.simulate_negative_price("ETH");
+assert_eq!(oracle.price("ETH").price, -2_000);
+
+oracle.set_offline(true);
+assert!(matches!(
+    oracle.client().try_get_price(&Symbol::new(&env, "ETH")),
+    Err(Ok(OracleError::OracleOffline))
+));
+assert_eq!(oracle.price("ETH").price, -2_000); // peek ignores offline
+```
+
+### Dependent consumer contracts
+
+A consumer that wants to react to an oracle failure must call `try_get_price`,
+not `get_price`: the plain client method panics on a contract error, which
+aborts the whole invocation and leaves the caller no error to map. The fixture's
+tests register a consumer that forwards `OracleError`, then assert its `try_*`
+result for every failure state:
+
+```rust
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+use soroban_testkit_fixtures::{
+    AssetPrice, MockPriceOracleClient, OracleError,
+};
+
+#[contract]
+pub struct FundingCheck;
+
+#[contractimpl]
+impl FundingCheck {
+    pub fn price(
+        env: Env,
+        oracle: Address,
+        asset: Symbol,
+    ) -> Result<AssetPrice, OracleError> {
+        match MockPriceOracleClient::new(&env, &oracle).try_get_price(&asset) {
+            Ok(Ok(quote)) => Ok(quote),
+            Err(Ok(error)) => Err(error),
+            _ => panic!("unexpected oracle failure"),
+        }
+    }
+}
+
+// After registering FundingCheck:
+// assert!(matches!(
+//     check.try_price(oracle.address(), &asset),
+//     Err(Ok(OracleError::StalePrice))
+// ));
+```
+
+Because the consumer returns `Result<AssetPrice, OracleError>`, its own
+generated `try_price` has the same nested shape as the oracle's. That is what
+makes the assertions read consistently for `StalePrice`, `InvalidPrice` and
+`OracleOffline`.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Peek for setup, get for behaviour</span>
+  <p>Use <code>harness.price(asset)</code> and <code>peek_price</code> to arrange or assert a broken feed. Use <code>get_price</code> only in the code path whose reaction to that broken feed is under test.</p>
+</div>
+
+`client()` returns a typed `MockPriceOracleClient` bound to the harness's
+environment and address; `address()` and `env()` expose the same pair for
+registering consumers or advancing the ledger directly.
+
+### SEP-40 compatibility view
+
+The same contract also exposes the SEP-40 oracle consumer shape: `base`,
+`assets`, `decimals`, `resolution`, `price`, `prices`, and `lastprice`. The mock
+quotes everything in `Sep40Asset::Other(Symbol("USD"))`; `Sep40Asset::Stellar`
+is accepted by the interface but has no seeded feed. `resolution` reports the
+configured heartbeat, and `decimals` reports a quote-wide precision that starts
+at 7 and can be changed with `set_decimals`. Feed-specific scales remain on
+`AssetPrice.decimals`.
+
+Every `set_price` appends a `Sep40PriceData { price, timestamp }` record to a
+bounded per-asset history, so `prices(asset, n)` returns the last `n` records
+and `price(asset, timestamp)` finds a record published at that exact timestamp.
+SEP-40 methods never enforce offline, staleness, or sign checks; use
+`get_price` when the consumer's reaction to a broken feed is what you are
+testing.
+
+```rust
+use soroban_testkit_fixtures::{OracleHarness, Sep40Asset, Sep40PriceData};
+
+let asset = Sep40Asset::Other(Symbol::new(&env, "BTC"));
+let latest: Option<Sep40PriceData> = oracle.client().lastprice(&asset);
+assert_eq!(latest.unwrap().price, 6_400_000);
+assert_eq!(oracle.client().resolution(), 3_600);
+```
+
 ## Extending fixtures
 
 Compose `TestContext` into project-specific fixtures so setup is written once per repo:

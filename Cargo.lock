@@ -2137,6 +2137,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-testkit-example-lending"
+version = "0.4.1"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-testkit-assert",
+ "soroban-testkit-core",
+ "soroban-testkit-fixtures",
+ "soroban-testkit-generators",
+]
+
+[[package]]
 name = "soroban-testkit-example-liquid-staking"
 version = "0.4.1"
 dependencies = [
