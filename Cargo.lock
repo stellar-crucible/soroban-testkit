@@ -2262,7 +2262,7 @@ version = "0.4.1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -2287,7 +2287,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "soroban-sdk",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
