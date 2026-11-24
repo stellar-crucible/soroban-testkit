@@ -36,9 +36,12 @@ struct TempSnapshotDir {
 
 impl TempSnapshotDir {
     fn new(label: &str) -> Self {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
         let path = std_env::temp_dir().join(format!(
-            "testkit-snapshot-{}-{label}-{}",
-            std::process::id(),
+            "testkit-snapshot-{nonce}-{label}-{}",
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = fs::remove_dir_all(&path);
