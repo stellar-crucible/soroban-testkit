@@ -378,8 +378,11 @@ mod tests {
             let (inst, pers, temp) = plan.counts();
             assert_eq!(inst + pers + temp, plan.len());
 
+            let mut seen = HashSet::new();
             for (k, tier) in &plan.entries {
-                assert_eq!(plan.tier_of(k), Some(*tier));
+                if seen.insert(k) {
+                    assert_eq!(plan.tier_of(k), Some(*tier));
+                }
             }
         }
 

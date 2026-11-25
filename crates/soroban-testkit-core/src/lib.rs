@@ -8,6 +8,7 @@ pub mod error;
 pub mod flamegraph;
 pub mod footprint;
 pub mod instance_bloat;
+pub mod instruction_profiler;
 pub mod memory;
 pub mod memory_profiler;
 pub mod namespace_auditor;
@@ -40,6 +41,7 @@ pub use footprint::{
     DEFAULT_PROJECTION_LEDGERS,
 };
 pub use instance_bloat::{InstanceBloatDetector, InstanceBloatWarning, InstanceBloatWarningKind};
+pub use instruction_profiler::{InstructionProfiler, InstructionStep};
 pub use memory::{AllocationProfile, AllocationReport, MemoryPressureAuditor};
 pub use memory_profiler::{MemoryProfileReport, MemoryProfiler, MemoryStep};
 pub use namespace_auditor::{NamespaceAuditor, NamespaceReport};
