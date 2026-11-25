@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "cases": {
+    "borrow": {
+      "cpu_insns": 222231,
+      "mem_bytes": 50383
+    },
+    "deposit": {
+      "cpu_insns": 253201,
+      "mem_bytes": 47248
+    },
+    "liquidate": {
+      "cpu_insns": 481056,
+      "mem_bytes": 97552
+    }
+  }
+}

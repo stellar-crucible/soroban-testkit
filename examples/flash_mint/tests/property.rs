@@ -73,7 +73,9 @@ proptest! {
 
         let fee = client.flash_fee(&token_id, &amount);
         // Fund borrower with fee
-        client.mint(&borrower_id, &fee);
+        if fee > 0 {
+            client.mint(&borrower_id, &fee);
+        }
 
         let supply_before_loan = client.total_supply();
 

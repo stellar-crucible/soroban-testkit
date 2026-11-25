@@ -4,7 +4,7 @@ A reusable test context inspired by Foundry's `setUp()`: one place to build the 
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-fixtures</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · migration · event_indexer · gas_exhaustion · congestion · eviction</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">lib · builder · mock · deterministic_deployer · migration · upgrade · event_indexer · gas_exhaustion · congestion · eviction · protocol_registry · failure_injector</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Default</span><span class="tk-spec__value">mock_all_auths on</span></div>
 </div>
 
@@ -76,6 +76,7 @@ almost all of that without building a `LedgerInfo` by hand:
 | `ctx.set_timestamp(t)` | Jump to absolute time `t` |
 | `ctx.advance_time(s)` | Add `s` seconds, return the new timestamp |
 | `ctx.advance_ledger(n)` | Add `n` to the sequence, return the new height |
+| `ctx.archive_expired(n)` | Advance `n` ledgers, archive everything past its TTL, return the `ArchivalSweepSimulator` holding it |
 
 ```rust
 use soroban_testkit_fixtures::TestContext;
@@ -95,6 +96,27 @@ assert_eq!(unlocked_at, 1_702_592_000);
     <h3 class="tk-card__title">Advance only what you assert</h3>
     <p class="tk-card__body"><code>advance_time</code> leaves the sequence alone and <code>advance_ledger</code> leaves the clock alone. A real ledger close moves both, so a test that wants the full picture calls each — and a test that only cares about TTL expiry does not silently move the clock.</p>
   </div>
+
+  ## Reentrancy guard verification
+
+  `ReentrancyGuardHarness` deploys a target contract and a malicious receiver,
+  then executes a cross-contract callback back into the target:
+
+  ```rust
+  use soroban_testkit_fixtures::reentrancy::ReentrancyGuardHarness;
+
+  let harness = ReentrancyGuardHarness::new();
+
+  assert!(harness.execute(false));
+  assert!(!harness.lock_is_set());
+
+  assert!(!harness.execute(true)); // receiver panics after the callback
+  assert!(!harness.lock_is_set()); // caught panic rolls the lock back
+  ```
+
+  The harness proves that a second invocation is rejected while the guard is
+  held, and that both successful calls and caught receiver panics leave the target
+  lock in its restored unlocked state.
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">A fresh env opens at zero</span>
     <h3 class="tk-card__title">Set before you advance</h3>
@@ -222,6 +244,60 @@ restarts at 1 in every `Env`. Generating straight away would hand back exactly
 the addresses you replaced, so it first walks the new env's counter past the
 range the old identities occupied.
 
+## Named branches and speculative paths
+
+`reset` is destructive: it throws the chain away. When several paths start from
+the *same* protocol state — five trade routes from one liquidity pool, three
+liquidation scenarios from one debt position — build the state once and take a
+named checkpoint instead:
+
+```rust
+use soroban_testkit_fixtures::branching::BranchingContext;
+use soroban_testkit_fixtures::builder::TestContextBuilder;
+
+let mut ctx = BranchingContext::new(TestContextBuilder::new().with_users(2).build());
+let pool_id = ctx.env.register(Pool, ());
+let pool = PoolClient::new(&ctx.env, &pool_id);
+
+pool.deposit(&1_000);           // setup, executed once
+ctx.create_branch("initial_pool");
+
+for route in routes {
+    ctx.switch_branch("initial_pool").create_branch(route.name);
+    // ... run the route against the pool's original 1,000 ...
+}
+```
+
+`BranchingContext` derefs to `TestContext`, so `ctx.env`, `ctx.users`,
+`advance_time` and the rest keep working. Its branch API is:
+
+| Method | Effect |
+|--------|--------|
+| `create_branch(name)` | Snapshot the ledger under `name` and make it current |
+| `switch_branch(name)` | Rewrite the live ledger to the checkpoint |
+| `current_branch()` | The last created or switched-to name |
+| `branch_names()` | Every checkpoint, in sorted order |
+| `has_branch(name)` | Whether a checkpoint exists |
+| `delete_branch(name)` | Drop one checkpoint, returning whether it existed |
+
+A switch restores every captured ledger entry with its value and `live_until`
+TTL, removes contract data keys written after the checkpoint (including entries
+the contract deleted, which come back), and resets the full ledger clock:
+sequence, timestamp, protocol version, network id, base reserve and the TTL
+thresholds.
+
+The environment itself is kept rather than rebuilt, which is what makes the
+rest of the fixture keep working:
+
+- native test contracts stay registered, so no setup is re-executed;
+- `ctx.admin`, `ctx.users`, contract addresses and clients remain valid;
+- the auth policy (`mock_all_auths`) and the network profile still apply.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Two things a branch cannot rewind</span>
+  <p>A contract registered <em>after</em> a checkpoint keeps its code and instance entries — its storage is cleared, but it remains callable, because the SDK exposes no API to delete those entries. Register every contract before the checkpoint. Recorded authorizations (<code>env.auths()</code>) belong to the most recent invocation rather than to the ledger, so assert them immediately after the call that produced them.</p>
+</div>
+
 ## Persistent storage eviction
 
 `StateEvictionSimulator` creates a short-lived persistent entry, advances its
@@ -244,6 +320,72 @@ assert!(state.ttl() >= 20_000);
 
 The simulator keeps archived state in the host so restoration must recover the
 original data; it does not substitute a new value during the test.
+
+## TTL and expiration simulation
+
+Testing a restore path or an archival boundary used to mean arithmetic on
+sequence numbers that silently goes stale when the network's rent parameters
+change. `TestContext` reads the boundary from the entry itself:
+
+```rust
+use soroban_sdk::{symbol_short, Val};
+use soroban_testkit_fixtures::{TestContext, TtlInspector};
+
+let ctx = TestContext::new();
+let contract_id = ctx.env.register(Nonces, ());
+NoncesClient::new(&ctx.env, &contract_id).put(); // writes a temporary entry
+let key = symbol_short!("nonce");
+
+let ttl = TtlInspector::for_key(&ctx.env, &contract_id, &key);
+assert!(ttl.live_until_ledger > ctx.ledger_sequence());
+
+ctx.fast_forward_to_expiration(&contract_id, &key);
+let value = ctx.env.as_contract(&contract_id, || {
+    ctx.env.storage().temporary().get::<_, Val>(&key)
+});
+assert!(value.is_none());
+```
+
+Storage has to be read from inside a contract frame, hence `as_contract`;
+`ctx.assert_temporary_expired(&contract_id, &key)` does exactly that read and
+also checks the TTL.
+
+| Method | Does |
+|--------|------|
+| `ttl(contract, key)` | `TtlInspector` for the entry, in whichever tier holds it |
+| `ledger_sequence()` | The current sequence, as used in TTL arithmetic |
+| `fast_forward_to_expiration(contract, key)` | Sets the sequence to `live_until + 1`, the first ledger the entry is not live |
+| `fast_forward_to_last_live_ledger(contract, key)` | Sets the sequence to `live_until`, the last ledger the entry still reads |
+| `observe_ttl_extension(contract, key, call)` | Runs `call` and returns a `TtlExtension` (before/after readings) |
+| `assert_temporary_expired(contract, key)` | The temporary entry is past its TTL and reads as empty from the contract |
+| `assert_persistent_archived(contract, key)` | The persistent entry is past its TTL, checked without restoring it |
+
+### How each tier behaves
+
+- **Temporary** — past its TTL the entry is gone: the next read returns `None`
+  and `has` returns `false`, and nothing can bring it back.
+- **Persistent** — past its TTL the entry is archived. The SDK test host
+  restores an archived entry the moment a contract reads it, so check the
+  archival with `assert_persistent_archived` (which does not read through the
+  contract) or take archived entries off the ledger with `archive_expired`
+  and test the restore path with `ArchivalSweepSimulator`.
+- **Instance** — every instance key shares the contract instance's TTL;
+  `ttl()` on an instance key reports it, and expiry archives the instance.
+
+### Validating `extend_ttl`
+
+```rust
+let extension = ctx.observe_ttl_extension(&contract_id, &key, || {
+    client.extend(&threshold, &extend_to)
+});
+extension.assert_matches_extend_ttl(threshold, extend_to);
+extension.assert_extended_to(extend_to);
+```
+
+`assert_matches_extend_ttl` judges the call against the host's rules from the
+`before` reading (extend only when the TTL is at or below `threshold`, clamp
+to the network ceiling, never shorten), so the same assertion covers both
+sides of the threshold. `assert_not_extended` pins the no-op case.
 
 ## Testing schema migrations
 
@@ -303,6 +445,74 @@ order.
   <span class="tk-callout__title">Atomic by construction, verified anyway</span>
   <p>A single contract call that panics is rolled back by the host, so a broken one-call migration reports <code>Failed</code> with storage untouched. A migration spread over several calls has no such transaction around it: if the second call fails, the first call's writes stay — and the runner reports that as <code>NotAtomic</code>, naming what was left behind.</p>
 </div>
+
+## Testing in-place contract upgrades (`ContractUpgradeHarness`)
+
+A contract upgrades itself with
+`env.deployer().update_current_contract(ContractExecutable::Wasm(new_wasm_hash))`: it keeps its
+address and storage, and only the code changes. `ContractUpgradeHarness`
+drives that upgrade from a test and checks the four things a production
+upgrade can get wrong:
+
+| Check | API |
+| ----- | --- |
+| Instance and persistent entries written by V1 survive byte for byte | `verify_state_preserved()` / `verify_state_preserved_except(&["config"])` |
+| A migration converts legacy data, and a failed one rolls back | `migrate(..)` / `try_migrate(..)` |
+| Entry points V2 dropped stop answering | `assert_function_removed("legacy_ping", args)` |
+| An upgrade without the required signature is refused and V1 stays | `try_upgrade_to_wasm(..)` returning `UpgradeError::Rejected` |
+
+No compiled Wasm is needed. `upload(Version)` registers a contract type from
+the current crate under a Wasm hash (`Env::upload`), and `deploy_uploaded`
+deploys V1 the same way, so the upgrade runs through the real
+`update_current_contract_wasm` host path and later calls go to V2:
+
+```rust,ignore
+use soroban_testkit_fixtures::{deploy_uploaded, ContractUpgradeHarness, TestContext};
+
+let ctx = TestContext::new();
+let id = deploy_uploaded(&ctx.env, VaultV1);
+let v1 = VaultV1Client::new(&ctx.env, &id);
+
+let mut harness = ContractUpgradeHarness::new(&ctx.env, &id);
+harness.populate_v1_state(|_| {
+    v1.init(&ctx.admin);
+    v1.set_config(&30); // legacy layout: a bare u32 fee
+    v1.deposit(&user, &500);
+});
+
+let v2_wasm_hash = harness.upload(VaultV2);
+harness.upgrade_to_wasm(&v2_wasm_hash);
+harness.verify_state_preserved();
+
+let v2 = VaultV2Client::new(&ctx.env, &id);
+let step = harness.migrate(|_| v2.migrate());
+step.assert_removed("config");
+step.assert_added("config2");
+harness.verify_state_preserved_except(&["config", "version"]);
+harness.assert_function_removed("legacy_ping", soroban_sdk::vec![&ctx.env]);
+```
+
+The contract under test must expose an upgrade entry point that takes the new
+Wasm hash as its only argument (`upgrade` by default; change it with
+`with_upgrade_function("name")`). The harness calls it with whatever
+authorization the environment provides, so withholding authorization tests
+the refusal path:
+
+```rust,ignore
+ctx.env.set_auths(&[]);
+let error = harness.try_upgrade_to_wasm(&v2_wasm_hash).unwrap_err();
+assert!(matches!(error, UpgradeError::Rejected { .. }));
+```
+
+`try_migrate` catches a panicking migration and compares storage before and
+after it. A single contract call that panics is rolled back by the host, so it
+reports `MigrationFailed { atomic: true, .. }`. A migration spread over several
+calls whose later call fails reports `atomic: false` and lists the leftover
+changes. `populate_v1_state` (or `mark_baseline`) records the baseline that the
+preservation checks compare against. Temporary entries are left out of that
+comparison because they can expire independently of any upgrade. Each upgrade
+is kept in `history()` as an `UpgradeRecord` holding the storage on either side
+of it.
 
 ## EventIndexerEmulator
 
@@ -496,6 +706,337 @@ let (report, result) = sim.execute_with_delay(&env, || {
 });
 ```
 
+## Multi-validator consensus and ledger close jitter
+
+Stellar's SCP does not close a ledger on a fixed cadence: intervals drift between roughly three and eight seconds, and a validator only backs a close whose interval sits close to the one it nominated. Protocols that average over time — TWAP oracles, streaming rates, funding accrual, timelocks — behave differently under that jitter than they do against a metronome, and a test that closes every ledger by exactly five seconds cannot tell the two apart. `ConsensusSimulator` closes ledgers with a Gaussian-jittered interval, advances the ledger header, and counts validator votes for each round:
+
+```rust
+use soroban_sdk::Env;
+use soroban_testkit_fixtures::ConsensusSimulator;
+
+let env = Env::default();
+let mut sim = ConsensusSimulator::new()
+    .with_validators(5)
+    .with_quorum(3)
+    .with_close_interval(3_000, 8_000)
+    .with_jitter_std_ms(1_200.0)
+    .with_seed(7);                    // replay the same close sequence
+
+let round = sim.run_round(&env);
+println!(
+    "ledger {} at t={} ({} ms, {} votes for, quorum {})",
+    round.close.sequence,
+    round.close.timestamp,
+    round.close.close_interval_ms,
+    round.votes_for,
+    round.quorum,
+);
+
+// Or advance the chain and run the invocation in the block it produced:
+let (round, result) = sim.execute_with_consensus(&env, || client.try_swap(&100, &90, &deadline));
+```
+
+| Method | Effect |
+|--------|--------|
+| `close_ledger(&env)` | Close one ledger; returns a `LedgerClose` with the header values, the sampled interval and its jitter |
+| `advance_ledgers(&env, n)` | Close `n` ledgers, returning each close in order |
+| `run_round(&env)` | Close a ledger and collect every validator's vote on the interval |
+| `execute_with_consensus(&env, f)` | Run a round, then invoke `f` against the new head |
+| `next_close_interval_ms()` | Sample the next interval without touching the env |
+
+| Builder | Effect |
+|---------|--------|
+| `with_validators(n)` | Validators that vote each round (at least one) |
+| `with_quorum(n)` | Agreeing votes a round needs, clamped to `1..=validators` |
+| `with_close_interval(min, max)` | Allowed close interval range in milliseconds |
+| `with_jitter_std_ms(std)` | Standard deviation of the Gaussian jitter; zero closes on the midpoint |
+| `with_seed(seed)` | Reproducible interval and vote sequence |
+
+<div class="tk-grid tk-grid--2">
+  <div class="tk-card">
+    <span class="tk-card__kicker">Clamped, not truncated</span>
+    <h3 class="tk-card__title">The range is a promise</h3>
+    <p class="tk-card__body">Samples are drawn Gaussian around the range midpoint and then clamped, so a close never leaves the interval the test declared even when the tail of the distribution would. A zero standard deviation makes every close take the midpoint.</p>
+  </div>
+  <div class="tk-card tk-card--accent">
+    <span class="tk-card__kicker">Milliseconds in, seconds out</span>
+    <h3 class="tk-card__title">Headers store whole seconds</h3>
+    <p class="tk-card__body">The sampled interval is reported in milliseconds, but a ledger header stores seconds, so the timestamp advances by the interval rounded up. Both numbers are on <code>LedgerClose</code>, which is why a test can assert on the millisecond sample and on <code>env.ledger().timestamp()</code> independently.</p>
+  </div>
+</div>
+
+### Votes and quorum
+
+A round closes a ledger regardless of the vote outcome, which is what makes it useful for testing protocols that react to a ledger rather than to consensus itself. Each validator nominates its own interval and votes for the close when that nomination is within `acceptance_band_ms` — 1.96 standard deviations — of the closed interval:
+
+```rust
+let round = sim.run_round(&env);
+assert_eq!(round.votes_for + round.votes_against, round.validators);
+assert_eq!(round.quorum_reached, round.votes_for >= round.quorum);
+```
+
+A band that covers the jitter (the default) keeps rounds agreed. Tightening the band, or raising the quorum to every validator, produces rounds that close a ledger yet miss quorum — the shape a test needs when the contract under test is supposed to wait for agreement.
+
+### Time-weighted averages under jitter
+
+An oracle that weights a price by the time it was live must use the ledger timestamp, not the block height. `ConsensusSimulator` is what makes the difference visible:
+
+```rust
+let mut sim = ConsensusSimulator::new().with_seed(3);
+client.record(&100);
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&100);
+}
+for _ in 0..20 {
+    sim.close_ledger(&env);
+    client.record(&200);
+}
+
+// Twenty irregular closes at each price: the TWAP sits between the prices,
+// near their midpoint, instead of snapping to one of them.
+let twap = client.twap();
+assert!((100..=200).contains(&twap));
+```
+
+The fixture's own tests run that shape across a range of seeds and assert that irregular intervals never push the average outside the price range or far from the duration-weighted result.
+
+## Mock price oracle (`OracleHarness`)
+
+Price-dependent contracts need feeds with their own decimals, a round that
+moves when an update arrives, a timestamp that ages, and a way to fail in the
+same ways a real oracle fails. `OracleHarness` registers a `MockPriceOracle`
+contract on an `Env` and drives both its stored data and its failure states.
+It is re-exported at the crate root together with `AssetPrice`, `OracleError`,
+`MockPriceOracle`, `MockPriceOracleClient`, `Sep40Asset` and `Sep40PriceData`.
+The contract exposes both the harness-friendly `get_price` API and the SEP-40
+consumer interface.
+
+### Registering and seeding feeds
+
+`OracleHarness::new(&env)` registers the contract, generates an admin address,
+and installs a 3,600-second heartbeat. It does **not** create a new `Env` or
+change the caller's auth policy: the admin address is a configuration key, and
+admin-gated calls compare the supplied address with the stored one rather than
+calling `require_auth`. Use `with_admin` to replace that key without losing
+seeded prices, and `with_heartbeat` to change the freshness window before
+seeding.
+
+```rust
+use soroban_sdk::{testutils::Ledger as _, Env, Symbol};
+use soroban_testkit_fixtures::OracleHarness;
+
+let env = Env::default();
+env.ledger().set_timestamp(1_700_000_000);
+
+let mut oracle = OracleHarness::new(&env).with_heartbeat(3_600);
+oracle.set_price("BTC", 6_400_000, 2);   // round 1, current ledger time
+oracle.set_price("USD", 1_000_000, 6);   // round 1, independent scale
+
+assert_eq!(oracle.price("BTC").price, 6_400_000);
+assert_eq!(oracle.price("BTC").decimals, 2);
+assert_eq!(oracle.price("USD").decimals, 6);
+
+let btc = Symbol::new(&env, "BTC");
+assert!(oracle.client().try_get_price(&btc).is_ok());
+```
+
+An `AssetPrice` holds four fields: `price`, `decimals`, `round` and
+`last_updated`. Asset names are Soroban `Symbol`s, so the harness converts the
+`&str` you pass through `Symbol::new`; names may be up to 32 characters. Each
+asset keeps its own scale, sequence and clock.
+
+### Validation and error precedence
+
+`get_price` is the validated read. It checks in a fixed order, which matters
+when more than one thing is wrong with a feed:
+
+| Check | Error |
+|-------|-------|
+| Oracle is offline | `OracleError::OracleOffline` |
+| No stored record for the asset | `OracleError::AssetNotFound` |
+| Price is zero or negative | `OracleError::InvalidPrice` |
+| Feed is older than the heartbeat | `OracleError::StalePrice` |
+
+Staleness is measured against `env.ledger().timestamp()`:
+
+```text
+stale when now.saturating_sub(last_updated) > heartbeat
+```
+
+The boundary is inclusive: a quote exactly `heartbeat` seconds old is still
+fresh. A timestamp in the future ages as zero, so moving the ledger clock
+backwards does not make a feed stale.
+
+`peek_price` deliberately skips the offline, sign and freshness checks. It
+still reports `AssetNotFound` for an unknown asset. The harness exposes it as
+`price(asset)`, which is what assertions use to inspect the bad state that
+`get_price` is about to reject.
+
+After `oracle.simulate_stale("BTC")`:
+
+```rust
+assert_eq!(
+    oracle.client().try_get_price(&btc),
+    Err(Ok(OracleError::StalePrice))
+);
+assert_eq!(oracle.price("BTC").price, 6_400_000); // raw record still there
+```
+
+The generated client's `try_get_price` returns the SDK's nested result:
+`Ok(Ok(quote))` on success, `Err(Ok(OracleError))` for a contract error and
+`Err(Err(invoke_error))` for a host-level failure. The plain `get_price` client
+method unwraps that result and panics on an error.
+
+### Rounds, timestamps and explicit updates
+
+`set_price` publishes at the current ledger timestamp and the next round,
+starting at 1 for a new asset. The harness keeps the round counter per asset,
+so `set_price_with_round` can pin a round and timestamp, after which the next
+plain `set_price` continues from that round plus one.
+
+| Method | Effect |
+|--------|--------|
+| `set_price(asset, price, decimals)` | Publish now at the next round |
+| `set_price_with_round(asset, price, decimals, round, timestamp)` | Publish an explicit record |
+| `advance_round(asset, rounds)` | Add to the round, preserving price and time |
+| `set_round(asset, round)` | Set the round absolutely |
+| `set_last_updated(asset, timestamp)` | Set the feed timestamp absolutely |
+| `advance_last_updated_time(asset, delta: i64)` | Shift the timestamp; negative deltas move it backwards and both ends saturate |
+
+```rust
+oracle.set_price_with_round("ETH", 2_000, 2, 40, 1_700_000_000);
+oracle.advance_round("ETH", 3);                    // round 43
+oracle.set_round("ETH", 50);                       // round 50
+oracle.advance_last_updated_time("ETH", -120);     // only this feed's clock moves
+assert_eq!(oracle.price("ETH").last_updated, 1_699_999_880);
+```
+
+Round arithmetic and timestamp shifting saturate at `u64::MAX` and `0` rather
+than wrapping.
+
+### Simulating stale, invalid, deviating and offline feeds
+
+The simulation helpers publish real updates through the contract API at the
+next round and the current ledger time, so a consumer sees the same error it
+would see on a live feed.
+
+| Helper | Produced state |
+|--------|----------------|
+| `simulate_stale(asset)` | Backdates the quote to `now - (heartbeat + 1)`, clamped at zero |
+| `simulate_negative_price(asset)` | Publishes the negated current price, or `-1` when it was zero |
+| `simulate_deviation(asset, percent)` | Publishes `price * (100 + percent) / 100` |
+| `set_offline(bool)` | Takes the whole oracle offline or back online |
+
+`simulate_stale` reads the heartbeat from the contract, so it follows
+`with_heartbeat`. `simulate_deviation` takes a signed percentage: `-30` is a
+30% drop and `50` is a 50% rise. Integer division truncates toward zero;
+`-100` produces a zero price, which `get_price` reports as `InvalidPrice`, and
+a value below `-100` flips the sign.
+
+```rust
+oracle.set_price("ETH", 2_000, 2);
+oracle.simulate_deviation("ETH", -30);
+assert_eq!(oracle.price("ETH").price, 1_400);
+assert_eq!(oracle.price("ETH").round, 2);
+
+oracle.simulate_stale("ETH");
+assert!(matches!(
+    oracle.client().try_get_price(&Symbol::new(&env, "ETH")),
+    Err(Ok(OracleError::StalePrice))
+));
+
+oracle.set_price("ETH", 2_000, 2);
+oracle.simulate_negative_price("ETH");
+assert_eq!(oracle.price("ETH").price, -2_000);
+
+oracle.set_offline(true);
+assert!(matches!(
+    oracle.client().try_get_price(&Symbol::new(&env, "ETH")),
+    Err(Ok(OracleError::OracleOffline))
+));
+assert_eq!(oracle.price("ETH").price, -2_000); // peek ignores offline
+```
+
+### Dependent consumer contracts
+
+A consumer that wants to react to an oracle failure must call `try_get_price`,
+not `get_price`: the plain client method panics on a contract error, which
+aborts the whole invocation and leaves the caller no error to map. The fixture's
+tests register a consumer that forwards `OracleError`, then assert its `try_*`
+result for every failure state:
+
+```rust
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+use soroban_testkit_fixtures::{
+    AssetPrice, MockPriceOracleClient, OracleError,
+};
+
+#[contract]
+pub struct FundingCheck;
+
+#[contractimpl]
+impl FundingCheck {
+    pub fn price(
+        env: Env,
+        oracle: Address,
+        asset: Symbol,
+    ) -> Result<AssetPrice, OracleError> {
+        match MockPriceOracleClient::new(&env, &oracle).try_get_price(&asset) {
+            Ok(Ok(quote)) => Ok(quote),
+            Err(Ok(error)) => Err(error),
+            _ => panic!("unexpected oracle failure"),
+        }
+    }
+}
+
+// After registering FundingCheck:
+// assert!(matches!(
+//     check.try_price(oracle.address(), &asset),
+//     Err(Ok(OracleError::StalePrice))
+// ));
+```
+
+Because the consumer returns `Result<AssetPrice, OracleError>`, its own
+generated `try_price` has the same nested shape as the oracle's. That is what
+makes the assertions read consistently for `StalePrice`, `InvalidPrice` and
+`OracleOffline`.
+
+<div class="tk-callout tk-callout--info">
+  <span class="tk-callout__title">Peek for setup, get for behaviour</span>
+  <p>Use <code>harness.price(asset)</code> and <code>peek_price</code> to arrange or assert a broken feed. Use <code>get_price</code> only in the code path whose reaction to that broken feed is under test.</p>
+</div>
+
+`client()` returns a typed `MockPriceOracleClient` bound to the harness's
+environment and address; `address()` and `env()` expose the same pair for
+registering consumers or advancing the ledger directly.
+
+### SEP-40 compatibility view
+
+The same contract also exposes the SEP-40 oracle consumer shape: `base`,
+`assets`, `decimals`, `resolution`, `price`, `prices`, and `lastprice`. The mock
+quotes everything in `Sep40Asset::Other(Symbol("USD"))`; `Sep40Asset::Stellar`
+is accepted by the interface but has no seeded feed. `resolution` reports the
+configured heartbeat, and `decimals` reports a quote-wide precision that starts
+at 7 and can be changed with `set_decimals`. Feed-specific scales remain on
+`AssetPrice.decimals`.
+
+Every `set_price` appends a `Sep40PriceData { price, timestamp }` record to a
+bounded per-asset history, so `prices(asset, n)` returns the last `n` records
+and `price(asset, timestamp)` finds a record published at that exact timestamp.
+SEP-40 methods never enforce offline, staleness, or sign checks; use
+`get_price` when the consumer's reaction to a broken feed is what you are
+testing.
+
+```rust
+use soroban_testkit_fixtures::{OracleHarness, Sep40Asset, Sep40PriceData};
+
+let asset = Sep40Asset::Other(Symbol::new(&env, "BTC"));
+let latest: Option<Sep40PriceData> = oracle.client().lastprice(&asset);
+assert_eq!(latest.unwrap().price, 6_400_000);
+assert_eq!(oracle.client().resolution(), 3_600);
+```
+
 ## Extending fixtures
 
 Compose `TestContext` into project-specific fixtures so setup is written once per repo:
@@ -527,3 +1068,259 @@ impl TokenTestEnv {
     <p class="tk-card__body">Registering contracts and seeding their state from the builder would turn the setup above into one line.</p>
   </div>
 </div>
+
+## Multi-contract protocol registry and upgrade proxy pattern (`ProtocolRegistryHarness`)
+
+Production DeFi protocols typically use an address registry contract (service locator pattern) and upgradeable proxy contracts to route calls to active implementation contracts. Testing dynamic service discovery, protocol-wide dependency injection, and live address swaps requires orchestrating multiple interconnected contracts.
+
+[`ProtocolRegistryHarness`] maintains a directory of registered service contracts (`Router`, `Treasury`, `Oracle`, `Vault`, and custom roles), deploys on-chain registry contracts, simulates protocol upgrades by swapping service addresses, and validates that consumer contracts seamlessly resolve updated implementations.
+
+### Coordinating multi-contract protocol topologies
+
+Initialize a harness around an [`Env`], register protocol services, and attach dependent consumer contracts:
+
+```rust
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::{ProtocolRegistryHarness, ServiceRole};
+
+let env = Env::default();
+env.mock_all_auths();
+
+let mut harness = ProtocolRegistryHarness::new(&env);
+
+// Deploy and register core protocol services
+let router_addr = Address::generate(&env);
+let treasury_addr = Address::generate(&env);
+let oracle_v1 = Address::generate(&env);
+let vault_addr = Address::generate(&env);
+
+harness.register_service(ServiceRole::Router, &router_addr).unwrap();
+harness.register_service(ServiceRole::Treasury, &treasury_addr).unwrap();
+harness.register_service(ServiceRole::Oracle, &oracle_v1).unwrap();
+harness.register_service(ServiceRole::Vault, &vault_addr).unwrap();
+
+// Register a consumer contract with its declared dependencies
+let pool_addr = Address::generate(&env);
+harness.register_consumer("LiquidityPool", &pool_addr, [ServiceRole::Oracle, ServiceRole::Vault]).unwrap();
+```
+
+### Simulating protocol upgrades
+
+Simulate a protocol upgrade by swapping a service address in the registry. The harness validates monotonic version increments, records before-and-after audit logs, and updates the on-chain registry contract:
+
+```rust
+let oracle_v2 = Address::generate(&env);
+
+// Upgrade Oracle from v1 to v2:
+let upgrade_record = harness.upgrade_service(ServiceRole::Oracle, &oracle_v2).unwrap();
+assert_eq!(upgrade_record.from_version, 1);
+assert_eq!(upgrade_record.to_version, 2);
+
+// Consumers querying the registry dynamically resolve the new implementation
+assert_eq!(harness.resolve(&ServiceRole::Oracle).unwrap(), oracle_v2);
+
+// Verify all dependent consumer contracts resolve updated services
+harness.verify_consumer_resolution("LiquidityPool", &ServiceRole::Oracle, &oracle_v2).unwrap();
+```
+
+### Upgrade proxy pattern
+
+Deploy an `UpgradeProxyContract` bound to a specific service role. The proxy dynamically resolves its implementation address via the on-chain registry, allowing calls to route to the latest implementation without consumer reconfiguration:
+
+```rust
+// Deploy an upgrade proxy pointing to the Treasury service role
+let proxy_address = harness.deploy_proxy(ServiceRole::Treasury);
+
+// Proxy dynamically resolves Treasury v1
+let active_impl = harness.resolve_from_proxy(&proxy_address);
+assert_eq!(active_impl, treasury_addr);
+
+// Upgrade treasury address in registry:
+let treasury_v2 = Address::generate(&env);
+harness.upgrade_service(ServiceRole::Treasury, &treasury_v2).unwrap();
+
+// Proxy immediately and seamlessly resolves Treasury v2
+assert_eq!(harness.resolve_from_proxy(&proxy_address), treasury_v2);
+```
+
+### Topology diagram generation
+
+Visualizing interconnected multi-contract topologies helps verify protocol dependencies and architecture in tests and documentation:
+
+```rust
+// Generate Mermaid diagram for PRs or Markdown documentation:
+println!("{}", harness.to_mermaid());
+
+// Or format a clean ASCII topology summary:
+println!("{}", harness.render_topology());
+```
+
+```mermaid
+flowchart TD
+  Registry["Registry"]
+  subgraph Services["Protocol Services"]
+    ROUTER["Router (v1)"]
+    TREASURY["Treasury (v2)"]
+    ORACLE["Oracle (v2)"]
+    VAULT["Vault (v1)"]
+  end
+  Registry --> ROUTER
+  Registry --> TREASURY
+  Registry --> ORACLE
+  Registry --> VAULT
+  subgraph Consumers["Dependent Consumers"]
+    C_0["LiquidityPool"]
+  end
+  C_0 -. resolves .-> ORACLE
+  C_0 -. resolves .-> VAULT
+```
+
+## Declared dependency topology validation (`TopologyValidator`)
+
+For multi-contract protocols, `TopologyValidator` lets a test declare the
+expected dependency graph and then scan each deployed contract's instance
+storage for `Address` references. It flags three failure modes:
+
+- **Uninitialized link** — a declared dependency that no contract stores yet.
+- **Dangling reference** — a stored address that points at a contract that was
+  never registered.
+- **Inactive contract** — a registered contract whose address is not deployed.
+
+```rust
+use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_testkit_fixtures::TopologyValidator;
+
+let env = Env::default();
+env.mock_all_auths();
+
+let mut topology = TopologyValidator::new(&env);
+let token = Address::generate(&env);
+let oracle = env.register_contract(None, ...); // deployed contract id
+let pool = env.register_contract(None, ...);
+
+topology.register_contract("token", &token);
+topology.register_contract("oracle", &oracle);
+topology.register_contract("pool", &pool);
+topology.require_link("pool", "token");
+topology.require_link("pool", "oracle");
+
+topology.assert_valid(); // panics with the full report on any violation
+```
+
+`TopologyValidator::validate` returns a `TopologyReport` whose `is_valid`,
+`violations`, `to_mermaid`, and `render_topology` helpers support non-fatal
+assertions and diagram generation for documentation.
+
+## Deterministic deployer and address prediction (`DeterministicDeployer`)
+
+Factory contracts deploy children with `env.deployer().with_address(..., salt)`
+or `with_current_contract(salt)`. `DeterministicDeployer` computes the
+predicted contract address before deployment and can deploy+assert the address
+matches.
+
+```rust
+use soroban_sdk::{BytesN, Env};
+use soroban_testkit_fixtures::{DeterministicDeployer, SaltHierarchy};
+
+let env = Env::default();
+let wasm_hash = env.upload(MyContract);
+let deployer = env.current_contract_address();
+let salt = BytesN::from_array(&env, &[1u8; 32]);
+
+let predicted = DeterministicDeployer::predicted_address(&env, &deployer, &salt);
+let deployed = DeterministicDeployer::deploy_checked(&env, &deployer, &salt, &wasm_hash);
+assert_eq!(predicted, deployed);
+
+let salts = SaltHierarchy::from_namespace(7);
+let child_salt = salts.derive_bytesn(&env, &[0, 1]);
+let child = DeterministicDeployer::deploy(&env, &deployer, &child_salt, &wasm_hash);
+```
+
+`SaltHierarchy` provides deterministic, path-sensitive salt derivation for test
+suites that deploy multiple related contracts.
+
+## Failure injection for mock dependencies (`FailureInjector`)
+
+A resilient contract has to survive a dependency that fails: an oracle out of budget, a vault whose storage expired, a token that traps. `FailureInjector` decides, per contract and per function, when a mock dependency fails and with which error, without writing a separate crashing contract for each case.
+
+The injection point is one call at the top of each mock function:
+
+```rust
+use soroban_testkit_fixtures::{failure_point, FailureInjector, InjectedFailure};
+
+#[contractimpl]
+impl MockOracle {
+    pub fn get_price(env: Env) -> i128 {
+        failure_point(&env, "get_price");
+        100
+    }
+}
+
+let injector = FailureInjector::attach(&env);
+
+injector.fail_function(&oracle_id, "get_price", InjectedFailure::BudgetExceeded); // permanent crash
+assert_eq!(dex.try_quote(&oracle_id, &2), Err(Ok(DexError::OracleUnavailable)));
+
+injector.fail_times(&oracle_id, "get_price", InjectedFailure::StorageNotFound, 2); // temporary outage
+injector.fail_on_call(&oracle_id, "get_price", InjectedFailure::InternalError, 3); // only call 3 fails
+
+injector.clear(); // normal execution again (also happens on drop)
+```
+
+| Failure | Raised as |
+| --- | --- |
+| `OutOfMemory` | `Error(WasmVm, ExceededLimit)` |
+| `BudgetExceeded` | `Error(Budget, ExceededLimit)` (the out-of-gas case) |
+| `StorageNotFound` | a genuine host trap: a TTL extension on a missing entry, as an archived or never-written entry would cause |
+| `InternalError` | `Error(Context, InternalError)` |
+| `Contract(code)` | a contract error with that code |
+
+**What the caller sees.** A `Contract(code)` failure reaches a `try_*` caller unchanged. Every host-level failure reaches it as `Error(Context, InvalidAction)`, because the host never forwards a callee's host error verbatim. That is also exactly what a caller sees when a real dependency traps. Without a `try_*` call, the failure aborts the caller.
+
+**One difference from a live network.** On a network, exhausting the CPU or memory budget aborts the *whole transaction* and no caller can catch it. The injected `BudgetExceeded` and `OutOfMemory` fail only the dependency's invocation, modelling a dependency that runs out and reports it, so the caller's fallback path is testable. To test transaction-wide exhaustion, run the call under real limits (`NetworkProfile`, or `env.cost_estimate().budget().reset_limits`).
+
+Rules are scoped to the test thread and to the injector that installed them, so one test cannot leak a failure into the next. `injector.calls(&id, "fn")` reports how many calls the injection point has seen.
+
+## Declarative mock contracts
+
+Unit tests rarely want to hand-write a stand-in for every dependency. Declare the interface once with `#[mock_contract]`, then give each test its own behaviour:
+
+```rust
+use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_testkit_fixtures::{mock_contract, MockContractBuilder};
+
+#[contract]
+pub struct RateOracle;
+
+#[mock_contract]
+#[contractimpl]
+impl RateOracle {
+    pub fn get_rate(_env: Env, _asset: Address) -> i128 { unimplemented!() }
+}
+
+let oracle = MockContractBuilder::<RateOracle>::new(&env)
+    .expect_call("get_rate", |_env, _args| 1_500i128)
+    .times(2)
+    .build();
+
+// the contract under test sees a normal contract address
+consumer_client.trade(&oracle.address(), &usdc);
+
+oracle.assert_expectations();
+```
+
+`#[mock_contract]` replaces every function body with a dispatcher, so the placeholder bodies are never compiled; the attribute must sit directly above `#[contractimpl]`.
+
+| Builder call | Meaning |
+| --- | --- |
+| `expect_call(name, handler)` | return whatever `handler(env, args)` produces |
+| `expect_panic(name, message)` | fail the invocation with `message` |
+| `.times(n)` | exactly `n` calls (the default is exactly once) |
+| `.at_least(n)` | `n` or more calls |
+| `.never()` | the function must not be called |
+
+Arguments arrive encoded as `Val`s in declaration order; `mock::arg::<T>(env, args, i)` decodes one and panics with a diagnostic if it is missing or has the wrong type. Expectations are verified by `assert_expectations()` and again when the mock is dropped, so a forgotten assertion still fails the test.
+
+**Why the interface is declared.** A Soroban host resolves an invocation to an exported function symbol before any contract code runs, and no entry point receives the function name as a value. The SDK therefore cannot expose a contract whose exported functions are decided at runtime. `#[mock_contract]` generates a real contract at compile time and dispatches *inside* it, which keeps the address usable by typed clients, including from the contract under test.
+
+Mocks live in a thread-local registry keyed by contract address, which suits `#[test]` functions; they are not shared between threads.

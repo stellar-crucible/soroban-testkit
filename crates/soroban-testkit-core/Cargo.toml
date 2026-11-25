@@ -21,3 +21,7 @@ serde_json = { workspace = true }
 [[bin]]
 name = "storage-footprint-diff"
 path = "src/bin/storage_footprint_diff.rs"
+
+[[bin]]
+name = "budget-diff"
+path = "src/bin/budget_diff.rs"
