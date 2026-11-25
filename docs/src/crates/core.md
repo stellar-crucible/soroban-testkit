@@ -1,12 +1,39 @@
 # soroban-testkit-core
 
+Budget tracking, error decoding, storage inspection, contract dependency graphs,
+WASM analysis and host execution profiling — the primitives the rest of Testkit is built on.
+
+<div class="tk-spec">
+  <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · wasm · profiler · reentrancy · conservation</span></div>
 Budget tracking, error decoding, storage inspection and contract dependency graphs — the primitives the rest of Testkit is built on.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint · reentrancy</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · diagnostic_event · error · storage · dependency · footprint · reentrancy · conservation</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
+
+## Instance storage bloat
+
+`InstanceBloatDetector` measures the XDR byte footprint of instance keys after
+test invocations and reports oversized values or growing vectors/maps:
+
+```rust
+use soroban_testkit_core::InstanceBloatDetector;
+
+let mut detector = InstanceBloatDetector::start(&env, &contract);
+// Run one or more contract calls...
+detector.checkpoint(&env, &contract, "after workflow");
+
+detector.assert_no_bloat(&env, &contract);
+println!("{}", detector.report(&env, &contract));
+```
+
+The default threshold is 64 KiB. Use
+`InstanceBloatDetector::with_threshold(bytes)` for a project-specific limit.
+Warnings include the exact key name and distinguish a threshold breach from a
+dynamically growing vector or map.
 
 ## API at a glance
 
@@ -19,6 +46,9 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `BudgetMetric` | Which resource a violation was measured against — `Cpu` or `Memory`, and the `cpu_insns` / `mem_bytes` word `as_str()` prints for it |
 | `BudgetBaseline` | Recorded costs per case, loaded from and saved to a JSON file |
 | `budget_guard!` | Macro form of the guard around a single invocation |
+| `MemoryPressureAuditor` | Measures what each invocation allocated, copied and kept live; `measure()` returns the call's value |
+| `AllocationProfile` | One invocation's allocations, allocated bytes, peak live bytes, copied bytes, churn ratio and efficiency score |
+| `AllocationReport` | Every measured profile, the hotspot filter and the Markdown report |
 | `DecodedError` | A Soroban error code split into category, meaning and context |
 | `ErrorRegistry` | Your `#[contracterror]` codes mapped to the words they mean |
 | `ClientOutcome`, `unwrap_decoded` | Unwrap a v28 `try_*` client call, panicking with the decoded error |
@@ -33,6 +63,10 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `DependencyEdge` | One caller → callee edge with its call count and functions |
 | `DependencyCycle` | A closed call chain such as `A -> B -> C -> A`, with self-recursion as `A -> A` |
 | `storage-footprint-diff` | Binary wrapping `StorageFootprintDiff` for CI |
+| `BudgetDiff`, `BudgetCaseDiff` | Base vs head baselines: signed deltas, growth percent, a Markdown report and the cases past a threshold |
+| `budget-diff` | Binary wrapping `BudgetDiff` for CI |
+| `HostExecutionProfiler`, `HostExecutionSummary` | Repeated call latency and explicit host-operation measurements |
+| `WasmSectionAnalyzer`, `WasmAnalysis` | WASM section sizes, deployment limits and debug/bloat warnings |
 | `StorageFragmentationAnalyzer` | Analyzes key-to-value serialization overhead, detects fragmentation, and estimates Stroop savings |
 | `FragmentationReport` | Comprehensive metrics across tiers, high-overhead alerts, and Markdown recommendations |
 | `StackDepthAuditor` | Reconstructs a contract call chain from host diagnostic events and checks it against a depth cap |
@@ -44,6 +78,23 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `LockState` | `Uninitialized`, `Locked`, or `Unlocked` reentrancy guard states |
 | `ReentrancyReport` | Comprehensive violation diagnostics and visual ASCII state access ordering timelines |
 | `ReentrancyViolation` | Flagged uninitialized, unlocked, premature release, dangling, or indirect reentrant calls |
+| `ReentrancyDetector` | Watches one invocation for CEI ordering flaws and re-entry attempts, scoped by `monitor(label, closure)` |
+| `DetectorViolation`, `DetectorViolationKind` | One detector finding: `CeiViolation` or `ReentrancyAttempt` |
+| `MockReentrantAttacker` | Test contract that publishes a re-entry attempt against a target contract |
+| `emit_storage_read`, `emit_storage_write`, `emit_external_call`, `emit_reentry_attempt` | Emit the detector's instrumentation contract events |
+| `CoverageAuditor` | Detects uninvoked functions and dead code across contract WASM, spec XDR, and client definitions |
+| `CoverageReport` | Aggregates execution metrics, coverage percentages, Markdown tables, and plaintext summaries |
+| `ClientDefinition` | Typed representation of contract client entry points for coverage auditing |
+| `client_definition!` | Macro for concise client entry point declaration |
+| `CallTracer` | Recovers the cross-contract call tree of an invocation: depth, contract, function, metered CPU/memory and outcome per frame; renders ASCII trees and Mermaid sequence diagrams |
+| `TraceFrame`, `CallOutcome` | One traced contract frame, and whether it returned, failed (with the host error) or is unknown |
+| `TtlInspector` | Live TTL of a storage entry in any tier, read without triggering eviction or auto-restore, with the ledger's rent thresholds |
+| `TtlStatus`, `RentThresholds` | `Live` / `Expired` (temporary) / `Archived` (persistent, instance), and the ledger's min/max TTL parameters |
+| `TtlExtension` | An entry's TTL before and after a call, checked against the host's `extend_ttl` rules |
+| `DiagnosticEventAuditor` | Inspects host diagnostic events, categorizes them, enforces count limits, and flags suspicious payloads |
+| `DiagnosticEventReport` | Structured audit result with counts, categories, events, and findings; renders text logs |
+| `InstanceBloatDetector` | Instance-storage footprint and dynamically growing collection diagnostics |
+| `InstanceBloatWarning` | A threshold or collection-growth diagnostic naming the exact storage key |
 
 ## Budget snapshots
 
@@ -325,6 +376,58 @@ assert_storage_tier!(&env, &contract, "balances:*", StorageTier::Persistent);
   <span class="tk-callout__title">Scope</span>
   <p>A snapshot covers one contract only: other contracts' data, the WASM <code>ContractCode</code> entry and ledger entries the contract does not own are never included. Account addresses own no contract data, so they capture as empty instead of failing.</p>
 </div>
+
+## WASM section analysis
+
+`WasmSectionAnalyzer` validates the WebAssembly 1.0 header, walks standard
+binary sections and reports each section's payload size:
+
+```rust
+use soroban_testkit_core::wasm::WasmSectionAnalyzer;
+
+let wasm = std::fs::read("target/wasm32v1-none/release/contract.wasm")?;
+let report = WasmSectionAnalyzer::new(64 * 1024).analyze(&wasm)?;
+
+println!("{}", report.to_markdown());
+for warning in &report.warnings {
+    eprintln!("warning: {warning}");
+}
+```
+
+The report includes Code, Type, Function, Table, Memory, Data and Custom
+sections. It warns when the binary reaches 90% of the configured deployment
+limit, exceeds it, contains a debug/name custom section, or has oversized string
+or data sections.
+
+Use `to_json()` when section footprints feed a continuous performance artifact;
+the JSON shape is stable and contains the configured limit, total bytecode size,
+section list and warnings.
+
+## Host execution profiling
+
+`HostExecutionProfiler` repeatedly times an invocation and summarizes mean,
+p50, p95 and p99 wall-clock latency. Because stable Soroban host APIs do not
+expose per-call map/object counters, explicit counters are recorded in the
+invocation closure:
+
+```rust
+use soroban_testkit_core::profiler::HostExecutionProfiler;
+
+let summary = HostExecutionProfiler::new(100).run(|metrics| {
+    contract_client.increment(&caller, &1);
+    metrics.record_map_lookup();
+    metrics.record_object_created();
+    metrics.record_memory_copy(4_096);
+})?;
+
+println!("{}", summary.to_markdown());
+std::fs::write("host-profile.json", summary.to_json()?)?;
+```
+
+The return value contains every timing sample plus mean map lookup, object
+creation and memory-copy totals. A percentile uses nearest-rank ordering, so
+small benchmark sets are deterministic. JSON exports use the same complete
+sample and summary shape for continuous benchmarking.
 
 ## Storage Namespace Auditing
 
@@ -751,6 +854,337 @@ if report.has_violations() {
 # }
 ```
 
+## Per-invocation reentrancy detection
+
+`ReentrancyDetector` answers a narrower question than the guard auditor: did one
+invocation perform an external call before finalizing state, and did any contract
+reappear on the active call stack? It owns a clone of the test `Env`, so
+`monitor(label, closure)` observes only the diagnostic events the closure
+produces and tags every finding with that label.
+
+```rust
+use soroban_testkit_core::ReentrancyDetector;
+# use soroban_sdk::Env;
+# fn withdraw(_env: &Env) {}
+
+let mut detector = ReentrancyDetector::new(&env);
+detector.monitor("vault_withdraw", || {
+    withdraw(&env);
+});
+
+assert!(!detector.has_cei_violations());
+assert!(!detector.has_reentrancy_attempts());
+assert!(!detector.has_violations());
+println!("{}", detector.report());
+detector.assert_safe();
+```
+
+A CEI violation is recorded when a frame makes an external call while it has no
+storage write yet. A re-entry attempt is recorded when `enter_frame` sees a
+contract that is already active, or when an instrumented re-entry event names a
+contract on the active stack. `violations()` returns the findings,
+`report()` renders the ordered trace with each violation, and `assert_safe()`
+panics with that report when any finding exists.
+
+### Frames and instrumentation events
+
+Call frames come from the host diagnostic stream: `fn_call` opens a frame and
+`fn_return` closes it. Storage reads and writes and explicit call/re-entry events
+come from contract events using this topic protocol:
+
+| Topic | Value |
+|-------|-------|
+| `0` | `Symbol("tk_reentry")` — protocol marker |
+| `1` | `Symbol("storage_read")`, `"storage_write"`, `"external_call"`, or `"reentry_attempt"` |
+| `2` | `Symbol(key)` for storage, or `Symbol(function)` for calls |
+| data | `()` for storage events; the other contract as `Address` for calls |
+
+The `emit_*` helpers publish exactly this shape:
+
+```rust
+use soroban_sdk::{Address, Env, Symbol};
+use soroban_testkit_core::{
+    emit_external_call, emit_reentry_attempt, emit_storage_read, emit_storage_write,
+};
+
+#[allow(deprecated)]
+fn finalize_then_call(env: &Env, token: &Address, self_address: &Address) {
+    emit_storage_read(env, Symbol::new(env, "balance"));
+    emit_storage_write(env, Symbol::new(env, "balance"));
+    emit_external_call(env, token, Symbol::new(env, "transfer"));
+    emit_reentry_attempt(env, self_address, Symbol::new(env, "withdraw"));
+}
+```
+
+`MockReentrantAttacker` is a ready-made contract whose `attempt_reentry`,
+`attack`, and `callback` methods publish a re-entry event. The host refuses a
+real recursive invocation before it opens a nested frame, so the mock simulates
+the attempt as a protocol event; the detector still reports it when the target
+contract is active.
+
+Harnesses that cannot publish contract events can record the same actions
+directly with `record_storage_read`, `record_storage_write`,
+`record_external_call`, `enter_frame`, `exit_frame`, and
+`record_reentry_attempt`. `observe()` ingests any new events from the detector's
+environment; `observe_env(&env)` switches the environment first.
+
+## Contract function coverage auditing (`CoverageAuditor`)
+
+Integration test suites can pass with 100% green checks while failing to invoke critical administrative, recovery, or emergency functions defined in contract bytecode, leaving potential vulnerabilities unexercised.
+
+[`CoverageAuditor`] extracts all public function entry points from contract WASM bytecode, contract spec XDR, or client definitions, tracks invocations observed via Soroban host diagnostic events across test executions, and produces comprehensive coverage reports in both Markdown and text formats.
+
+### Extracting entry points
+
+You can extract functions from contract WASM bytecode, spec XDR, or typed client definitions:
+
+```rust
+use soroban_testkit_core::{CoverageAuditor, client_definition};
+# use soroban_sdk::{contract, contractimpl, Env, Address};
+# #[contract] pub struct Vault;
+# #[contractimpl] impl Vault {
+#     pub fn initialize(_e: Env) {}
+#     pub fn deposit(_e: Env) {}
+#     pub fn withdraw(_e: Env) {}
+#     pub fn emergency_stop(_e: Env) {}
+#     pub fn admin_recover(_e: Env) {}
+# }
+# fn example(env: &Env, contract_id: &Address) -> Result<(), soroban_testkit_core::CoverageError> {
+# let client = VaultClient::new(env, contract_id);
+
+let mut auditor = CoverageAuditor::new();
+
+// 1. From client definitions:
+auditor.register_client_definition(
+    &client.address,
+    &client_definition!("Vault", [initialize, deposit, withdraw, emergency_stop, admin_recover]),
+);
+
+// 2. Or directly from function names:
+auditor.register_contract(&client.address, ["initialize", "deposit", "withdraw"]);
+
+// 3. Or from WASM bytecode / Spec XDR:
+# let wasm_bytes = b"\0asm\x01\0\0\0";
+// auditor.register_contract_wasm(&contract_id, wasm_bytes)?;
+# Ok(())
+# }
+```
+
+### Configurable ignore lists
+
+One-time setup functions (like `init` or `initialize`) or internal callbacks (like `__check_auth`) can be intentionally excluded from required coverage calculations:
+
+```rust
+# use soroban_testkit_core::CoverageAuditor;
+# use soroban_sdk::Address;
+# fn example(auditor: &mut CoverageAuditor, contract_id: &Address) {
+// Ignore per-contract:
+auditor.ignore_function(contract_id, "initialize");
+
+// Ignore common setup defaults ("init", "initialize", "__check_auth"):
+auditor.ignore_default_setup_functions(contract_id);
+
+// Ignore globally across all monitored contracts:
+auditor.ignore_globally("initialize");
+# }
+```
+
+### Observing invocations and generating reports
+
+Call `auditor.observe(&env)` during or after test execution to ingest host diagnostic events. The auditor automatically aggregates invocations and computes coverage percentages:
+
+```rust
+# use soroban_testkit_core::{CoverageAuditor, client_definition};
+# use soroban_sdk::{contract, contractimpl, Env, Address};
+# #[contract] pub struct Vault;
+# #[contractimpl] impl Vault {
+#     pub fn initialize(_e: Env) {}
+#     pub fn deposit(_e: Env) {}
+#     pub fn withdraw(_e: Env) {}
+#     pub fn emergency_stop(_e: Env) {}
+# }
+# fn test_flow(env: &Env, contract_id: &Address) {
+# let client = VaultClient::new(env, contract_id);
+# let mut auditor = CoverageAuditor::new();
+# auditor.register_client_definition(&client.address, &client_definition!("Vault", [initialize, deposit, withdraw, emergency_stop]));
+# auditor.ignore_function(&client.address, "initialize");
+client.deposit();
+client.withdraw();
+
+// Ingest diagnostic events from the host:
+auditor.observe(env);
+
+let report = auditor.report();
+
+// Print Markdown report for PR comments or CI artifacts:
+println!("{}", report.to_markdown());
+
+// Print concise plaintext table:
+println!("{}", report.to_text());
+
+// Assert full coverage of all non-ignored public functions:
+// report.assert_full_coverage();
+
+// Or enforce a minimum threshold:
+report.assert_min_coverage(50.0);
+# }
+```
+
+### Report outputs
+
+When uninvoked functions are detected, `report.to_markdown()` renders detailed status tables and alerts:
+
+```markdown
+# Contract Function Coverage Report
+
+| Contract | Total Functions | Invoked | Uninvoked | Ignored | Coverage |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `Vault` (`CAAA...`) | 5 | 2 | 2 | 1 | 50.0% |
+| **Total** | **5** | **2** | **2** | **1** | **50.0%** |
+
+## Contract: `Vault` (`CAAA...`)
+
+| Function | Status | Invocations | Notes |
+| :--- | :--- | :---: | :--- |
+| `initialize` | ⊘ Ignored | 1 | Configured ignore list (setup/initialization) |
+| `deposit` | ✓ Invoked | 1 | - |
+| `withdraw` | ✓ Invoked | 1 | - |
+| `emergency_stop` | ✗ **Uninvoked** | 0 | **Dead code or unexercised entry point** |
+| `admin_recover` | ✗ **Uninvoked** | 0 | **Dead code or unexercised entry point** |
+
+> [!WARNING]
+> **2 uninvoked contract entry point(s) detected.** Unexercised administrative, emergency, or recovery functions leave critical code paths untested.
+```
+
+## Memory Allocation and Footprint Profiler
+
+The Soroban host enforces strict memory limits alongside CPU limits. Contracts with nested collections or recursive data structures frequently exhaust host memory on-chain despite passing CPU metering locally.
+
+[`MemoryProfiler`] captures memory allocation deltas, measures memory bytes metered per execution step via `env.budget().memory_bytes_cost()`, tracks host object allocations, identifies peak allocation spikes, and generates structured reports with configurable threshold warnings:
+
+```rust
+use soroban_testkit_core::memory_profiler::MemoryProfiler;
+
+let mut profiler = MemoryProfiler::new(&ctx.env)
+    .with_warning_threshold(500_000);
+
+profiler.profile_call("batch_mint", || {
+    token_client.batch_mint(&recipients, &amounts);
+});
+
+assert!(profiler.peak_memory_bytes() < 500_000);
+println!("{}", profiler.report());
+```
+
+Structured output formats:
+- Parseable text summary: `println!("{}", profiler.report())`
+- JSON profile report: `profiler.report().to_json()`
+
+## Comparative Budget Benchmarking and Diff Reporting
+
+While `budget_guard!` and `BudgetBaseline` check costs against fixed ceilings, protocol upgrades require comparative reports across versions or PRs to detect subtle gas regressions across multiple functions before merging.
+
+[`BudgetComparison`] diffs two `budget.json` baseline files, calculates delta CPU instructions, memory bytes, and percentage shifts per contract function, and flags regressions exceeding configurable thresholds (e.g. `> 5%`):
+
+```rust
+use soroban_testkit_core::budget_report::BudgetComparison;
+
+let report = BudgetComparison::diff_files("budget_base.json", "budget_head.json")?;
+println!("{}", report.to_markdown_table());
+
+if report.has_regressions_above(0.05) {
+    panic!("Gas regression detected: {}", report.summary());
+}
+```
+
+### GitHub PR Comment Markdown Table
+
+`report.to_markdown_table()` generates clean Markdown tables formatted for automated CI pull request comment injection:
+
+```markdown
+### 📊 Soroban Budget Comparison Report
+
+| Function | Status | CPU (Base → Head) | CPU Shift | Mem (Base → Head) | Mem Shift |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| `batch_mint` | 🔴 Regressed | 1,000,000 → 1,120,000 | +12.0% | 50,000 → 55,000 | +10.0% |
+| `transfer` | 🟢 Improved | 500,000 → 450,000 | -10.0% | 20,000 → 18,000 | -10.0% |
+| `balance` | ⚪ Unchanged | 100,000 → 100,000 | 0.0% | 5,000 → 5,000 | 0.0% |
+```
+
+### Standalone Responsive HTML Reports
+
+`report.to_html_report()` generates a standalone HTML document with KPI summary cards, responsive tables, and visual diff bars:
+
+```rust
+let html = report.to_html_report();
+std::fs::write("target/budget_report.html", html).unwrap();
+```
+
+
 <hr class="tk-divider" />
 
 <p class="tk-muted">Next: <a href="./assert.html">soroban-testkit-assert</a> — turn these measurements into readable assertions.</p>
+
+## Liquidity conservation (`ConservationVerifier`)
+
+The core invariant of anything that moves tokens: across the holders you track (users, pools, vaults, fee collectors), the total balance changes by exactly what was minted minus what was burned. `ConservationVerifier` reads every tracked balance from the token contract before and after a workflow and checks that equation exactly, so a leak of a single stroop fails.
+
+```rust
+use soroban_testkit_core::ConservationVerifier;
+
+let verifier = ConservationVerifier::new(&env, &token_id);
+verifier.track_accounts(&[user1.clone(), user2.clone(), pool.clone()]);
+
+// ... a multi-step workflow: swaps, deposits, fee splits ...
+verifier.record_mint(500); // supply the workflow is meant to create
+verifier.record_burn(40);  // supply it is meant to destroy
+
+verifier.assert_conserved();
+```
+
+The SEP-41 token interface has no total-supply query, so mints and burns are declared with `record_mint` / `record_burn`. Anything the contract mints or burns that the test did not declare is reported as a discrepancy. Negative means a **leak** (value left the tracked set or was destroyed, such as rounding dust burned or kept by an untracked contract). Positive means **phantom minting**.
+
+On a violation, `assert_conserved` panics with a reconciliation table: opening and closing balance, credit and debit per account, the totals, and the verdict. This one is from the crate's own test, where a splitter pays 100 out to three recipients in shares of 33 and burns the 1-stroop rounding remainder:
+
+```text
+account       |              opening |              closing |               credit |                debit
+---------------------------------------------------------------------------------------------------------
+CAAAAA…HK3M   |                 1000 |                  900 |                      |                  100
+CAAAAA…OLZM   |                    0 |                    0 |                      |
+CAAAAA…ITA4   |                    0 |                   33 |                   33 |
+CAAAAA…K3IM   |                    0 |                   33 |                   33 |
+CAAAAA…MDR4   |                    0 |                   33 |                   33 |
+---------------------------------------------------------------------------------------------------------
+total         |                 1000 |                  999 |                   99 |                  100
+
+net balance delta : -1
+expected delta    : 0 (minted 0 - burned 0)
+discrepancy       : -1 — LEAK: 1 stroop(s) left the tracked set
+```
+
+`check()` returns the same `ConservationReport` as `Ok`/`Err` instead of panicking, and `checkpoint()` makes the current balances the new opening position so each step of a long workflow can be checked on its own.
+
+## Diagnostic event auditing
+
+`DiagnosticEventAuditor` inspects Soroban host diagnostic events emitted during
+contract execution. It categorizes events (function call/return, error, contract,
+system diagnostic), enforces configurable count thresholds, and flags suspicious
+payload patterns or watched addresses that may indicate credential leakage.
+
+```rust,no_run
+use soroban_sdk::Env;
+use soroban_testkit_core::DiagnosticEventAuditor;
+
+let env = Env::default();
+// ... invoke contract ...
+let mut auditor = DiagnosticEventAuditor::new()
+    .with_max_total_events(200)
+    .with_max_diagnostic_events(150)
+    .watch_sensitive_address("admin", &admin);
+auditor.observe(&env);
+auditor.assert_within_limits();
+println!("{}", auditor.report().to_text());
+```
+
+Use `assert_diagnostic_count_lte` for a focused count check, and `diagnostic_log(&env)`
+for a quick formatted dump on test failure.

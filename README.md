@@ -14,6 +14,11 @@ A comprehensive testing and debugging toolkit for [Soroban](https://developers.s
 [![crates.io](https://img.shields.io/crates/v/soroban-testkit-core?label=crates.io&color=brightgreen)](https://crates.io/crates/soroban-testkit-core)
 [![Stellar Wave](https://img.shields.io/badge/Stellar%20Wave-Drips-5319E7.svg)](https://www.drips.network/wave/stellar)
 
+> Part of the **Stellar Crucible** smart contract engineering suite:
+> - **[soroban-testkit](https://github.com/stellar-crucible/soroban-testkit)** — Dynamic property testing, mock ledger harnesses, and event matchers.
+> - **[soroban-guard](https://github.com/stellar-crucible/soroban-guard)** — AST static security auditing and testkit invariant synthesizer.
+> - **[soroban-bench](https://github.com/stellar-crucible/soroban-bench)** — Macro-benchmarking, gas regression baselines, and storage rent simulations.
+
 ## Documentation
 
 | Guide | Read it |
@@ -42,10 +47,12 @@ Testkit fills these gaps with domain-specific tooling that complements (not repl
 
 | Crate | Description |
 |-------|-------------|
-| [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, storage inspection |
+| [`soroban-testkit-core`](crates/soroban-testkit-core) | Budget snapshots, error decoding, memory pressure profiles, storage inspection |
 | [`soroban-testkit-assert`](crates/soroban-testkit-assert) | Ergonomic assertion matchers for events and authorizations |
-| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder and setup framework |
-| [`soroban-testkit-generators`](crates/soroban-testkit-generators) | Soroban-aware property testing strategies for proptest |
+| [`soroban-testkit-fixtures`](crates/soroban-testkit-fixtures) | Reusable test context builder, ledger control, archival sweeps and declarative mock contracts |
+| [`soroban-testkit-fixtures-macros`](crates/soroban-testkit-fixtures-macros) | `#[mock_contract]`, the attribute behind declarative mock contracts |
+| [`soroban-testkit-generators`](crates/soroban-testkit-generators) | Soroban-aware property testing strategies for proptest, and `Arbitrary` impls for cargo-fuzz |
+| [`soroban-testkit-mock`](crates/soroban-testkit-mock) | `#[mock_contract]`: generate mock dependency contracts from a trait |
 
 ## Quick Start
 
@@ -173,12 +180,14 @@ soroban-testkit/
 │   ├── soroban-testkit-core/         # Budget, error, storage utilities
 │   ├── soroban-testkit-assert/       # Event and auth assertion matchers
 │   ├── soroban-testkit-fixtures/     # Test context builder and fixtures
-│   └── soroban-testkit-generators/   # Property testing strategies
+│   ├── soroban-testkit-generators/   # Property testing strategies, arbitrary impls
+│   └── soroban-testkit-mock/         # #[mock_contract] proc macro
 ├── examples/
 │   ├── counter/        # Contract + integration tests using every crate
 │   │                   # + budget.json: the costs CI holds them to
 │   ├── token/          # ERC-20 style contract, one test file per crate
 │   ├── bounty_escrow/  # Bounty escrow with multi-signature release
+│   ├── subscription/   # Recurring billing drawn from a token allowance
 │   └── multisig_vault/ # Timelocked M-of-N treasury, one test file per crate
 ├── docs/                     # mdBook documentation source (theme/custom.css)
 ├── .github/                  # CI, docs deploy, budget baseline, templates, CODEOWNERS
@@ -215,6 +224,15 @@ fixtures, `tests/assert_events.rs` on assertions, `tests/budget_and_storage.rs`
 on core, `tests/property.rs` on generators — so each one reads as a page of the
 documentation that happens to run. [Worked Example: Token](https://stellar-crucible.github.io/soroban-testkit/guides/token-example.html)
 walks through them.
+
+[`examples/subscription`](examples/subscription) is recurring billing, and it is
+the example for what depends on both the ledger clock and a token allowance: a
+subscriber fixes a fee and an interval, approves the contract as a spender, and
+the merchant can draw exactly that fee once per period. Its suite advances the
+clock with `advance_time`, measures each cycle against a budget ceiling, and
+proves with a property test that repeated or premature calls cannot withdraw
+more than the authorized fee. [Worked Example: Subscription](https://stellar-crucible.github.io/soroban-testkit/guides/subscription-example.html)
+walks through it.
 
 [`examples/domain_service`](examples/domain_service) is a name registry, and it is
 the example for what depends on the ledger rather than on a value: a term is

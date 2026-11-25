@@ -15,3 +15,8 @@ rust-version.workspace = true
 [dependencies]
 soroban-sdk = { workspace = true }
 soroban-testkit-core = { path = "../soroban-testkit-core", version = "0.4.1" }
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl"] }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+soroban-env-host = { workspace = true }

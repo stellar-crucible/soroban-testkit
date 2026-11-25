@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "cases": {
+    "claims_20_bidders": {
+      "cpu_insns": 11294312,
+      "mem_bytes": 2555823
+    },
+    "claims_50_bidders": {
+      "cpu_insns": 40453546,
+      "mem_bytes": 11321808
+    },
+    "claims_5_bidders": {
+      "cpu_insns": 2266140,
+      "mem_bytes": 423819
+    },
+    "settle_20_bidders": {
+      "cpu_insns": 417835,
+      "mem_bytes": 98575
+    },
+    "settle_50_bidders": {
+      "cpu_insns": 611710,
+      "mem_bytes": 178375
+    },
+    "settle_5_bidders": {
+      "cpu_insns": 311333,
+      "mem_bytes": 58675
+    }
+  }
+}
