@@ -2,6 +2,7 @@ pub mod budget;
 pub mod compatibility;
 pub mod error;
 pub mod footprint;
+pub mod instruction_profiler;
 pub mod namespace_auditor;
 pub mod stack_depth;
 pub mod storage;
@@ -15,6 +16,7 @@ pub use footprint::{
     FootprintSnapshot, RentEstimate, RentParameters, StorageFootprint, StorageFootprintDiff,
     DEFAULT_PROJECTION_LEDGERS,
 };
+pub use instruction_profiler::{InstructionProfiler, InstructionStep};
 pub use namespace_auditor::{NamespaceAuditor, NamespaceReport};
 pub use stack_depth::{
     CallFrame, StackDepthAuditor, StackDepthBreach, DEFAULT_WARNING_THRESHOLD,

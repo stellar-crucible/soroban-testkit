@@ -4,7 +4,7 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-core</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · error · storage · dependency · footprint</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">budget · instruction_profiler · error · storage · dependency · footprint</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Dependencies</span><span class="tk-spec__value">soroban-sdk · soroban-env-host · serde · serde_json</span></div>
 </div>
 
@@ -19,6 +19,8 @@ Budget tracking, error decoding, storage inspection and contract dependency grap
 | `BudgetMetric` | Which resource a violation was measured against — `Cpu` or `Memory`, and the `cpu_insns` / `mem_bytes` word `as_str()` prints for it |
 | `BudgetBaseline` | Recorded costs per case, loaded from and saved to a JSON file |
 | `budget_guard!` | Macro form of the guard around a single invocation |
+| `InstructionProfiler` | CPU instruction deltas across labeled checkpoints, with text and Markdown reports |
+| `InstructionStep` | One labeled segment and its consumed CPU instructions |
 | `DecodedError` | A Soroban error code split into category, meaning and context |
 | `ErrorRegistry` | Your `#[contracterror]` codes mapped to the words they mean |
 | `ClientOutcome`, `unwrap_decoded` | Unwrap a v28 `try_*` client call, panicking with the decoded error |
@@ -65,6 +67,31 @@ zero, so a later snapshot that reads smaller never underflows an assertion.
   <span class="tk-callout__title">SDK v28 note</span>
   <p><code>env.budget()</code> is deprecated; go through <code>env.cost_estimate()</code>. And read the numbers as a comparison between builds rather than as a fee quote: a contract registered as a native test contract is never metered through the VM, so wasm instantiation, execution and rent reads are absent from the reading.</p>
 </div>
+
+## Profiling labeled instruction steps
+
+`InstructionProfiler` samples the environment's cumulative CPU instruction
+meter. Each checkpoint attributes the work since the previous checkpoint to
+its label, so place checkpoints around the operations you want to compare:
+
+```rust
+use soroban_testkit_core::InstructionProfiler;
+
+let mut profiler = InstructionProfiler::new(&env);
+client.prepare();
+profiler.checkpoint("prepare");
+client.execute();
+profiler.checkpoint("execute");
+
+println!("{}", profiler.format_text(25));
+println!("{}", profiler.format_markdown(25));
+```
+
+Both reports show each segment's instruction count and share of the measured
+total; segments consuming strictly more than the chosen percentage are marked
+`HOT`. `hot_paths_over(25)` returns those segments directly. The profiler
+measures work charged to Soroban's host budget; ordinary Rust code executed
+outside a host call is not metered by the SDK.
 
 ## Guards: turning a measurement into a limit
 
