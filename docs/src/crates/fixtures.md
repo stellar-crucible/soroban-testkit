@@ -128,6 +128,27 @@ Both helpers saturate instead of wrapping: advancing past `u64::MAX` or
 `u32::MAX` returns the maximum rather than panicking or rolling the clock back
 to a date in 1970.
 
+### Pruning expired contract storage
+
+After advancing the ledger, call `prune_expired_storage` to compact all
+contract-data entries whose live-until ledger has been reached. Temporary
+entries become absent; persistent entries are removed from the mock host to
+simulate archival. Entries whose TTL is still active are preserved. The
+returned report separates temporary pruning from persistent archival:
+
+```rust
+let mut ctx = TestContext::new();
+// ... store temporary and persistent contract data
+ctx.advance_ledger(100);
+let report = ctx.prune_expired_storage().unwrap();
+assert_eq!(report.ledger, ctx.sequence());
+```
+
+`TestContext::prune_expired_storage` and `StorageCompactor::prune_expired`
+return a host error if the mock storage update fails. This helper changes
+in-memory test-host state; it does not perform an on-chain transaction or
+restore archived entries.
+
 ## Scripting multi-block scenarios
 
 Time-dependent contract logic — vesting, streams, bridge relays — fails under
