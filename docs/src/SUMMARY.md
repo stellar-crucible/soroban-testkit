@@ -19,6 +19,7 @@
 - [Worked Example: Token](./guides/token-example.md)
 - [Worked Example: Bounty Escrow](./guides/bounty-escrow-example.md)
 - [Worked Example: Vesting Escrow](./guides/vesting-escrow-example.md)
+- [Worked Example: Decentralized Escrow with Arbiter](./guides/escrow-example.md)
 - [Worked Example: Multisig Vault](./guides/multisig-vault-example.md)
 - [Worked Example: Guardian Treasury](./guides/guardian-treasury-example.md)
 - [Worked Example: Flash Mint](./guides/flash-mint-example.md)
