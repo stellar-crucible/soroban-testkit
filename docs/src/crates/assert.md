@@ -1,10 +1,10 @@
 # soroban-testkit-assert
 
-Fluent matchers for contract events and authorizations, so assertions read like the behaviour you expect.
+Fluent matchers for contract events, authorizations and storage, so assertions read like the behaviour you expect.
 
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-assert</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">events · invocation · auth · balance · storage · budget_diff · budget · panic_msg · snapshot</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Style</span><span class="tk-spec__value">chainable builder</span></div>
 </div>
 
@@ -25,19 +25,36 @@ Fluent matchers for contract events and authorizations, so assertions read like 
 | `EventMatcher::with_topic(t)` | Restricts matches to events carrying that topic symbol |
 | `EventLog::collect()` | Gathers one invocation's events into a set spanning calls |
 | `EventLog::matcher()` | A matcher over everything that log collected |
+| `assert_event_emitted!(env, contract, topic, { field: value, .. })` | Asserts at least one matching event was emitted with expected contract, topic(s), and data fields |
 | `assert_event_data_schema!(env, topic, { field: Type, .. })` | Checks matching event maps for required fields, exact keys, and deserializable types |
+| `assert_emitted_matches!(env, { .. })` | Asserts emitted events matching glob wildcards (`*`, `?`) or regex topic patterns and data fields |
 | `assert_no_contract_error!(client.try_call(..))` | Unwraps a successful client call or reports its decoded Soroban error |
 | `assert_call_success_with_value!(client.try_call(..), expected)` | Checks decoded call success and return-value equality |
+| `assert_contract_error!(client.try_call(..), MyError::Variant)` | The call failed with exactly that `#[contracterror]` variant |
+| `assert_host_error!(client.try_call(..), ScErrorType::Auth)` | The call failed with a host error of that category, category and code, or exact `Error` |
+| `assert_panic_msg!(expr, "text")` / `contains:` / `glob:` / `regex:` | The expression panicked with a message matching a substring, glob (`*`, `?`) or regular expression, including a contract panic surfaced through a host error |
 | `AuthMatcher::assert_no_auth_required()` | The call needed no authorizations |
 | `AuthMatcher::assert_auth_count(n)` | Exactly `n` authorizations were recorded |
 | `AuthMatcher::assert_matches()` | One recorded authorization fits the configured invoker, function, and arguments |
 | `assert_auth_matches!(env, { .. })` | The same, with the invoker, function, and argument pattern inline |
+| `assert_auth_strict!(env, [ .. ])` | Every expected authorization matches exactly one record, with no records left over |
+| `assert_auth_invoker_distinct!(expected, auths)` | Verifies that an invocation was authorized exclusively by the declared authorized address |
 | `AuthSubTreeMatcher::assert_matches()` | A matching authorization sub-tree appears at any depth in recorded auths |
 | `assert_auth_sub_tree_matches!(env, { .. })` | Inline sub-tree matcher with argument and child wildcards and side-by-side failure trees |
+| `assert_auth_tree!(env, { .. })` | Validates hierarchical authorization call-trees down to arbitrary depth with visual tree diffs |
+| `AuthTreeMockBuilder::new(..)` | Programmatic builder for mock authorization call-trees |
+| `assert_storage_key_deleted!(env, contract, key)` | A key is gone from instance, persistent and temporary storage |
+| `assert_storage_key_deleted!(env, contract, key, tier)` | A key is gone from one named tier |
+| `assert_storage_empty!(env, contract)` | No live storage entry survives in any tier |
+| `assert_storage_empty!(env, contract, tier)` | A named tier holds no live entry |
+| `AuthSubInvocationMatcher::assert_matches()` | An authorized sub-call matching contract, function, and arguments appears at any depth |
+| `assert_auth_sub_invocation!(env, { .. })` | Inline sub-invocation matcher isolating intermediate contract calls at any depth |
 | `StorageQuotaMatcher::assert_matches()` | Asserts storage tier counts satisfy exact quotas or upper bounds |
 | `assert_storage_tier_count!(env, contract, { .. })` | Macro enforcing allocation quotas across instance, persistent, and temporary tiers |
 | `assert_balance_conserved!(..)` | Asserts total token balance conservation across accounts, fee pools, and reserves |
 | `assert_budget_diff_within!(..)` | Asserts relative gas savings between baseline and optimized closures with side-by-side failure diff table |
+| `assert_snapshot_matches!(name, value, env)` | Serializes contract state, events or return values to canonical JSON and compares with a committed snapshot |
+| `SnapshotOptions::new()` | Exact comparison by default; opt into address normalization and recursive field removal |
 
 ## Event matching
 
@@ -312,6 +329,75 @@ Types are checked by Soroban value deserialization, including `i128`, `u64`,
 the expected type and observed type/value. The assertion requires at least one
 event matching the topic.
 
+### Declarative event assertion with `assert_event_emitted!`
+
+`assert_event_emitted!` provides ergonomic declarative assertions for contract events. It filters by contract ID, topic name(s), and data payload fields, asserting that at least one matching event was published:
+
+```rust
+use soroban_testkit_assert::assert_event_emitted;
+
+client.increment(&caller, &5);
+
+// Assert by contract, topic, and struct/map fields:
+assert_event_emitted!(&env, &contract_id, "incremented", {
+    caller: caller,
+    new_count: 5u32,
+});
+
+// Assert with multiple topics:
+assert_event_emitted!(&env, &contract_id, ["counter", "incremented"], {
+    new_count: 5u32,
+});
+
+// Assert by contract and topic only:
+assert_event_emitted!(&env, &contract_id, "incremented");
+```
+
+<div class="tk-callout">
+  <span class="tk-callout__title">Scope: the invocation that just ran</span>
+  <p>Like <code>EventMatcher::new(&amp;env)</code>, <code>assert_event_emitted!</code> inspects <code>env.events().all()</code>, which in Soroban SDK v28 returns events from the <strong>most recent contract invocation</strong> only. Invoke the assertion immediately after the contract call that should emit the event.</p>
+</div>
+
+When multiple events match the filters, the assertion succeeds (at least one match). If no event matches, it panics with a detailed diagnostic message displaying what was expected versus all events emitted during the invocation:
+
+```text
+panicked at 'assert_event_emitted! failed: no matching event found.
+Expected event:
+  contract: Contract(CAAAAA...)
+  topic(s): ["incremented"]
+  data: { new_count: 5u32 }
+Emitted events (1 in scope):
+  [1] contract: Contract(CAAAAA...), topics: [counter, incremented], data: {"caller": Contract(...), "new_count": 10}'
+```
+
+## Regex and wildcard topic matching (assert_emitted_matches!)
+
+When contract events contain prefixes, variable identifiers, or structured multi-part topics (e.g. `Transfer:XLM`, `Order:Created:104`), exact string topic matching can be brittle. `assert_emitted_matches!` allows matching topics using wildcard glob patterns (`*`, `?`) and regular expressions, while validating data payload fields in the same assertion:
+
+```rust
+use soroban_testkit_assert::assert_emitted_matches;
+
+// Match with wildcard globs across single or multi-part topics
+assert_emitted_matches!(env, {
+    contract: dex_id,
+    topic: "Trade:*",
+    data: { amount: 500u64 },
+});
+
+// Match with regular expression pattern
+assert_emitted_matches!(env, {
+    contract: dex_id,
+    topic: r"^Order:(Filled|Cancelled)$",
+});
+
+// Works across EventLog collections spanning multiple invocations
+assert_emitted_matches!(event_log, {
+    topic: "Trade:XLM",
+});
+```
+
+On assertion failure, `assert_emitted_matches!` reports every recorded event with its emitting contract, formatted topics, and raw payload data.
+
 ## Successful contract calls
 
 Use the generated client's `try_*` call with these macros instead of a bare
@@ -336,6 +422,271 @@ Both macros evaluate the call once and distinguish a returned contract/host
 error from an invocation failure. `assert_no_contract_error!` returns the
 successful value; `assert_call_success_with_value!` compares it with the
 expected value.
+
+## Asserting exact contract and host errors
+
+`#[should_panic]` passes for *any* panic, so a test written to prove
+"unauthorized callers are refused" keeps passing when the call starts failing
+on a budget overflow instead. `assert_contract_error!` takes the result of a
+`try_*` client call and fails unless it carries exactly the expected variant:
+
+```rust
+use soroban_testkit_assert::assert_contract_error;
+
+assert_contract_error!(
+    client.try_transfer(&sender, &receiver, &1000),
+    TokenError::InsufficientBalance
+);
+```
+
+It handles every arm of the SDK v28 `try_*` shape,
+`Result<Result<T, ConversionError>, Result<E, InvokeError>>`:
+
+| The call returned | The macro |
+|-------------------|-----------|
+| `Err(Ok(e))` with `e == expected` | passes |
+| `Err(Ok(e))` with another variant | fails, naming both variants with code and category |
+| `Err(Err(InvokeError::Contract(code)))` | fails: a code the client's error enum has no variant for |
+| `Err(Err(InvokeError::Abort))` | fails: a panic or host failure |
+| `Ok(..)` | fails: the call unexpectedly succeeded, printing the returned value |
+
+```text
+assert_contract_error! failed: the call failed with a different error
+  expected: InsufficientBalance (code 1, category contract)
+  received: Unauthorized (code 2, category contract)
+  decoded:  Soroban Error [2]: unregistered contract error — add it to an ErrorRegistry to read it as text
+```
+
+The expected value can be the contract's error enum or a raw
+`soroban_sdk::Error::from_contract_error(code)`; codes and categories come
+from `DecodedError` in `soroban-testkit-core`.
+
+### Host errors
+
+`assert_host_error!` matches a host error at the precision you need:
+
+```rust
+use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
+use soroban_testkit_assert::assert_host_error;
+
+assert_host_error!(outcome, ScErrorType::Storage);                             // any storage error
+assert_host_error!(outcome, ScErrorType::Storage, ScErrorCode::MissingValue);  // exact category and code
+assert_host_error!(outcome, Error::from_contract_error(101));                  // an exact Error value
+```
+
+The last form is how to assert an error code that propagated from a
+*different* contract — a token's `InsufficientBalance` surfacing through a
+pool whose client only knows `AmmError`.
+
+Three things the host decides, not the macro:
+
+- A `#[contracterror]` client can only carry contract codes; a host failure
+  arrives as `InvokeError::Abort` with its category lost. The diagnostic says
+  so — call `env.try_invoke_contract::<_, soroban_sdk::Error>(..)` to keep it.
+- A host failure inside a native (non-Wasm) test contract surfaces as
+  `context/InvalidAction`: the host catches it as a failed contract frame.
+- Budget exhaustion is unrecoverable and escalates to a panic even through
+  `try_*`; catch it with `#[should_panic(expected = "Error(Budget, ExceededLimit)")]`.
+
+`check_contract_error` and `check_host_error` return the diagnostic as a
+`Result<(), String>` instead of panicking.
+
+### Asserting the error code behind a panic
+
+A client method that is not a `try_*` call panics when the invocation fails, and
+the host renders the failure inside the panic text:
+
+```text
+HostError: Error(Contract, #101)
+HostError: Error(Auth, InvalidAction)
+```
+
+`#[should_panic(expected = "...")]` only checks that the text contains a
+substring. `assert_contract_call_panics_with_error_code!` catches the panic,
+parses the packed `Error(..)`, and compares the decoded error with an exact
+expectation:
+
+```rust
+use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
+use soroban_testkit_assert::assert_contract_call_panics_with_error_code;
+
+// A numeric #[contracterror] code.
+assert_contract_call_panics_with_error_code!(client.withdraw(&1_000), VaultError::Locked as u32);
+
+// An exact host error category and code.
+assert_contract_call_panics_with_error_code!(
+    client.withdraw(&1_000),
+    ScErrorType::Auth,
+    ScErrorCode::InvalidAction
+);
+```
+
+The call is evaluated once, inside `catch_unwind`. The assertion fails cleanly
+when the call returns normally, when the panic carries no Soroban error (the
+diagnostic quotes the panic), and when the code or category differs. A mismatch
+prints both errors with their decoded category, numeric code and variant name:
+
+```text
+assert_contract_call_panics_with_error_code! failed: the call panicked with a different error
+  expected: Error(Contract, #101) — decoded: code 101, category contract
+  received: Error(Contract, #2) — decoded: code 2, category contract, variant contract code 2
+  panic:    HostError: Error(Contract, #2)
+```
+
+`check_panic_error_code` returns the diagnostic as a `Result<(), String>`
+without panicking, for tests that assert on the message itself.
+
+## Matching a panic message (`assert_panic_msg!`)
+
+`#[should_panic(expected = "...")]` applies to the whole test, passes for a
+panic raised anywhere in it, and only does a substring match.
+`assert_panic_msg!` scopes the expectation to a single expression, runs that
+expression exactly once inside `catch_unwind`, and matches the message it
+panicked with by substring, glob, or regular expression. On a match it
+evaluates to a `CapturedPanic` you can inspect further.
+
+### Matching modes
+
+The mode is chosen by a keyword. The macro never guesses it from what the
+pattern contains, so `"a*b"` with no keyword is a literal substring:
+
+| Form | Mode | Rule |
+|------|------|------|
+| `assert_panic_msg!(expr, "text")` | substring | The message contains `text` (same rule as `#[should_panic(expected)]`) |
+| `assert_panic_msg!(expr, contains: "text")` | substring | The same rule, written out |
+| `assert_panic_msg!(expr, glob: "pat")` | glob | The **whole** message matches; `*` is any run of characters (newlines included), `?` exactly one character |
+| `assert_panic_msg!(expr, regex: r"pat")` | regex | [`regex`](https://docs.rs/regex) crate syntax; unanchored unless the pattern uses `^`/`$` |
+
+The pattern can be any expression that gives a `&str` or `String`, so
+`format!` with runtime values works. A closure written in place (`|| expr` or
+`move || expr`) is called once, not just constructed.
+
+```rust
+use soroban_testkit_assert::assert_panic_msg;
+
+fn withdraw(amount: u64) {
+    assert!(amount <= 100, "withdrawal of {amount} exceeds the limit of 100");
+}
+
+// Substring
+assert_panic_msg!(withdraw(250), "exceeds the limit");
+assert_panic_msg!(withdraw(250), contains: "exceeds the limit");
+
+// Glob: the whole message, with * and ?
+assert_panic_msg!(withdraw(250), glob: "withdrawal of * exceeds the limit of ???");
+
+// Regex
+assert_panic_msg!(withdraw(250), regex: r"^withdrawal of \d+ exceeds the limit of \d+$");
+
+// Dynamic values in the pattern, and inspecting what was caught
+let amount = 250;
+let captured = assert_panic_msg!(withdraw(amount), contains: format!("withdrawal of {amount}"));
+assert_eq!(captured.message(), "withdrawal of 250 exceeds the limit of 100");
+```
+
+Panics from `panic!` and from failed `assert!`, `assert_eq!` and
+`unwrap` all work. A bare `assert!(ready)` or `panic!("literal")` carries a
+`&'static str` payload and a formatted message a `String`; both are read.
+
+### Contract panics and host diagnostics
+
+A contract called through its generated client does not unwind with the
+contract's own payload. The test host catches the contract's panic, turns it
+into a host error, and re-panics with a `String` like this:
+
+```text
+HostError: Error(WasmVm, InvalidAction)
+
+Event log (newest first):
+   ...
+   3: [Failed Diagnostic Event (not emitted)] contract:CA..., topics:[log], data:["caught panic 'withdrawal of 250 exceeds the limit of 100' from contract function 'Symbol(withdraw)'", 250]
+   ...
+```
+
+`CapturedPanic` splits that text into parts. `host_error` holds the
+`Error(..)` from the first line, and `contract_panics` holds the message
+from each `caught panic '..'` entry. A pattern passes if it matches **any**
+of the candidates below, tried in this order:
+
+1. each contract panic message;
+2. the host error (`Error(WasmVm, InvalidAction)`, `Error(Contract, #7)`, ...);
+3. the `HostError: ...` header line;
+4. the full raw panic text.
+
+That is how a whole-message glob or anchored regex can match the contract's
+own words even though the raw payload also carries the event log:
+
+```rust
+let captured = assert_panic_msg!(
+    client.withdraw(&250),
+    glob: "withdrawal of * exceeds the limit of 100"
+);
+assert_eq!(captured.host_error.as_deref(), Some("Error(WasmVm, InvalidAction)"));
+
+// An error raised with panic_with_error! carries a code, not text:
+assert_panic_msg!(client.locked(), glob: "Error(Contract, #7)");
+```
+
+For a Rust panic raised by test-side code, the raw message is the only
+candidate.
+
+### Failure diagnostics
+
+A failure says which of four things went wrong.
+
+**The invocation did not panic:**
+
+```text
+assert_panic_msg! failed: the invocation completed without panicking
+  expected a panic matching (contains): "exceeds"
+```
+
+**No candidate matched.** The failure prints the expected pattern, its mode,
+and the actual message. For a host panic it also prints the host error and
+each contract panic message:
+
+```text
+assert_panic_msg! failed: the panic message did not match
+  expected (glob): "deposit of *"
+  origin: Soroban host error
+  host error: Error(WasmVm, InvalidAction)
+  contract panic message: "withdrawal of 250 exceeds the limit of 100"
+  actual (full host panic):
+    | HostError: Error(WasmVm, InvalidAction)
+    | ...
+```
+
+**The payload has no text.** This happens with `std::panic::panic_any(42u32)`
+and similar. The failure reports the payload as having no message instead of
+matching the pattern against an empty string.
+
+**The regex pattern is invalid.** The failure prints the compile error, and
+the invocation is never run.
+
+`check_panic_msg(capture_panic(|| ...), &PanicPattern::glob("..."))` gives
+you the same result as a `Result<CapturedPanic, PanicMsgFailure>` without
+panicking. `PanicPattern::matches_text` and `panic_msg::glob_match` let you test the
+matching on its own.
+
+### Limitations
+
+- The contract's own panic text is only available from the host's
+  **diagnostic event log**. `Env::default()` in testutils records that log.
+  If diagnostics are off, only the host error is available, and a mismatch
+  reports `contract panic message: unavailable` instead of matching against
+  empty text. The crate's tests cover this case.
+- `panic_with_error!` and `#[contracterror]` returns carry a numeric code,
+  not text. Match them by their `Error(Contract, #N)` rendering, or use
+  `assert_contract_call_panics_with_error_code!` to compare the decoded code.
+- The text is matched exactly as the host renders it in the event log. A
+  contract message containing quotes or control characters may appear
+  escaped.
+- Only the native test host has been exercised. A Wasm contract built with
+  `panic = "abort"` traps without a message, so all you get there is the
+  host error.
+- The default panic hook still prints the caught panic to stderr. The macro
+  does not replace the process-wide hook, because doing that is not safe
+  while tests run in parallel.
 
 ## Authorization matching
 
@@ -402,6 +753,71 @@ recorded, so the wrong invoker, function, or argument is visible without a re-ru
 panicked at 'Expected an authorization matching { invoker Contract(C…FCT4), function "set_admin", args [_, 7] }, found 1 recorded authorization(s):
   [0] invoker Contract(C…FCT4) contract Contract(C…D2KM) function "increment" args [Contract(C…FCT4), 1]'
 ```
+
+### Strict authorization matching
+
+Use `assert_auth_strict!` when a test must prove that a call authorized *only*
+the expected invokers and functions. Every listed pattern must match a distinct
+recorded authorization, and every record must match one listed pattern. The
+macro also accepts argument patterns, where `_` matches any value in that
+position:
+
+```rust
+use soroban_testkit_assert::assert_auth_strict;
+
+client.set_admin(&admin, &new_admin);
+
+assert_auth_strict!(env, [
+    {
+        invoker: admin,
+        function: "set_admin",
+        args: [new_admin],
+    },
+]);
+```
+
+Declare multiple authorizations as separate entries. An empty list asserts that
+the invocation recorded no authorizations:
+
+```rust
+assert_auth_strict!(env, [
+    { invoker: first, function: "joint", args: [_, second] },
+    { invoker: second, function: "joint", args: [first, _] },
+]);
+
+assert_auth_strict!(env, []);
+```
+
+If a pattern is missing or any unlisted authorization was recorded, the failure
+shows expected and observed authorizations side by side, then identifies missing
+patterns and extra records.
+
+### Exact multiset matching
+
+`assert_auth_exact_multiset!` is the order-insensitive form of the same
+assertion. A contract that triggers several independent `require_auth` demands
+can record them in any order, and the order is not part of the SDK's contract:
+
+```rust
+use soroban_testkit_assert::assert_auth_exact_multiset;
+
+client.settle(&first, &second);
+
+assert_auth_exact_multiset!(env, [
+    { invoker: second, function: "settle", args: [first, _] },
+    { invoker: first, function: "settle", args: [_, second] },
+]);
+```
+
+Matching is one-to-one, so this is a multiset rather than a subset rule:
+
+- every expected pattern must match a **distinct** recorded authorization;
+- every recorded authorization must be consumed by an expected pattern;
+- two identical patterns require two identical records, and an empty list
+  asserts that nothing was authorized.
+
+Missing and surplus authorizations both fail, with the side-by-side table
+followed by the unmatched expectations and the extra records.
 
 ### Sub-tree authorization matching
 
@@ -483,6 +899,148 @@ contract Contract(C…BBBB) function "route"                   | contract Contra
 └── contract Contract(C…DDDD) function "collect" [MISSING]   |     └── contract Contract(C…CCCC) function "deposit" args [...]
 ```
 
+### Hierarchical call-tree validation and mock builder (assert_auth_tree!)
+
+In nested multi-contract calls (e.g. `Router -> Pool -> Vault -> Token`), authorizations form recursive trees of `AuthorizedInvocation` structures. `assert_auth_tree!` validates an entire nested delegation hierarchy to arbitrary depth using concise `sub_invokes` lists:
+
+```rust
+use soroban_testkit_assert::assert_auth_tree;
+
+assert_auth_tree!(env, {
+    invoker: user,
+    function: "deposit_and_stake",
+    sub_invokes: [
+        {
+            invoker: router,
+            function: "transfer",
+            args: [user, pool, 1000],
+            sub_invokes: [
+                { invoker: pool, function: "mint_receipt", args: [user, 1000] }
+            ]
+        }
+    ]
+});
+```
+
+To construct mock authorization trees programmatically in tests or mocks, use `AuthTreeMockBuilder`:
+
+```rust
+use soroban_testkit_assert::{auth_tree::tree_depth, AuthTreeMockBuilder};
+
+let mock_invocation = AuthTreeMockBuilder::new(router, "transfer")
+    .arg(&user, &env)
+    .arg(&pool, &env)
+    .arg(&1000i128, &env)
+    .sub_invoke(
+        AuthTreeMockBuilder::new(pool, "mint_receipt")
+            .arg(&user, &env)
+            .arg(&1000i128, &env)
+            .build(&env)
+    )
+    .build(&env);
+
+assert_eq!(tree_depth(&mock_invocation), 2);
+```
+
+### Isolating intermediate sub-invocations
+
+When inspecting authorization trees from complex multi-contract calls, developers often only care about asserting that a specific intermediate contract properly authorized a sub-call, regardless of top-level invoker details.
+
+`assert_auth_sub_invocation!` searches recursively across all recorded authorization trees and matches any sub-invocation matching `{ contract, function, args }` at any depth:
+
+```rust
+use soroban_testkit_assert::assert_auth_sub_invocation;
+
+aggregator.swap(&user, &pool_id, &vault_id, &500i128);
+
+// Matches Vault deposit at depth 2 without naming Aggregator or Pool:
+assert_auth_sub_invocation!(env, {
+    contract: vault_id,
+    function: "deposit",
+    args: [user.clone(), 500i128],
+});
+
+// Matches intermediate Pool route without top-level wrapper details:
+assert_auth_sub_invocation!(env, {
+    contract: pool_id,
+    function: "route",
+    args: [_, vault_id, 500i128],
+});
+```
+
+All fields are optional and accept `_` as a wildcard:
+
+- `contract: addr` (or `_` / omitted): filters calls targeting `addr`.
+- `function: "name"` (or `_` / omitted): filters calls named `"name"`.
+- `args: [_, val]` (or `_` / omitted): matches arguments positionally with `_` wildcards.
+- `invoker: addr` (or `_` / omitted): restricts matches to authorization trees originating from `addr`.
+
+The same matching is available via the chainable builder `AuthSubInvocationMatcher`:
+
+```rust
+use soroban_testkit_assert::auth::{AuthArgs, AuthSubInvocationMatcher};
+
+AuthSubInvocationMatcher::new(&env)
+    .contract(&vault_id)
+    .function("deposit")
+    .args(AuthArgs::new().any().value(&env, 500i128))
+    .assert_matches();
+```
+
+When no matching sub-invocation is found, the assertion formats the full recorded authorization tree displaying all sub-invocations:
+
+```text
+panicked at 'Expected authorization sub-invocation matching { contract Contract(C…), function "deposit", args [_, 999] }, found no match in 1 recorded authorization tree(s):
+[0] invoker Contract(C…1234)
+contract Contract(C…AAAA) function "swap" args [...]
+└── contract Contract(C…BBBB) function "route" args [...]
+    └── contract Contract(C…CCCC) function "deposit" args [...]'
+```
+
+
+## Storage assertions
+
+Closing an account, burning a balance or cancelling an escrow should leave no storage behind. `assert_storage_key_deleted!` and `assert_storage_empty!` prove entries are gone from the ledger rather than merely rewritten:
+
+```rust
+use soroban_testkit_assert::{assert_storage_empty, assert_storage_key_deleted};
+use soroban_testkit_assert::storage::StorageTier;
+
+// The key no longer exists in any tier.
+assert_storage_key_deleted!(&env, &token, "balance");
+
+// Only the named tier is inspected; another tier may still hold the key.
+assert_storage_key_deleted!(&env, &token, "allowance", StorageTier::Persistent);
+
+// The contract's whole storage is empty, or one tier of it is.
+assert_storage_empty!(&env, &token);
+assert_storage_empty!(&env, &token, StorageTier::Temporary);
+```
+
+Both assertions inspect instance, persistent and temporary storage through [`StorageSnapshot`](core.html), with instance storage unfolded per key exactly as `assert_storage_tier!` reports it. The key is the snapshot's rendered form: a symbol's text for the usual case, but also `[a, b]` for a vector or `{k: v}` for a map, so composite keys can be named too.
+
+<div class="tk-callout tk-callout--warn">
+  <span class="tk-callout__title">Deleted is not the same as empty</span>
+  <p>These assertions are about the <strong>entry</strong>, not its value. A key rewritten to <code>0</code>, set to <code>Option::None</code> (stored as <code>void</code>), or holding an empty map is still a live ledger entry and fails both assertions. Delete the key with <code>storage().remove(&amp;key)</code>; overwriting it with a tombstone is not enough.</p>
+</div>
+
+A failure lists every surviving entry with the tier it lives in, its rendered value, and the XDR bytes the ledger holds:
+
+```text
+panicked at 'Expected contract storage to be empty, but 2 entries survived:
+  persistent:balance = 0 [8 bytes: 0000000300000000]
+  temporary:allowance = void [4 bytes: 00000000]'
+```
+
+Naming a key narrows the message to that key's survivors:
+
+```text
+panicked at 'Expected storage key "balance" to be deleted from all tiers, but it still exists:
+  persistent:balance = 0 [8 bytes: 0000000300000000]'
+```
+
+A contract that never wrote storage passes `assert_storage_empty!`, and an address that is not a contract owns no contract data, so it passes too.
+
 ## Failure messages
 
 Assertions fail with the counts they observed, which is what makes them worth using over hand-rolled loops:
@@ -521,6 +1079,105 @@ Breached tiers: persistent (found 12, expected max 10)
 | persistent  | 12    | max 10         | BREACH | "u_1", "u_2", "u_3", ... (total 12)        |
 | temporary   | 0     | exact 0        | PASS   | (none)                                     |
 ```
+
+| `assert_budget_consumed!(..)` | Bounds the most recent invocation's CPU and memory consumption |
+
+## Storage diff assertions
+
+The `assert_storage_diff!` macro provides a declarative way to assert contract storage changes between two points in time. It captures a storage snapshot before operations, executes the test logic, and then verifies the expected changes against the actual storage diff.
+
+```rust
+use soroban_testkit_assert::assert_storage_diff;
+use soroban_testkit_core::storage::{StorageSnapshot, StorageTier};
+
+// Capture storage state before operations
+let before = StorageSnapshot::capture(&env, &contract_id);
+
+// ... perform contract operations ...
+client.transfer(&from, &to, &100);
+
+// Assert storage changes declaratively
+assert_storage_diff!(before, env, contract_id, {
+    added: [
+        { key: "new_key" },
+        { key: "allowance:*", tier: StorageTier::Temporary },
+    ],
+    modified: [
+        { key: "balances", from: 1000u64, to: 900u64 },
+    ],
+    removed: [
+        { key: "old_key" },
+    ],
+    unchanged: [
+        { key: "admin", tier: StorageTier::Instance },
+    ],
+});
+```
+
+### Clauses
+
+The macro supports four declarative clauses:
+
+| Clause | Purpose | Example |
+|--------|---------|---------|
+| `added` | Keys that should be newly present | `{ key: "new_key" }` |
+| `modified` | Keys whose values should change | `{ key: "balances", from: 1000u64, to: 900u64 }` |
+| `removed` | Keys that should be deleted | `{ key: "old_key" }` |
+| `unchanged` | Keys that should remain exactly the same | `{ key: "admin", tier: StorageTier::Instance }` |
+
+### Key matching
+
+Keys can be exact strings or glob patterns:
+- Exact: `{ key: "exact_key" }`
+- Prefix wildcard: `{ key: "prefix_*" }`
+- Suffix wildcard: `{ key: "*_suffix" }`
+- Match all: `{ key: "*" }`
+
+Each entry can optionally specify a storage tier: `tier: StorageTier::Instance`, `StorageTier::Persistent`, or `StorageTier::Temporary`.
+
+### Value matching
+
+Values can be specified in multiple ways:
+- Exact value: `{ key: "count", from: 42u32, to: 43u32 }`
+- Typed value (with type annotation): `{ key: "count", from: u32 => 42, to: u32 => 43 }`
+- Wildcard (match any value): `{ key: "count", from: _, to: _ }` (using `soroban_testkit_assert::__storage_diff_value!`)
+
+### Failure diagnostics
+
+When an assertion fails, the macro prints a detailed side-by-side diff table showing expected vs actual changes:
+
+```
+Storage diff assertion failed:
+Expected modified key 'balances' (tier: persistent): from: expected '1000', found '999'
+
+═══════════════════════════════════════════════════════════════════════════════
+                           STORAGE DIFF REPORT
+═══════════════════════════════════════════════════════════════════════════════
+
+Summary: 1 added, 1 modified, 0 removed | Failures: 1
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ MODIFIED                                                                      │
+├────────┬──────────────────────┬──────────────────────┬──────────────────────┤
+│ Tier   │ Key                  │ Before               │ After                │
+├────────┼──────────────────────┼──────────────────────┼──────────────────────┤
+│ persis │ balances             │ 1000                 │ 999                  │ ✗ UNEXPECTED
+└────────┴──────────────────────┴──────────────────────┴──────────────────────┘
+```
+
+### Using without pre-captured snapshot
+
+The macro can also capture the "before" snapshot automatically when called without a pre-captured snapshot:
+
+```rust
+// Captures current state as "before", then asserts after operations
+assert_storage_diff!(env, contract_id, {
+    added: [{ key: "new_key" }],
+    modified: [{ key: "count", from: 0u32, to: 1u32 }],
+});
+```
+
+**Note:** This form captures the current state as the "before" snapshot when the macro is invoked, so any operations before the macro call are included in the baseline.
 
 ## Multi-party balance conservation
 
@@ -585,6 +1242,35 @@ Expected net delta: 0 (mints: +0, burns: -0) | Actual net delta: -1
 | Discrepancy                  |                |                |       -1 (LEAK DETECTED) |
 ------------------------------------------------------------------------------------------------------
 ```
+
+## Cross-invocation token conservation (`assert_token_conservation_across_invocations!`)
+
+When a protocol moves tokens across several invocations — swaps, fee splits,
+batch settlements — the total supply must be conserved. The
+`assert_token_conservation_across_invocations!` macro records balances before and
+after each invocation, credits declared protocol fees to their treasury accounts,
+and panics with a debit/credit reconciliation table when an invocation leaks
+value:
+
+```rust
+use soroban_testkit_assert::assert_token_conservation_across_invocations;
+
+let report = assert_token_conservation_across_invocations!(
+    accounts: [(&alice, "Alice"), (&bob, "Bob")],
+    balance: |address| token_client.balance(address),
+    fees: [(&treasury, "Treasury", 10i128)],
+    invocations: [
+        { router.swap(&alice, &bob, &1000); },
+        { router.settle_fees(&treasury); },
+    ],
+);
+assert!(report.is_conserved());
+```
+
+Declared `fees` are internal transfers to treasury accounts and are auto-added
+to the tracked set. A fee that never reaches its treasury is reported as a
+missing credit. `TokenConservationReport` exposes `is_conserved`,
+`invocations`, and `fees` for further assertions.
 
 ## Comparative budget differential and relative gas savings
 
@@ -658,6 +1344,65 @@ Failure Summary:
   • Failed to achieve target CPU savings: achieved 15.00%, expected at least 25.00%
 ```
 
+## Event Sequence Assertions
+
+While `EventLog` collects events across multiple invocations, verifying that events occurred in an exact sequence—or that a specific sequence occurred with allowed interleaving—is streamlined by `assert_event_sequence!`.
+
+### Strict and Relaxed Sequence Modes
+
+`assert_event_sequence!` supports two modes:
+- **`Strict`** (`exact_sequence`): Every expected event must match consecutively 1:1 in length and order without unexpected or interleaved intermediate events.
+- **`Relaxed`** (`ordered_subsequence`): Expected events must appear in order, allowing intermediate unrelated events between them.
+
+```rust
+use soroban_testkit_assert::assert_event_sequence;
+use soroban_testkit_assert::sequence::{Relaxed, Strict};
+
+// Relaxed mode: allows intermediate noise/transfer events
+assert_event_sequence!(event_log, [
+    { topic: "Deposit", contract: vault_id },
+    { topic: "Mint", contract: token_id },
+    { topic: "Transfer", contract: token_id },
+], mode = Relaxed);
+
+// Strict mode: exact 1:1 sequence match
+assert_event_sequence!(event_log, [
+    { topic: "Deposit", contract: vault_id },
+    { topic: "Mint", contract: token_id },
+], mode = Strict);
+```
+
+### Matching Payload Data Predicates
+
+You can match topics, contract IDs, and payload data predicates:
+
+```rust
+assert_event_sequence!(event_log, [
+    {
+        topic: "Deposit",
+        contract: vault_id,
+        data: |data| data.deserialize::<u64>() == Some(500)
+    },
+    { topic: "Transfer", contract: token_id },
+], mode = Relaxed);
+```
+
+### Detailed Failure Diagnostics
+
+When an event sequence fails, `assert_event_sequence!` outputs detailed diagnostics showing matched events, divergence points, and missing expectations:
+
+```text
+Event sequence diverged at index 1 (mode = Strict / exact_sequence):
+Expected event: { topic: "Mint", contract: CAAA... }
+Observed event: topics: [Noise], contract: CAAA...
+
+Full sequence breakdown:
+  [ 0] ✓ MATCHED  | Expected: { topic: "Deposit" } | Observed: topics: [Deposit]
+  [ 1] ✗ DIVERGED | Expected: { topic: "Mint" }    | Observed: topics: [Noise]
+  [ 2]   PENDING  | Expected: { topic: "Transfer" }| Observed: topics: [Transfer]
+```
+
+
 <div class="tk-grid tk-grid--2">
   <div class="tk-card tk-card--accent">
     <span class="tk-card__kicker">Next step</span>
@@ -670,3 +1415,125 @@ Failure Summary:
     <p class="tk-card__body">See <a href="../guides/testing-patterns.html">Testing Patterns</a> for event and auth assertions in multi-contract suites.</p>
   </div>
 </div>
+
+## Budget ranges and ceilings (`assert_budget_consumed!`)
+
+`assert_budget_consumed!` bounds what the most recent top-level invocation cost (`BudgetSnapshot::last_invocation`), without manual snapshot arithmetic. Each metric takes either a range or an inclusive ceiling:
+
+```rust
+use soroban_testkit_assert::assert_budget_consumed;
+
+client.swap(&user, &100);
+
+assert_budget_consumed!(env, {
+    max_cpu: 150_000,
+    max_mem: 50_000,
+});
+
+assert_budget_consumed!(env, {
+    cpu: 10_000..=15_000, // any range: a..b, a..=b, a.., ..b, ..=b
+    mem: 1_000..,
+});
+```
+
+| Key | Value | Meaning |
+| --- | --- | --- |
+| `cpu` | `u64` range | CPU instructions must fall inside the range |
+| `max_cpu` | `u64` | CPU instructions must not exceed it (inclusive) |
+| `mem` | `u64` range | memory bytes must fall inside the range |
+| `max_mem` | `u64` | memory bytes must not exceed it (inclusive) |
+
+An unknown key is a compile error. On failure every breached metric is reported at once, with the observed value, the expected bound, the miss, and the miss as a percentage of the crossed bound:
+
+```text
+assert_budget_consumed! failed:
+  cpu_insns: observed 1_650, expected ..=1_500 — over the upper bound by 150 (+10.00%)
+  observed totals: cpu_insns=1_650 mem_bytes=812
+```
+
+The same check is available without the macro: build a `BudgetBounds` (`.cpu(..)`, `.max_cpu(..)`, `.mem(..)`, `.max_mem(..)`) and call `check(&snapshot)` or `assert_within(&snapshot)` on any `BudgetSnapshot`.
+
+## Distinct Invoker Authorization
+
+To enforce least-privilege delegation across addresses:
+
+```rust
+use soroban_testkit_assert::assert_auth_invoker_distinct;
+
+// Asserts that only admin_address authorized the operation
+assert_auth_invoker_distinct!(&admin_address, &[admin_address.clone()]);
+```
+
+## Golden snapshots (`assert_snapshot_matches!`)
+
+`assert_snapshot_matches!` serializes a value into canonical JSON and compares it with a
+committed snapshot stored at `tests/snapshots/<name>.snap.json` (relative to the test crate's
+`CARGO_MANIFEST_DIR`). The first run creates the file. Later runs fail with a colored unified
+diff, so an added, renamed or omitted field is visible as a removed and added line with exact
+line numbers:
+
+```rust
+use soroban_sdk::testutils::Address as _;
+use soroban_testkit_assert::{assert_snapshot_matches, SnapshotOptions};
+
+let state = ContractState { owner: addr, total: 100 };
+
+// Uses an explicit `Env` (works for `Val`, `ScVal`, `Map`, and `#[contracttype]` values):
+assert_snapshot_matches!("state after init", state, env);
+
+// Two-argument form uses a fresh `Env`, so pass `env` explicitly for host objects:
+assert_snapshot_matches!("answer", 42u32);
+
+// Volatile fields and generated addresses can be normalized:
+let options = SnapshotOptions::new()
+    .normalize_addresses(true)
+    .ignore_field("updated_at");
+assert_snapshot_matches!("state after init", state, env, options);
+```
+
+Because `macro_rules!` cannot capture an implicit caller-local identifier, the two-argument arm
+uses a default `Env` and is meant for values that do not reference host objects; use the
+three-argument arm with your test's `env` otherwise.
+
+The conversion is also available directly:
+
+```rust
+use soroban_testkit_assert::{assert_snapshot_matches, snapshot_json};
+
+let json = snapshot_json(&env, &state);
+assert_snapshot_matches("state after init", &json);
+```
+
+`snapshot_json` accepts `Val`, `ScVal`, primitives and user `#[contracttype]` structs through
+`TryIntoVal`. The renderer sorts map keys, escapes strings consistently, writes integers as
+decimal text and covers `Void`, `Bool`, the unsigned and signed integer variants (including
+128-bit), `Symbol`, `String`, `Bytes` (lowercase hex with a `0x` prefix), `Address`,
+`Timepoint`, `Duration`, `Vec` and `Map`. Other `ScVal` variants get a readable debug fallback.
+Map insertion order therefore never changes a snapshot.
+
+`normalize_addresses(true)` replaces addresses with `~address0`, `~address1`, ... in order of
+first appearance, so regenerated addresses do not cause drift. `ignore_field("...")` drops a
+field at every depth from both the stored and current value; timestamps and nonces are typical
+candidates. Note that a missing snapshot is created with normalization applied.
+
+Two environment variables control persistence:
+
+- `SNAPSHOT_DIR` overrides the compile-time `tests/snapshots` location at runtime.
+- `UPDATE_SNAPSHOTS=1` rewrites the snapshot on drift instead of failing, which is convenient
+  when an intentional state change needs to be accepted.
+
+A mismatch looks like this (red for stored lines, green for current lines, cyan for headers):
+
+```text
+snapshot assertion failed for "state after init": stored snapshot does not match the current value
+--- expected (stored): tests/snapshots/state after init.snap.json
++++ actual (current): state after init
+@@ -1,4 +1,4 @@
+ {
+-  "owner": "alice",
++  "owner": "bob",
+   "total": 100
+ }
+set UPDATE_SNAPSHOTS=1 to accept the new snapshot
+```
+

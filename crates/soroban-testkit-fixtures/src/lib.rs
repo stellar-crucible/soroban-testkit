@@ -1,24 +1,72 @@
+extern crate self as soroban_testkit_fixtures;
+
+pub mod archival;
+pub mod branching;
 pub mod builder;
+pub mod checkpoint;
 pub mod congestion;
+pub mod consensus;
+pub mod crypto;
+pub mod deterministic_deployer;
 pub mod event_indexer;
 pub mod eviction;
+pub mod failure_injector;
 pub mod gas_exhaustion;
 pub mod migration;
+pub mod mock;
+pub mod oracle;
 pub mod profiles;
+pub mod protocol_registry;
+pub mod reentrancy;
 pub mod storage_compaction;
+pub mod topology;
+#[cfg(test)]
+mod ttl_tests;
+pub mod upgrade;
 
+pub use branching::BranchingContext;
+pub use builder::TestContextBuilder;
+pub use checkpoint::ContextCheckpoint;
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
 };
+pub use consensus::{
+    ConsensusRound, ConsensusSimulator, LedgerClose, DEFAULT_JITTER_STD_MS,
+    DEFAULT_MAX_CLOSE_INTERVAL_MS, DEFAULT_MIN_CLOSE_INTERVAL_MS, DEFAULT_QUORUM, DEFAULT_SEED,
+    DEFAULT_VALIDATORS, QUORUM_ACCEPTANCE_SIGMA,
+};
+pub use deterministic_deployer::{DeterministicDeployer, SaltHierarchy};
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
+pub use mock::{MockContract, MockContractBuilder, MockContractType};
+pub use oracle::{
+    AssetPrice, MockPriceOracle, MockPriceOracleClient, OracleError, OracleHarness, Sep40Asset,
+    Sep40PriceData,
+};
 pub use profiles::NetworkProfile;
 pub use storage_compaction::{StorageCompactionReport, StorageCompactor};
+pub use protocol_registry::{
+    ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
+    ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
+    ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
+};
+pub use soroban_testkit_fixtures_macros::mock_contract;
+pub use topology::{
+    AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
+    TopologyReport, TopologyValidator, UninitializedLink,
+};
+pub use upgrade::{
+    deploy_uploaded, ContractUpgradeHarness, MigrationOutcome, UpgradeError, UpgradeRecord,
+};
+
+pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
 
 use soroban_env_host::HostError;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
-use soroban_sdk::{Address, Env, TryFromVal as _};
+use soroban_sdk::{Address, Env, IntoVal, TryFromVal as _, Val};
+pub use soroban_testkit_core::ttl::{RentThresholds, TtlExtension, TtlInspector, TtlStatus};
+use soroban_testkit_core::StorageTier;
 
 pub use event_indexer::{
     EventIdentity, EventIndexerEmulator, EventIndexerError, EventPage, EventQuery, IndexedEvent,
@@ -41,6 +89,8 @@ pub struct TestContext {
     /// The network conditions the builder installed and [`TestContext::reset`]
     /// re-applies to the fresh env.
     pub network_profile: NetworkProfile,
+    /// Stack of checkpoints for nested rollback support.
+    checkpoint_stack: Vec<ContextCheckpoint>,
 }
 
 impl Default for TestContext {
@@ -71,6 +121,7 @@ impl TestContext {
             users: Vec::new(),
             mock_auths: true,
             network_profile: NetworkProfile::Local,
+            checkpoint_stack: Vec::new(),
         }
     }
 
@@ -153,6 +204,185 @@ impl TestContext {
     pub fn prune_expired_storage(&self) -> Result<StorageCompactionReport, HostError> {
         StorageCompactor::new(&self.env).prune_expired()
     }
+    /// Archive every entry this context's ledger has let expire, returning the
+    /// simulator that holds them.
+    ///
+    /// Moves the ledger `count` sequences forward first, then sweeps the whole
+    /// environment the way the network does between ledgers: persistent
+    /// entries past their TTL are archived (and can be restored), temporary
+    /// ones are evicted for good. Contract instance and code entries stay live,
+    /// so the contracts registered here remain callable while the test reads
+    /// what the sweep did to their data.
+    ///
+    /// ```rust
+    /// use soroban_testkit_fixtures::builder::TestContextBuilder;
+    ///
+    /// let mut ctx = TestContextBuilder::new().build();
+    /// // With nothing stored, the sweep has nothing to archive.
+    /// let simulator = ctx.archive_expired(10_000);
+    /// assert!(simulator.is_empty());
+    /// ```
+    pub fn archive_expired(&mut self, count: u32) -> crate::archival::ArchivalSweepSimulator {
+        let mut simulator = crate::archival::ArchivalSweepSimulator::new();
+        simulator.sweep(&self.env, count);
+        simulator
+    }
+
+    /// The sequence number the ledger currently reports; the same reading as
+    /// [`TestContext::sequence`], named for TTL arithmetic.
+    pub fn ledger_sequence(&self) -> u32 {
+        self.sequence()
+    }
+
+    /// Inspect the live TTL and rent thresholds of the entry `contract` stores
+    /// under `key`, in whichever tier holds it.
+    ///
+    /// See [`TtlInspector::for_key`] for how the tier is chosen.
+    pub fn ttl<K: IntoVal<Env, Val>>(&self, contract: &Address, key: &K) -> TtlInspector {
+        TtlInspector::for_key(&self.env, contract, key)
+    }
+
+    /// Move the ledger to the first sequence at which `key`'s entry is no
+    /// longer live, returning that sequence.
+    ///
+    /// The target is read from the entry's own `live_until_ledger`, so the
+    /// test never hard-codes the network's minimum rent. Afterwards a
+    /// temporary entry reads as empty and a persistent entry (or an instance
+    /// key) is archived.
+    ///
+    /// ```rust
+    /// use soroban_sdk::{contract, contractimpl, symbol_short, Env, Val};
+    /// use soroban_testkit_fixtures::TestContext;
+    /// use soroban_testkit_fixtures::TtlInspector;
+    ///
+    /// #[contract]
+    /// pub struct Nonces;
+    ///
+    /// #[contractimpl]
+    /// impl Nonces {
+    ///     pub fn put(env: Env) {
+    ///         env.storage().temporary().set(&symbol_short!("nonce"), &1u32);
+    ///     }
+    /// }
+    ///
+    /// # fn main() {
+    /// let ctx = TestContext::new();
+    /// let contract_id = ctx.env.register(Nonces, ());
+    /// NoncesClient::new(&ctx.env, &contract_id).put();
+    /// let key = symbol_short!("nonce");
+    ///
+    /// let ttl = TtlInspector::for_key(&ctx.env, &contract_id, &key);
+    /// assert!(ttl.live_until_ledger > ctx.ledger_sequence());
+    ///
+    /// ctx.fast_forward_to_expiration(&contract_id, &key);
+    /// let value = ctx.env.as_contract(&contract_id, || {
+    ///     ctx.env.storage().temporary().get::<_, Val>(&key)
+    /// });
+    /// assert!(value.is_none());
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when no tier of `contract` holds `key`.
+    pub fn fast_forward_to_expiration<K: IntoVal<Env, Val>>(
+        &self,
+        contract: &Address,
+        key: &K,
+    ) -> u32 {
+        let target = self.ttl(contract, key).expiration_ledger();
+        self.env.ledger().set_sequence_number(target);
+        target
+    }
+
+    /// Move the ledger to the last sequence at which `key`'s entry is still
+    /// live — the boundary one ledger before
+    /// [`TestContext::fast_forward_to_expiration`] — returning that sequence.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no tier of `contract` holds `key`.
+    pub fn fast_forward_to_last_live_ledger<K: IntoVal<Env, Val>>(
+        &self,
+        contract: &Address,
+        key: &K,
+    ) -> u32 {
+        let target = self.ttl(contract, key).live_until_ledger;
+        self.env.ledger().set_sequence_number(target);
+        target
+    }
+
+    /// Run `call` and report what it did to `key`'s TTL, for checking an
+    /// `extend_ttl` inside a contract against the host's rules.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no tier of `contract` holds `key` before the call.
+    pub fn observe_ttl_extension<K, F, T>(
+        &self,
+        contract: &Address,
+        key: &K,
+        call: F,
+    ) -> TtlExtension
+    where
+        K: IntoVal<Env, Val>,
+        F: FnOnce() -> T,
+    {
+        TtlExtension::observe(&self.env, contract, key, call)
+    }
+
+    /// Fail unless `contract`'s temporary entry under `key` is gone: either
+    /// past its TTL, or already dropped by the host.
+    ///
+    /// Proves it the way a contract would see it — by reading the key from
+    /// inside `contract` and finding nothing.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the entry is still live, or when a read returns a value.
+    #[track_caller]
+    pub fn assert_temporary_expired<K: IntoVal<Env, Val>>(&self, contract: &Address, key: &K) {
+        if let Some(ttl) =
+            TtlInspector::try_in_tier(&self.env, contract, key, StorageTier::Temporary)
+        {
+            ttl.assert_expired();
+        }
+        let key: Val = key.into_val(&self.env);
+        let (has, value) = self.env.as_contract(contract, || {
+            let temporary = self.env.storage().temporary();
+            (temporary.has(&key), temporary.get::<_, Val>(&key))
+        });
+        assert!(
+            !has && value.is_none(),
+            "Expected the temporary entry {key:?} of {contract:?} to read as empty at ledger {}, but the contract can still read it",
+            self.ledger_sequence()
+        );
+    }
+
+    /// Fail unless `contract`'s persistent entry under `key` has passed its
+    /// TTL and is therefore archived.
+    ///
+    /// The check reads the TTL without accessing the entry, because a normal
+    /// read in the SDK test host restores an archived entry on the spot. Use
+    /// [`TestContext::archive_expired`] to take archived entries off the ledger
+    /// entirely and test the restore path.
+    ///
+    /// # Panics
+    ///
+    /// Panics when persistent storage does not hold `key`, or when the entry
+    /// is still live.
+    #[track_caller]
+    pub fn assert_persistent_archived<K: IntoVal<Env, Val>>(&self, contract: &Address, key: &K) {
+        let ttl = TtlInspector::persistent(&self.env, contract, key);
+        assert_eq!(
+            ttl.status(),
+            TtlStatus::Archived,
+            "Expected {} to be archived at ledger {}, but it is live until ledger {}",
+            ttl.describe(),
+            ttl.current_ledger,
+            ttl.live_until_ledger
+        );
+    }
 
     /// Swap in a fresh environment and keep every address this context holds.
     ///
@@ -212,6 +442,123 @@ impl TestContext {
         self.users = (0..user_count)
             .map(|_| Address::generate(&self.env))
             .collect();
+    }
+
+    /// Create a checkpoint of the current environment state.
+    ///
+    /// This captures:
+    /// - Storage for all contracts (instance, persistent, temporary)
+    /// - Ledger sequence and timestamp
+    /// - Mock auth configuration
+    /// - Network profile
+    /// - Events
+    ///
+    /// Returns an opaque [`ContextCheckpoint`] that can be used with
+    /// [`TestContext::rollback_to`] to restore this exact state.
+    ///
+    /// Multiple checkpoints can be created and they form a stack.
+    /// Use [`TestContext::rollback_to`] to restore to a specific checkpoint.
+    pub fn checkpoint(&mut self) -> ContextCheckpoint {
+        let checkpoint = crate::checkpoint::ContextCheckpoint::capture(
+            &self.env,
+            self.mock_auths,
+            self.network_profile,
+        );
+        self.checkpoint_stack.push(checkpoint.clone());
+        checkpoint
+    }
+
+    /// Roll back the environment to a previously created checkpoint.
+    ///
+    /// This restores:
+    /// - All contract storage (instance, persistent, temporary)
+    /// - Ledger sequence and timestamp
+    /// - Mock auth configuration
+    /// - Network profile
+    /// - Events (discards events generated after the checkpoint)
+    ///
+    /// The checkpoint must have been created by this context's [`checkpoint`] method.
+    /// After rollback, all checkpoints created after the target are discarded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the checkpoint was not created by this context.
+    pub fn rollback_to(&mut self, checkpoint: &ContextCheckpoint) {
+        // Find the checkpoint in our stack
+        let idx = self.checkpoint_stack.iter().position(|c| {
+            c.ledger_sequence == checkpoint.ledger_sequence
+                && c.ledger_timestamp == checkpoint.ledger_timestamp
+                && c.mock_auths == checkpoint.mock_auths
+        });
+
+        let Some(idx) = idx else {
+            panic!("Attempted to rollback to a checkpoint not created by this context");
+        };
+
+        // Restore the checkpoint
+        checkpoint.restore(&self.env);
+
+        // Restore auth mocking
+        if checkpoint.mock_auths {
+            self.env.mock_all_auths();
+        }
+
+        // Restore network profile
+        checkpoint.network_profile.apply(&self.env);
+
+        // Truncate the checkpoint stack to remove checkpoints after the target
+        self.checkpoint_stack.truncate(idx + 1);
+    }
+
+    /// Get the number of checkpoints in the stack.
+    pub fn checkpoint_count(&self) -> usize {
+        self.checkpoint_stack.len()
+    }
+
+    /// Clear all checkpoints.
+    pub fn clear_checkpoints(&mut self) {
+        self.checkpoint_stack.clear();
+    }
+
+    /// Generates a cryptographically signed authorization entry for testing invocation verification.
+    ///
+    /// Constructs a valid [`soroban_sdk::testutils::AuthorizedInvocation`] for `contract::function(args)`
+    /// and signs the authorization digest using `signer`.
+    pub fn generate_signed_auth(
+        &self,
+        signer: &crypto::SignerKeypair,
+        contract: &Address,
+        function: soroban_sdk::Symbol,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+    ) -> crypto::SignedAuth {
+        self.generate_signed_auth_with_nonce(signer, contract, function, args, 0)
+    }
+
+    /// Generates a signed authorization entry with an explicit nonce for replay testing.
+    pub fn generate_signed_auth_with_nonce(
+        &self,
+        signer: &crypto::SignerKeypair,
+        contract: &Address,
+        function: soroban_sdk::Symbol,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+        nonce: u64,
+    ) -> crypto::SignedAuth {
+        use soroban_sdk::testutils::{AuthorizedFunction, AuthorizedInvocation};
+
+        let message = crypto::construct_auth_message(&self.env, contract, &function, &args, nonce);
+        let signature = signer.sign(&message);
+        let invocation = AuthorizedInvocation {
+            function: AuthorizedFunction::Contract((contract.clone(), function, args)),
+            sub_invocations: Vec::new(),
+        };
+
+        crypto::SignedAuth {
+            invocation,
+            signer: signer.address().clone(),
+            signature,
+            message,
+            nonce,
+        }
     }
 }
 

@@ -306,6 +306,7 @@ mod tests {
             key: key.to_string(),
             tier,
             value: String::new(),
+            bytes: Vec::new(),
             live_until: None,
         }
     }

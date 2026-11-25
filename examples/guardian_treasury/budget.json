@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "cases": {
+    "execute": {
+      "cpu_insns": 118787,
+      "mem_bytes": 23680
+    },
+    "guardian_veto": {
+      "cpu_insns": 89125,
+      "mem_bytes": 18279
+    }
+  }
+}
