@@ -5,6 +5,7 @@ pub mod eviction;
 pub mod gas_exhaustion;
 pub mod migration;
 pub mod profiles;
+pub mod storage_compaction;
 
 pub use congestion::{
     CongestionSimulator, DelayReport, DEFAULT_BASE_FEE_STROOPS, DEFAULT_SECONDS_PER_LEDGER,
@@ -12,7 +13,9 @@ pub use congestion::{
 
 pub use migration::{MigrationError, MigrationRecord, MigrationRunner};
 pub use profiles::NetworkProfile;
+pub use storage_compaction::{StorageCompactionReport, StorageCompactor};
 
+use soroban_env_host::HostError;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
 use soroban_sdk::{Address, Env, TryFromVal as _};
@@ -136,6 +139,19 @@ impl TestContext {
         let next = self.sequence().saturating_add(count);
         self.env.ledger().set_sequence_number(next);
         next
+    }
+
+    /// Removes expired contract storage entries from the mock host.
+    ///
+    /// Advance the ledger first with [`TestContext::advance_ledger`]. Expired
+    /// temporary entries become absent, while expired persistent entries are
+    /// removed from the mock host to simulate archival.
+    ///
+    /// # Errors
+    ///
+    /// Returns a host error if storage compaction fails.
+    pub fn prune_expired_storage(&self) -> Result<StorageCompactionReport, HostError> {
+        StorageCompactor::new(&self.env).prune_expired()
     }
 
     /// Swap in a fresh environment and keep every address this context holds.
