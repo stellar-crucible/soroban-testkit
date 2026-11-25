@@ -18,6 +18,7 @@ pub mod oracle;
 pub mod profiles;
 pub mod protocol_registry;
 pub mod reentrancy;
+pub mod storage_compaction;
 pub mod topology;
 #[cfg(test)]
 mod ttl_tests;
@@ -49,6 +50,7 @@ pub use protocol_registry::{
     ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
 };
 pub use soroban_testkit_fixtures_macros::mock_contract;
+pub use storage_compaction::{StorageCompactionReport, StorageCompactor};
 pub use topology::{
     AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
     TopologyReport, TopologyValidator, UninitializedLink,
@@ -59,6 +61,7 @@ pub use upgrade::{
 
 pub use failure_injector::{failure_point, FailureInjector, InjectedFailure};
 
+use soroban_env_host::HostError;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ScAddress;
 use soroban_sdk::{Address, Env, IntoVal, TryFromVal as _, Val};
@@ -189,6 +192,18 @@ impl TestContext {
         next
     }
 
+    /// Removes expired contract storage entries from the mock host.
+    ///
+    /// Advance the ledger first with [`TestContext::advance_ledger`]. Expired
+    /// temporary entries become absent, while expired persistent entries are
+    /// removed from the mock host to simulate archival.
+    ///
+    /// # Errors
+    ///
+    /// Returns a host error if storage compaction fails.
+    pub fn prune_expired_storage(&self) -> Result<StorageCompactionReport, HostError> {
+        StorageCompactor::new(&self.env).prune_expired()
+    }
     /// Archive every entry this context's ledger has let expire, returning the
     /// simulator that holds them.
     ///
