@@ -7,6 +7,8 @@ pub mod arbitrary;
 #[cfg(feature = "proptest")]
 pub mod authorization;
 #[cfg(feature = "proptest")]
+pub mod contract_struct;
+#[cfg(feature = "proptest")]
 pub mod cost_model;
 #[cfg(feature = "proptest")]
 pub mod crypto;

@@ -5,7 +5,7 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 <div class="tk-spec">
   <div class="tk-spec__item"><span class="tk-spec__key">Package</span><span class="tk-spec__value">soroban-testkit-generators</span></div>
   <div class="tk-spec__item"><span class="tk-spec__key">Features</span><span class="tk-spec__value">proptest (default) · arbitrary</span></div>
-  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · xdr · arbitrary · errors · tuples · ttl · storage_tier · cost_model · financial</span></div>
+  <div class="tk-spec__item"><span class="tk-spec__key">Modules</span><span class="tk-spec__value">strategies · contract_struct · xdr · arbitrary · errors · tuples · ttl · storage_tier · cost_model · financial</span></div>
 </div>
 
 ## Available strategies
@@ -265,6 +265,63 @@ All of these strategies shrink toward zeroed payloads: the account key and the
 contract hash become `[0u8; 32]`, and the muxed id becomes `0`. There is no
 uniqueness nonce here (unlike `address()`), so the shrink target really is the
 canonical all-zero value.
+
+## Generating strategies for nested contract structs
+
+The `prop_contract_struct!` macro synthesises a proptest strategy plus a
+builder function for a user `#[contracttype]` struct. You provide one strategy
+per field; the macro maps the tuple of field values into the struct, so each
+field keeps its own shrink tree and shrinking recurses through nested members.
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::{contracttype, Env};
+use soroban_testkit_generators::{prop_contract_struct, strategies};
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Limit {
+    pub amount: i128,
+    pub enabled: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Order {
+    pub limit: Limit,
+    pub backup: Option<i128>,
+    pub tags: soroban_sdk::Vec<u32>,
+}
+
+prop_contract_struct! {
+    pub fn limit_strategy() -> Limit {
+        amount: strategies::token_amount(),
+        enabled: any::<bool>(),
+    }
+}
+
+prop_contract_struct! {
+    pub fn order_strategy(env: Env) -> Order {
+        limit: limit_strategy(),
+        backup: prop::option::of(strategies::token_amount()),
+        tags: strategies::soroban_vec(0u32..=100, 4, env),
+    }
+}
+```
+
+The generated function accepts whatever parameters the invocation declares and
+forwards them into the field strategy expressions, which is how
+`strategies::soroban_vec` receives its `Env`. Attributes, doc comments, and
+visibility are copied onto the generated function.
+
+Child structs are ordinary strategies, so they compose with `prop::option::of`,
+`prop::collection::vec`, or `prop::collection::hash_map`. Contract enums work
+the same way: build a `prop_oneof!` strategy for the enum and use it as the
+field strategy.
+
+The macro builds a proptest tuple, which supports up to 12 fields per struct.
+Group wider structs into a child `#[contracttype]` struct to stay inside that
+limit.
 
 ## Fuzzing invocation argument types
 
