@@ -12,6 +12,7 @@ members = [
     "examples/subscription",
     "examples/bounty_escrow",
     "examples/vesting_escrow",
+    "examples/escrow",
     "examples/auction",
     "examples/multisig_vault",
     "examples/guardian_treasury",
