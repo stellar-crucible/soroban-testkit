@@ -22,7 +22,10 @@ pub use crate::types::{
 };
 use proptest::prelude::*;
 
-use soroban_sdk::xdr::{Limits, ScMap, ScMapEntry, ScVal, ScVec, VecM, WriteXdr as _};
+use soroban_sdk::xdr::{
+    AccountId, ContractId, Hash, Limits, MuxedEd25519Account, PublicKey, ScAddress, ScMap,
+    ScMapEntry, ScVal, ScVec, Uint256, VecM, WriteXdr as _,
+};
 use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol, Val};
 
 /// Generate arbitrary Soroban invocation arguments, including values whose
@@ -93,6 +96,74 @@ pub fn address_of_type(address_type: AddressType) -> impl Strategy<Value = Addre
         bytes[24..].copy_from_slice(&nonce.to_be_bytes());
         AddressBytes::new(address_type, bytes)
     })
+}
+
+/// Generates an `ScAddress::Account` (ed25519 account id).
+///
+/// The 32 key bytes shrink towards zero, so a failing property reports the
+/// canonical all-zero ed25519 key rather than a random value. Unlike the host
+/// address strategies this does not stamp a uniqueness nonce, which keeps the
+/// shrink target at zero.
+pub fn sc_address_account() -> impl Strategy<Value = ScAddress> {
+    any::<[u8; 32]>().prop_map(|bytes| {
+        ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(bytes))))
+    })
+}
+
+/// Generates an `ScAddress::Contract` (32-byte contract id hash).
+///
+/// The hash shrinks towards zero, so a failing property reports the canonical
+/// all-zero contract id rather than a random value.
+pub fn sc_address_contract() -> impl Strategy<Value = ScAddress> {
+    any::<[u8; 32]>().prop_map(|bytes| ScAddress::Contract(ContractId(Hash(bytes))))
+}
+
+/// Generates an `ScAddress::MuxedAccount`, the strkey-encoded `M...` form.
+///
+/// The id and the ed25519 key both shrink towards zero.
+pub fn sc_address_muxed() -> impl Strategy<Value = ScAddress> {
+    (any::<u64>(), any::<[u8; 32]>()).prop_map(|(id, bytes)| {
+        ScAddress::MuxedAccount(MuxedEd25519Account {
+            id,
+            ed25519: Uint256(bytes),
+        })
+    })
+}
+
+/// Generates any of the supported `ScAddress` variants.
+///
+/// Shrinks towards the zeroed account key, contract hash, or muxed account
+/// depending on which variant the failing case selected.
+pub fn sc_address() -> impl Strategy<Value = ScAddress> {
+    prop_oneof![
+        sc_address_account(),
+        sc_address_contract(),
+        sc_address_muxed()
+    ]
+}
+
+/// Generates a mixed collection of account and contract `ScAddress` values.
+///
+/// The vector always contains at least one `ScAddress::Account` and one
+/// `ScAddress::Contract`; the remaining entries are drawn from either variant.
+/// Shrinking moves the fixed pair towards zeroed keys and hashes and drops the
+/// trailing entries.
+pub fn sc_address_collection() -> impl Strategy<Value = Vec<ScAddress>> {
+    (
+        sc_address_account(),
+        sc_address_contract(),
+        prop::collection::vec(
+            prop_oneof![sc_address_account(), sc_address_contract()],
+            0..=6,
+        ),
+    )
+        .prop_map(|(account, contract, mut rest)| {
+            let mut addresses = Vec::with_capacity(rest.len() + 2);
+            addresses.push(account);
+            addresses.push(contract);
+            addresses.append(&mut rest);
+            addresses
+        })
 }
 
 /// Generates a token amount in `0..=TOKEN_AMOUNT_MAX`.
@@ -381,14 +452,24 @@ pub fn soroban_ascii_string(max_len: u32, env: Env) -> impl Strategy<Value = sor
 #[cfg(test)]
 mod tests {
     use super::{
-        account_address, address, address_of_type, contract_address, ledger_sequence, timestamp,
-        token_amount, AddressType,
+        account_address, address, address_of_type, contract_address, ledger_sequence, sc_address,
+        sc_address_account, sc_address_collection, sc_address_contract, sc_address_muxed,
+        timestamp, token_amount, AddressType,
     };
     use proptest::prelude::*;
+    use proptest::strategy::ValueTree as _;
     use proptest::test_runner::TestRunner;
     use soroban_sdk::xdr::ScAddress;
-    use soroban_sdk::Env;
+    use soroban_sdk::{Address, Env, TryFromVal as _};
     use std::collections::HashSet;
+
+    /// Drive a strategy's shrink tree to its simplest value.
+    fn minimal_value<S: Strategy>(strategy: S) -> S::Value {
+        let mut runner = TestRunner::new(ProptestConfig::with_cases(1));
+        let mut tree = strategy.new_tree(&mut runner).unwrap();
+        while tree.simplify() {}
+        tree.current()
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(128))]
@@ -463,6 +544,94 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn sc_account_addresses_are_ed25519_keys(address in sc_address_account()) {
+            prop_assert!(matches!(address, ScAddress::Account(_)));
+        }
+
+        #[test]
+        fn sc_contract_addresses_are_contract_ids(address in sc_address_contract()) {
+            prop_assert!(matches!(address, ScAddress::Contract(_)));
+        }
+
+        #[test]
+        fn sc_muxed_addresses_are_muxed_accounts(address in sc_address_muxed()) {
+            prop_assert!(matches!(address, ScAddress::MuxedAccount(_)));
+            prop_assert!(address.to_string().starts_with('M'));
+        }
+
+        #[test]
+        fn sc_addresses_round_trip_through_strkey(address in sc_address()) {
+            let encoded = address.to_string();
+            let decoded: ScAddress = encoded.parse().expect("generated strkey must decode");
+            prop_assert_eq!(decoded, address);
+        }
+
+        #[test]
+        fn sc_address_collections_contain_both_variants(addresses in sc_address_collection()) {
+            prop_assert!(addresses.iter().any(|a| matches!(a, ScAddress::Account(_))));
+            prop_assert!(addresses.iter().any(|a| matches!(a, ScAddress::Contract(_))));
+        }
+    }
+
+    #[test]
+    fn sc_addresses_convert_to_and_from_host_addresses() {
+        let env = Env::default();
+        let mut runner = TestRunner::new(ProptestConfig::with_cases(32));
+        runner
+            .run(
+                &(sc_address_account(), sc_address_contract()),
+                |(account, contract)| {
+                    let host_account = Address::try_from_val(&env, &account).unwrap();
+                    let host_contract = Address::try_from_val(&env, &contract).unwrap();
+                    prop_assert_eq!(ScAddress::from(&host_account), account);
+                    prop_assert_eq!(ScAddress::from(&host_contract), contract);
+                    Ok(())
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn sc_address_accounts_shrink_to_the_zeroed_key() {
+        match minimal_value(sc_address_account()) {
+            ScAddress::Account(account) => assert_eq!(account, zero_account_id()),
+            other => panic!("expected an account address, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sc_contract_addresses_shrink_to_the_zeroed_hash() {
+        match minimal_value(sc_address_contract()) {
+            ScAddress::Contract(contract) => assert_eq!(contract, zero_contract_id()),
+            other => panic!("expected a contract address, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sc_muxed_addresses_shrink_to_zero() {
+        match minimal_value(sc_address_muxed()) {
+            ScAddress::MuxedAccount(muxed) => {
+                assert_eq!(muxed.id, 0);
+                assert_eq!(muxed.ed25519.0, [0u8; 32]);
+            }
+            other => panic!("expected a muxed address, got {other:?}"),
+        }
+    }
+
+    fn zero_account_id() -> soroban_sdk::xdr::AccountId {
+        use soroban_sdk::xdr::{AccountId, PublicKey, Uint256};
+        AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0u8; 32])))
+    }
+
+    fn zero_contract_id() -> soroban_sdk::xdr::ContractId {
+        use soroban_sdk::xdr::{ContractId, Hash};
+        ContractId(Hash([0u8; 32]))
     }
 
     #[test]
