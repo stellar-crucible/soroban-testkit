@@ -44,13 +44,13 @@ pub use oracle::{
     Sep40PriceData,
 };
 pub use profiles::NetworkProfile;
-pub use storage_compaction::{StorageCompactionReport, StorageCompactor};
 pub use protocol_registry::{
     ConsumerContract, ProtocolRegistryContract, ProtocolRegistryContractClient,
     ProtocolRegistryError, ProtocolRegistryHarness, ProtocolUpgradeLogEntry, ServiceRecord,
     ServiceRole, ServiceUpgradeRecord, UpgradeProxyContract, UpgradeProxyContractClient,
 };
 pub use soroban_testkit_fixtures_macros::mock_contract;
+pub use storage_compaction::{StorageCompactionReport, StorageCompactor};
 pub use topology::{
     AddressReference, ContractNode, DanglingReference, DependencyLink, InactiveContract,
     TopologyReport, TopologyValidator, UninitializedLink,
