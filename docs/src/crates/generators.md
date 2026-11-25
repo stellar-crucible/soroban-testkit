@@ -26,6 +26,11 @@ Soroban-aware property-testing strategies for `proptest`, so generated inputs re
 | `account_address()` | `AddressBytes` | an ed25519 account (`G...`) |
 | `contract_address()` | `AddressBytes` | a contract id (`C...`) |
 | `address_of_type(kind)` | `AddressBytes` | the format you ask for |
+| `sc_address()` | `ScAddress` | a `ScAddress::Account`, `ScAddress::Contract`, or `ScAddress::MuxedAccount` |
+| `sc_address_account()` | `ScAddress` | a `ScAddress::Account` (`G...`) address |
+| `sc_address_contract()` | `ScAddress` | a `ScAddress::Contract` (`C...`) address |
+| `sc_address_muxed()` | `ScAddress` | a `ScAddress::MuxedAccount` (`M...`) address |
+| `sc_address_collection()` | `Vec<ScAddress>` | a mixed vector holding both account and contract addresses |
 | `fuzzed_invocation_args(env, typed, max_rogue)` | `Vec<Val>` | valid arguments mixed with integers, booleans, symbols, errors, and address objects |
 | `contract_error_code()` | `u32` | any application-defined contract error code, shrinking towards zero |
 | `host_error()` | `Error` | an SDK error from every standard category, including arbitrary contract codes |
@@ -201,6 +206,65 @@ proptest! {
 `StrkeyKind`/`StrkeyError` for direct parsing tests. Valid inputs shrink toward
 the canonical all-zero strkey; corrupted inputs shrink toward a single-bit
 checksum flip.
+
+## ScAddress (account, contract, and muxed addresses)
+
+`address()` and friends produce host `AddressBytes`, which is convenient for
+contract calls but hides the XDR shape. When a test compares against ledger
+values, decodes strkeys, or checks low-level conversion code, generate the raw
+`ScAddress` instead:
+
+* `sc_address_account()` — `ScAddress::Account`, an Ed25519 account id (`G...`).
+* `sc_address_contract()` — `ScAddress::Contract`, a 32-byte contract id hash (`C...`).
+* `sc_address_muxed()` — `ScAddress::MuxedAccount`, an Ed25519 key plus a `u64`
+  id, the strkey `M...` form.
+* `sc_address()` — one of the three variants.
+* `sc_address_collection()` — a `Vec<ScAddress>` that always holds at least one
+  account and one contract address, plus up to six more entries of either
+  variant.
+
+```rust
+use proptest::prelude::*;
+use soroban_sdk::xdr::ScAddress;
+use soroban_testkit_generators::strategies::{sc_address, sc_address_collection};
+
+proptest! {
+    #[test]
+    fn every_variant_round_trips_through_its_strkey(address in sc_address()) {
+        let encoded = address.to_string();
+        let decoded: ScAddress = encoded.parse().expect("generated strkey must decode");
+        assert_eq!(decoded, address);
+    }
+
+    #[test]
+    fn mixed_collections_cover_both_xdr_formats(addresses in sc_address_collection()) {
+        assert!(addresses.iter().any(|a| matches!(a, ScAddress::Account(_))));
+        assert!(addresses.iter().any(|a| matches!(a, ScAddress::Contract(_))));
+    }
+}
+```
+
+Account and contract values convert both ways with the host type, which is how
+you move from generated XDR to a call argument:
+
+```rust
+use soroban_sdk::{Address, Env, TryFromVal};
+use soroban_sdk::xdr::ScAddress;
+use soroban_testkit_generators::sc_address_account;
+
+let env = Env::default();
+// ...inside a property, with `sc: ScAddress` from `sc_address_account()`...
+let address = Address::try_from_val(&env, &sc).unwrap();
+assert_eq!(ScAddress::from(&address), sc);
+```
+
+Muxed accounts have no host `Address` counterpart, so encode them to their
+strkey when a test needs to pass them through a textual interface.
+
+All of these strategies shrink toward zeroed payloads: the account key and the
+contract hash become `[0u8; 32]`, and the muxed id becomes `0`. There is no
+uniqueness nonce here (unlike `address()`), so the shrink target really is the
+canonical all-zero value.
 
 ## Fuzzing invocation argument types
 

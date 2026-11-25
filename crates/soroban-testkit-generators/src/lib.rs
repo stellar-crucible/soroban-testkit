@@ -79,7 +79,10 @@ pub use storage_tier::{
     MixedTierTtlAllocation, StorageTierWithTtl,
 };
 #[cfg(feature = "proptest")]
-pub use strategies::fuzzed_invocation_args;
+pub use strategies::{
+    fuzzed_invocation_args, sc_address, sc_address_account, sc_address_collection,
+    sc_address_contract, sc_address_muxed,
+};
 #[cfg(feature = "proptest")]
 pub use strkey::{
     account_strkey, contract_strkey, corrupted_strkey, valid_strkey, zero_account_strkey,
