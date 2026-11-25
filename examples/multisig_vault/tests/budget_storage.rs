@@ -141,18 +141,21 @@ fn storage_snapshot_entries_infer_namespaces() {
             key: "DataKey::Signers".to_string(),
             tier: StorageTier::Instance,
             value: String::new(),
+            bytes: Vec::new(),
             live_until: None,
         },
         StorageEntry {
             key: "DataKey::Proposal".to_string(),
             tier: StorageTier::Persistent,
             value: String::new(),
+            bytes: Vec::new(),
             live_until: None,
         },
         StorageEntry {
             key: "loose_key".to_string(),
             tier: StorageTier::Temporary,
             value: String::new(),
+            bytes: Vec::new(),
             live_until: None,
         },
     ];

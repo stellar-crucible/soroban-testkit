@@ -1,0 +1,24 @@
+[package]
+name = "soroban-testkit-mock"
+description = "Generate lightweight mock Soroban contracts from trait definitions"
+keywords = ["soroban", "stellar", "testing", "mock", "smart-contracts"]
+categories = ["development-tools::testing", "development-tools::procedural-macro-helpers"]
+homepage = "https://stellar-crucible.github.io/soroban-testkit/"
+readme = "README.md"
+documentation = "https://stellar-crucible.github.io/soroban-testkit/guides/mocking.html"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3.0.6", features = ["full"] }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true }
